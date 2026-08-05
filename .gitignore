@@ -1,0 +1,25 @@
+# 编译输出目录
+build/
+
+# C/C++ 中间文件
+*.o
+*.obj
+*.a
+*.so
+*.out
+
+# 调试文件
+*.core
+core
+
+# 临时文件
+*.tmp
+*.swp
+*~
+
+# VS Code 本地配置
+.vscode/
+
+# 系统文件
+.DS_Store
+Thumbs.db

@@ -1,0 +1,32 @@
+Gateway started
+Serial device: /tmp/ttyGW
+Baud rate    : 9600, 8N1, raw mode
+[IO] serial connected: /tmp/ttyGW, connection=1
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connected to 127.0.0.1:9000, connection = 1
+[CMD] from server sender=GATEWAY seq=000042 led=1
+[SERIAL] command sent, bytes = 34
+[DATA] node=NODE01 seq=000001 temperature=25.3 C humidity=60.1 %
+[TCP] JSON send, bytes = 75
+[ACK] node=NODE01 seq=000001 led=1
+[TCP] JSON send, bytes = 47
+[NACK] node=NODE01 seq=000001 error=unsupported_cmd
+[TCP] JSON send, bytes = 66
+[TCP] server disconnected
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] tcp_connect failed: 127.0.0.1:9000
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] tcp_connect failed: 127.0.0.1:9000
+
+Gateway stopped
+Valid frames    : 3
+CRC errors      : 0
+Format errors   : 0
+Overflow errors : 0
+Discarded bytes : 0
+Decode errors   : 0
+Serial connections : 1
+TCP sent        : 3
+TCP send errors : 0
+TCP dropped     : 0
+TCP connect errors : 2
