@@ -33,7 +33,8 @@
  * state     ：当前状态（见 command_state_t）
  * sequence  ：命令序号，与ACK/NACK应答配对
  * sender    ：发送方标识
- * led_value ：命令参数
+ * fields    ：命令参数（通用键值对，如 LED=1、MOTOR=50）
+ * field_count：命令参数数量
  * sent_time ：最近一次下发时间（超时判断用）
  * retries   ：已重试次数
  */
@@ -42,7 +43,8 @@ typedef struct
     command_state_t state;
     uint32_t sequence;
     char sender[32];
-    int led_value;
+    frame_kv_t fields[FRAME_DATA_MAX_FIELDS];
+    size_t field_count;
     time_t sent_time;
     int retries;
 } command_entry_t;
@@ -91,15 +93,17 @@ int command_manager_build_cmd(
     size_t out_size,
     const char *sender,
     uint32_t sequence,
-    int led_value
+    const frame_kv_t *fields,
+    size_t field_count
 )
 {
-    return frame_build_command(
+    return frame_build_command_kv(
         out,
         out_size,
         sender,
         sequence,
-        led_value
+        fields,
+        field_count
     );
 }
 
@@ -134,7 +138,8 @@ static command_entry_t *command_manager_find(
 int command_manager_send(
     command_manager_t *manager,
     const char *sender,
-    int led_value,
+    const frame_kv_t *fields,
+    size_t field_count,
     uint32_t *sequence_out)
 {
     command_entry_t *entry;
@@ -144,6 +149,16 @@ int command_manager_send(
         sender == NULL ||
         sender[0] == '\0' ||
         sequence_out == NULL)
+    {
+        return -1;
+    }
+
+    if (fields == NULL && field_count > 0U)
+    {
+        return -1;
+    }
+
+    if (field_count > FRAME_DATA_MAX_FIELDS)
     {
         return -1;
     }
@@ -177,7 +192,14 @@ int command_manager_send(
 
     strcpy(entry->sender, sender);
     entry->sequence = manager->next_sequence;
-    entry->led_value = led_value;
+
+    if (field_count > 0U)
+    {
+        memcpy(entry->fields, fields,
+               field_count * sizeof(frame_kv_t));
+    }
+    entry->field_count = field_count;
+
     entry->state = COMMAND_STATE_WAITING;
     entry->sent_time = time(NULL);
     entry->retries = 0;
@@ -295,7 +317,8 @@ int command_manager_check_timeouts(
     int timeout_sec,
     int max_retries,
     uint32_t *retry_sequences,
-    int *retry_leds,
+    frame_kv_t (*retry_fields)[FRAME_DATA_MAX_FIELDS],
+    size_t *retry_field_counts,
     size_t retry_capacity,
     size_t *retry_count,
     uint32_t *timeout_sequences,
@@ -359,9 +382,18 @@ int command_manager_check_timeouts(
                 {
                     retry_sequences[retries] = entry->sequence;
 
-                    if (retry_leds != NULL)
+                    if (retry_fields != NULL)
                     {
-                        retry_leds[retries] = entry->led_value;
+                        memcpy(
+                            retry_fields[retries],
+                            entry->fields,
+                            sizeof(entry->fields));
+                    }
+
+                    if (retry_field_counts != NULL)
+                    {
+                        retry_field_counts[retries] =
+                            entry->field_count;
                     }
 
                     retries++;

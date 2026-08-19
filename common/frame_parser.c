@@ -430,64 +430,44 @@ static int parse_uint32_decimal(
 }
 
 /*
- * 将可能包含负号的十进制字符串转换成int。
+ * 解析一个通用 KV 帧的 payload（内部共用）。
+ *
+ * DATA / CMD / ACK 的固定头部都是 4 个字段：
+ *   1,<id>,<sequence>,<TYPE>
+ *
+ * 其后跟随任意数量的 KEY=VALUE（最多 FRAME_DATA_MAX_FIELDS 条）。
+ * 解析器只负责“搬运”，不解释任何 key 的业务含义。
+ *
+ * @param frame      已经通过CRC校验的帧
+ * @param type       "DATA" / "CMD" / "ACK"，用于校验类型字段
+ * @param id_out     输出：节点编号/发送方（要求容量 >= id_capacity）
+ * @param id_capacity id_out 的容量
+ * @param sequence_out 输出：帧序号
+ * @param fields     输出：键值对数组
+ * @param field_count_out 输出：实际字段数量
+ *
+ * @return 成功返回0，失败返回-1
  */
-static int parse_int_decimal(
-    const char *text,
-    int *value)
-{
-    char *end;
-    long parsed;
-
-    if (text == NULL ||
-        value == NULL ||
-        text[0] == '\0')
-    {
-        return -1;
-    }
-
-    errno = 0;
-    end = NULL;
-
-    parsed = strtol(text, &end, 10);
-
-    if (errno != 0 ||
-        end == text ||
-        *end != '\0' ||
-        parsed < INT_MIN ||
-        parsed > INT_MAX)
-    {
-        return -1;
-    }
-
-    *value = (int)parsed;
-
-    return 0;
-}
-
-int frame_decode_data(
+static int parse_kv_payload(
     const parsed_frame_t *frame,
-    frame_data_t *out)
+    const char *type,
+    char *id_out,
+    size_t id_capacity,
+    uint32_t *sequence_out,
+    frame_kv_t *fields,
+    size_t *field_count_out)
 {
     char copy[FRAME_MAX_LEN];
-
-    /*
-     * DATA帧应该有6个字段：
-     *
-     * 1
-     * NODE01
-     * 000001
-     * DATA
-     * T=253
-     * H=601
-     */
-    char *tokens[6];
-
+    char *tokens[4 + FRAME_DATA_MAX_FIELDS];
     char *save_ptr = NULL;
     char *token;
     size_t count = 0;
+    size_t i;
 
-    if (frame == NULL || out == NULL)
+    if (frame == NULL || type == NULL ||
+        id_out == NULL || id_capacity == 0U ||
+        sequence_out == NULL || fields == NULL ||
+        field_count_out == NULL)
     {
         return -1;
     }
@@ -501,16 +481,12 @@ int frame_decode_data(
      * strtok_r会修改字符串，
      * 因此不能直接修改frame->payload。
      */
-    memcpy(
-        copy,
-        frame->payload,
-        frame->payload_length + 1U);
-
-    memset(out, 0, sizeof(*out));
+    memcpy(copy, frame->payload, frame->payload_length + 1U);
 
     token = strtok_r(copy, ",", &save_ptr);
 
-    while (token != NULL && count < 6U)
+    while (token != NULL &&
+           count < 4U + FRAME_DATA_MAX_FIELDS)
     {
         tokens[count] = token;
         count++;
@@ -519,44 +495,32 @@ int frame_decode_data(
     }
 
     /*
-     * 必须正好6个字段。
-     *
-     * count不等于6表示字段过少。
-     * token不为NULL表示字段过多。
+     * 至少要有固定头部 4 个字段；
+     * 数据字段超过容量上限时拒绝。
      */
-    if (count != 6U || token != NULL)
+    if (count < 4U || token != NULL)
     {
         return -1;
     }
 
     /*
-     * 检查固定字段。
+     * 检查固定字段：版本号、类型。
      */
     if (strcmp(tokens[0], "1") != 0)
     {
         return -1;
     }
 
-    if (strcmp(tokens[3], "DATA") != 0)
-    {
-        return -1;
-    }
-
-    if (strncmp(tokens[4], "T=", 2) != 0)
-    {
-        return -1;
-    }
-
-    if (strncmp(tokens[5], "H=", 2) != 0)
+    if (strcmp(tokens[3], type) != 0)
     {
         return -1;
     }
 
     /*
-     * 节点编号不能为空，也不能超过结构体空间。
+     * 节点编号/发送方不能为空，也不能超过输出空间。
      */
     if (tokens[1][0] == '\0' ||
-        strlen(tokens[1]) >= sizeof(out->node_id))
+        strlen(tokens[1]) >= id_capacity)
     {
         return -1;
     }
@@ -572,114 +536,153 @@ int frame_decode_data(
     /*
      * 将文本数字转换成整数。
      */
-    if (parse_uint32_decimal(
-            tokens[2],
-            &out->sequence) != 0)
+    if (parse_uint32_decimal(tokens[2], sequence_out) != 0)
     {
         return -1;
     }
 
-    if (parse_int_decimal(
-            tokens[4] + 2,
-            &out->temperature_x10) != 0)
+    strcpy(id_out, tokens[1]);
+
+    /*
+     * 解析数据区：tokens[4..count-1] 每条必须是 KEY=VALUE。
+     */
+    for (i = 4; i < count; i++)
     {
-        return -1;
+        const char *kv = tokens[i];
+        const char *eq;
+        size_t key_len;
+        size_t value_len;
+
+        eq = strchr(kv, '=');
+
+        /*
+         * 必须形如 KEY=VALUE，且 key/value 都不能为空。
+         */
+        if (eq == NULL || eq == kv || eq[1] == '\0')
+        {
+            return -1;
+        }
+
+        key_len = (size_t)(eq - kv);
+        value_len = strlen(eq + 1);
+
+        if (key_len >= FRAME_KV_KEY_MAX ||
+            value_len >= FRAME_KV_VALUE_MAX)
+        {
+            return -1;
+        }
+
+        memcpy(fields[i - 4U].key, kv, key_len);
+        fields[i - 4U].key[key_len] = '\0';
+
+        strcpy(fields[i - 4U].value, eq + 1);
     }
 
-    if (parse_int_decimal(
-            tokens[5] + 2,
-            &out->humidity_x10) != 0)
-    {
-        return -1;
-    }
-
-    strcpy(out->node_id, tokens[1]);
+    *field_count_out = count - 4U;
 
     return 0;
+}
+
+int frame_decode_data(
+    const parsed_frame_t *frame,
+    frame_data_t *out)
+{
+    uint32_t sequence;
+    size_t field_count;
+
+    if (frame == NULL || out == NULL)
+    {
+        return -1;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    if (parse_kv_payload(
+            frame,
+            "DATA",
+            out->node_id,
+            sizeof(out->node_id),
+            &sequence,
+            out->fields,
+            &field_count) != 0)
+    {
+        return -1;
+    }
+
+    out->sequence = sequence;
+    out->field_count = field_count;
+
+    return 0;
+}
+
+const char *frame_fields_find(
+    const frame_kv_t *fields,
+    size_t field_count,
+    const char *key)
+{
+    size_t i;
+
+    if (fields == NULL ||
+        key == NULL ||
+        key[0] == '\0')
+    {
+        return NULL;
+    }
+
+    for (i = 0; i < field_count; i++)
+    {
+        if (strcmp(fields[i].key, key) == 0)
+        {
+            return fields[i].value;
+        }
+    }
+
+    return NULL;
+}
+
+const char *frame_data_find_field(
+    const frame_data_t *data,
+    const char *key)
+{
+    if (data == NULL)
+    {
+        return NULL;
+    }
+
+    return frame_fields_find(
+        data->fields,
+        data->field_count,
+        key);
 }
 
 int frame_decode_command(
     const parsed_frame_t *frame,
     frame_command_t *out)
 {
-    char copy[FRAME_MAX_LEN];
-    char *token;
-    char *tokens[5];
-    char *save_pstr = NULL;
-    size_t count = 0;
+    uint32_t sequence;
+    size_t field_count;
+
     if (frame == NULL || out == NULL)
     {
         return -1;
     }
-    if (frame->payload_length >= sizeof(copy))
-    {
-        return -1;
-    }
-    memcpy(copy, frame->payload, frame->payload_length + 1U);
+
     memset(out, 0, sizeof(*out));
 
-    token = strtok_r(copy, ",", &save_pstr);
-    while (token != NULL && count < 5U)
-    {
-        tokens[count++] = token;
-        token = strtok_r(NULL, ",", &save_pstr);
-    }
-    if (count != 5U || token != NULL)
-    {
-        return -1;
-    }
-    /*
-     * 检查固定字段。
-     */
-    if (strcmp(tokens[0], "1") != 0)
+    if (parse_kv_payload(
+            frame,
+            "CMD",
+            out->sender,
+            sizeof(out->sender),
+            &sequence,
+            out->fields,
+            &field_count) != 0)
     {
         return -1;
     }
 
-    if (strcmp(tokens[3], "CMD") != 0)
-    {
-        return -1;
-    }
-
-    if (strncmp(tokens[4], "LED=", 4) != 0)
-    {
-        return -1;
-    }
-    /*
-     * sender编号不能为空，也不能超过结构体空间。
-     */
-    if (tokens[1][0] == '\0' ||
-        strlen(tokens[1]) >= sizeof(out->sender))
-    {
-        return -1;
-    }
-
-    /*
-     * 第一版协议规定序号必须是6位。
-     */
-    if (strlen(tokens[2]) != 6U)
-    {
-        return -1;
-    }
-
-    /*
-     * 将文本数字转换成整数。
-     */
-    if (parse_uint32_decimal(
-            tokens[2],
-            &out->sequence) != 0)
-    {
-        return -1;
-    }
-
-    if (parse_int_decimal(
-            tokens[4] + 4,
-            &out->led_value) != 0)
-    {
-        return -1;
-    }
-
-    strcpy(out->sender, tokens[1]);
+    out->sequence = sequence;
+    out->field_count = field_count;
 
     return 0;
 }
@@ -688,84 +691,30 @@ int frame_decode_ack(
     const parsed_frame_t *frame,
     frame_ack_t *out)
 {
-    char copy[FRAME_MAX_LEN];
-    char *token;
-    char *tokens[5];
-    char *save_pstr = NULL;
-    size_t count = 0;
+    uint32_t sequence;
+    size_t field_count;
+
     if (frame == NULL || out == NULL)
     {
         return -1;
     }
-    if (frame->payload_length >= sizeof(copy))
-    {
-        return -1;
-    }
-    memcpy(copy, frame->payload, frame->payload_length + 1U);
+
     memset(out, 0, sizeof(*out));
 
-    token = strtok_r(copy, ",", &save_pstr);
-    while (token != NULL && count < 5U)
-    {
-        tokens[count++] = token;
-        token = strtok_r(NULL, ",", &save_pstr);
-    }
-    if (count != 5U || token != NULL)
-    {
-        return -1;
-    }
-    /*
-     * 检查固定字段。
-     */
-    if (strcmp(tokens[0], "1") != 0)
+    if (parse_kv_payload(
+            frame,
+            "ACK",
+            out->node_id,
+            sizeof(out->node_id),
+            &sequence,
+            out->fields,
+            &field_count) != 0)
     {
         return -1;
     }
 
-    if (strcmp(tokens[3], "ACK") != 0)
-    {
-        return -1;
-    }
-
-    if (strncmp(tokens[4], "LED=", 4) != 0)
-    {
-        return -1;
-    }
-    /*
-     * 节点编号不能为空，也不能超过结构体空间。
-     */
-    if (tokens[1][0] == '\0' ||
-        strlen(tokens[1]) >= sizeof(out->node_id))
-    {
-        return -1;
-    }
-
-    /*
-     * 第一版协议规定序号必须是6位。
-     */
-    if (strlen(tokens[2]) != 6U)
-    {
-        return -1;
-    }
-
-    /*
-     * 将文本数字转换成整数。
-     */
-    if (parse_uint32_decimal(
-            tokens[2],
-            &out->sequence) != 0)
-    {
-        return -1;
-    }
-
-    if (parse_int_decimal(
-            tokens[4] + 4,
-            &out->led_value) != 0)
-    {
-        return -1;
-    }
-
-    strcpy(out->node_id, tokens[1]);
+    out->sequence = sequence;
+    out->field_count = field_count;
 
     return 0;
 }
@@ -880,7 +829,7 @@ frame_message_type_t frame_get_message_type(
     /*
      * 帧类型是第4个字段（tokens[3]）：
      *
-     * 1,NODE01,000001,DATA,T=253,H=601
+     * 1,NODE01,000001,DATA,T=253,H=601,P=1013
      *            ^
      *           类型字段
      */

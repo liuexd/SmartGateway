@@ -67,7 +67,8 @@ void command_manager_destroy(command_manager_t *manager);
  * @param out_size  输出缓冲区大小
  * @param sender    发送方标识（网关编号）
  * @param sequence  命令序号（由 command_manager_send() 分配）
- * @param led_value LED控制值
+ * @param fields      命令参数键值对数组（如 LED=1、MOTOR=50，可NULL表示无参数）
+ * @param field_count 命令参数数量
  *
  * @return 成功返回帧长度，失败返回负数
  */
@@ -76,7 +77,8 @@ int command_manager_build_cmd(
     size_t out_size,
     const char *sender,
     uint32_t sequence,
-    int led_value
+    const frame_kv_t *fields,
+    size_t field_count
 );
 
 /*
@@ -86,7 +88,8 @@ int command_manager_build_cmd(
  *
  * @param manager      命令管理器
  * @param sender       发送方标识（网关编号），例如 "GATEWAY"
- * @param led_value    LED控制值
+ * @param fields       命令参数键值对数组（如 LED=1、MOTOR=50，可NULL表示无参数）
+ * @param field_count  命令参数数量
  * @param sequence_out 输出：分配的命令序号
  *
  * @return 0成功；-1参数错误或表满
@@ -94,7 +97,8 @@ int command_manager_build_cmd(
 int command_manager_send(
     command_manager_t *manager,
     const char *sender,
-    int led_value,
+    const frame_kv_t *fields,
+    size_t field_count,
     uint32_t *sequence_out
 );
 
@@ -142,7 +146,7 @@ int command_manager_query(
  *
  * 对处于 WAITING 且超过 timeout_sec 的命令：
  *   - 重试次数未达 max_retries：重发（状态保持WAITING，retries+1），
- *     序号和led值分别写入 retry_sequences / retry_leds 数组；
+ *     序号和参数分别写入 retry_sequences / retry_fields 数组；
  *   - 重试次数已耗尽：标记为 TIMEOUT，序号写入 timeout_sequences 数组。
  *
  * @param manager           命令管理器
@@ -150,8 +154,9 @@ int command_manager_query(
  * @param timeout_sec       超时阈值（秒）
  * @param max_retries       最大重试次数
  * @param retry_sequences   输出：需要重发的序号列表（可NULL）
- * @param retry_leds        输出：与retry_sequences对应的led值（可NULL）
- * @param retry_capacity    retry_sequences/retry_leds 容量
+ * @param retry_fields      输出：与retry_sequences对应的命令参数（可NULL）
+ * @param retry_field_counts 输出：与retry_sequences对应的参数数量（可NULL）
+ * @param retry_capacity    retry_sequences/retry_fields 容量
  * @param retry_count       输出：重发数量（可NULL）
  * @param timeout_sequences 输出：重试耗尽的序号列表（可NULL）
  * @param timeout_capacity  timeout_sequences 容量
@@ -165,7 +170,8 @@ int command_manager_check_timeouts(
     int timeout_sec,
     int max_retries,
     uint32_t *retry_sequences,
-    int *retry_leds,
+    frame_kv_t (*retry_fields)[FRAME_DATA_MAX_FIELDS],
+    size_t *retry_field_counts,
     size_t retry_capacity,
     size_t *retry_count,
     uint32_t *timeout_sequences,

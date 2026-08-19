@@ -13,7 +13,8 @@ int message_json_build_data(
     const frame_data_t *data
 )
 {
-    int json_length;
+    size_t pos;
+    size_t i;
 
     if (out == NULL || out_size == 0U || data == NULL)
     {
@@ -22,33 +23,80 @@ int message_json_build_data(
 
     out[0] = '\0';
 
-    json_length = snprintf(
+    /*
+     * 固定前缀：
+     * {"node":"NODE01","seq":1,"type":"DATA","fields":{
+     */
+    pos = (size_t)snprintf(
         out,
         out_size,
         "{\"node\":\"%s\","
         "\"seq\":%u,"
         "\"type\":\"DATA\","
-        "\"temperature\":%.1f,"
-        "\"humidity\":%.1f}\n",
+        "\"fields\":{",
         data->node_id,
-        (unsigned int)data->sequence,
-        data->temperature_x10 / 10.0,
-        data->humidity_x10 / 10.0
-    );
+        (unsigned int)data->sequence);
 
-    if (json_length < 0)
+    if (pos >= out_size)
     {
         out[0] = '\0';
         return -1;
     }
 
-    if ((size_t)json_length >= out_size)
+    /*
+     * 数据区：每个字段输出为 "KEY":"VALUE"。
+     *
+     * key/value 来自串口帧解析，已经保证不含
+     * 逗号/引号/反斜杠等JSON保留字符（协议层做过校验），
+     * 因此这里不需要转义。
+     */
+    for (i = 0; i < data->field_count; i++)
     {
-        out[0] = '\0';
-        return -1;
+        int written;
+
+        written = snprintf(
+            out + pos,
+            out_size - pos,
+            "%s\"%s\":\"%s\"",
+            (i > 0U) ? "," : "",
+            data->fields[i].key,
+            data->fields[i].value);
+
+        if (written < 0)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        if ((size_t)written >= out_size - pos)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        pos += (size_t)written;
     }
 
-    return json_length;
+    /*
+     * 收尾：}} + 换行
+     */
+    {
+        int written = snprintf(
+            out + pos,
+            out_size - pos,
+            "}}\n");
+
+        if (written < 0 ||
+            (size_t)written >= out_size - pos)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        pos += (size_t)written;
+    }
+
+    return (int)pos;
 }
 
 /*
@@ -60,7 +108,8 @@ int message_json_build_ack(
     const frame_ack_t *ack
 )
 {
-    int json_length;
+    size_t pos;
+    size_t i;
 
     if (out == NULL || out_size == 0U || ack == NULL)
     {
@@ -69,31 +118,76 @@ int message_json_build_ack(
 
     out[0] = '\0';
 
-    json_length = snprintf(
+    /*
+     * 固定前缀：
+     * {"node":"NODE01","seq":1,"type":"ACK","fields":{
+     */
+    pos = (size_t)snprintf(
         out,
         out_size,
         "{\"node\":\"%s\","
         "\"seq\":%u,"
         "\"type\":\"ACK\","
-        "\"led\":%d}\n",
+        "\"fields\":{",
         ack->node_id,
-        (unsigned int)ack->sequence,
-        ack->led_value
-    );
+        (unsigned int)ack->sequence);
 
-    if (json_length < 0)
+    if (pos >= out_size)
     {
         out[0] = '\0';
         return -1;
     }
 
-    if ((size_t)json_length >= out_size)
+    /*
+     * 回显状态：每个字段输出为 "KEY":"VALUE"。
+     */
+    for (i = 0; i < ack->field_count; i++)
     {
-        out[0] = '\0';
-        return -1;
+        int written;
+
+        written = snprintf(
+            out + pos,
+            out_size - pos,
+            "%s\"%s\":\"%s\"",
+            (i > 0U) ? "," : "",
+            ack->fields[i].key,
+            ack->fields[i].value);
+
+        if (written < 0)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        if ((size_t)written >= out_size - pos)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        pos += (size_t)written;
     }
 
-    return json_length;
+    /*
+     * 收尾：}} + 换行
+     */
+    {
+        int written = snprintf(
+            out + pos,
+            out_size - pos,
+            "}}\n");
+
+        if (written < 0 ||
+            (size_t)written >= out_size - pos)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        pos += (size_t)written;
+    }
+
+    return (int)pos;
 }
 
 /*
@@ -149,7 +243,8 @@ int message_json_build_command(
     const frame_command_t *command
 )
 {
-    int json_length;
+    size_t pos;
+    size_t i;
 
     if (out == NULL || out_size == 0U || command == NULL)
     {
@@ -158,31 +253,79 @@ int message_json_build_command(
 
     out[0] = '\0';
 
-    json_length = snprintf(
+    /*
+     * 固定前缀：
+     * {"node":"GATEWAY","seq":1,"type":"CMD","fields":{
+     */
+    pos = (size_t)snprintf(
         out,
         out_size,
         "{\"node\":\"%s\","
         "\"seq\":%u,"
         "\"type\":\"CMD\","
-        "\"led\":%d}\n",
+        "\"fields\":{",
         command->sender,
-        (unsigned int)command->sequence,
-        command->led_value
-    );
+        (unsigned int)command->sequence);
 
-    if (json_length < 0)
+    if (pos >= out_size)
     {
         out[0] = '\0';
         return -1;
     }
 
-    if ((size_t)json_length >= out_size)
+    /*
+     * 命令参数：每个字段输出为 "KEY":"VALUE"。
+     *
+     * key/value 来自协议层校验过的 KV，不含JSON保留字符，
+     * 因此这里不需要转义。
+     */
+    for (i = 0; i < command->field_count; i++)
     {
-        out[0] = '\0';
-        return -1;
+        int written;
+
+        written = snprintf(
+            out + pos,
+            out_size - pos,
+            "%s\"%s\":\"%s\"",
+            (i > 0U) ? "," : "",
+            command->fields[i].key,
+            command->fields[i].value);
+
+        if (written < 0)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        if ((size_t)written >= out_size - pos)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        pos += (size_t)written;
     }
 
-    return json_length;
+    /*
+     * 收尾：}} + 换行
+     */
+    {
+        int written = snprintf(
+            out + pos,
+            out_size - pos,
+            "}}\n");
+
+        if (written < 0 ||
+            (size_t)written >= out_size - pos)
+        {
+            out[0] = '\0';
+            return -1;
+        }
+
+        pos += (size_t)written;
+    }
+
+    return (int)pos;
 }
 
 /*
@@ -212,6 +355,9 @@ static const char *json_skip_whitespace(
  *
  * decode_command / decode_ack / decode_nack 共用同一解析器，
  * 解析出协议关心的全部字段，再由各函数校验必需字段和type。
+ *
+ * fields/found_fields 用于承载 CMD/ACK 的通用键值对参数：
+ *   {"node":"GATEWAY","seq":1,"type":"CMD","fields":{"LED":"1","MOTOR":"50"}}
  */
 typedef struct
 {
@@ -229,16 +375,70 @@ typedef struct
 
     int found_type;
     char type_value[8];
+
+    int found_fields;
+    frame_kv_t fields[FRAME_DATA_MAX_FIELDS];
+    size_t field_count;
 } json_object_t;
 
 /*
- * 解析一个简单JSON对象，提取协议关心的字段。
+ * 往键值对数组中追加一条字段（内部共用）。
+ *
+ * @param fields      目标数组
+ * @param field_count 输入输出：数组当前长度
+ * @param key         key 文本
+ * @param key_len     key 长度
+ * @param value       value 文本
+ * @param value_len   value 长度
+ *
+ * @return 0成功，-1参数非法/超限/容量已满
+ */
+static int kv_array_add(
+    frame_kv_t *fields,
+    size_t *field_count,
+    const char *key,
+    size_t key_len,
+    const char *value,
+    size_t value_len)
+{
+    if (fields == NULL ||
+        field_count == NULL ||
+        key == NULL ||
+        value == NULL)
+    {
+        return -1;
+    }
+
+    if (key_len == 0U ||
+        key_len >= FRAME_KV_KEY_MAX ||
+        value_len == 0U ||
+        value_len >= FRAME_KV_VALUE_MAX ||
+        *field_count >= FRAME_DATA_MAX_FIELDS)
+    {
+        return -1;
+    }
+
+    memcpy(fields[*field_count].key, key, key_len);
+    fields[*field_count].key[key_len] = '\0';
+
+    memcpy(fields[*field_count].value, value, value_len);
+    fields[*field_count].value[value_len] = '\0';
+
+    (*field_count)++;
+
+    return 0;
+}
+
+/*
+ * 解析一个JSON对象，提取协议关心的字段。
  *
  * 支持：
  *   {"node":"NODE01","seq":1,"type":"ACK","led":1}
  *   {"node":"NODE01","seq":1,"type":"NACK","error":"bad_cmd"}
+ *   {"node":"GATEWAY","seq":1,"type":"CMD","fields":{"LED":"1","MOTOR":"50"}}
  *
  * "led":"1" 这种字符串形式的数字也兼容；
+ * fields 对象中的键值对原样存入 out->fields；
  * 无关字段被忽略；结构非法（未闭合/键不是字符串/缺冒号等）返回-1。
  *
  * @param line        JSON文本（可带结尾的\r\n）
@@ -294,6 +494,7 @@ static int json_parse_object(
         int is_led;
         int is_error;
         int is_type;
+        int is_fields;
 
         p = json_skip_whitespace(p, end);
 
@@ -359,8 +560,216 @@ static int json_parse_object(
                     memcmp(key_start, "error", 5) == 0);
         is_type = (key_length == 4 &&
                    memcmp(key_start, "type", 4) == 0);
+        is_fields = (key_length == 6 &&
+                     memcmp(key_start, "fields", 6) == 0);
 
-        if (*p == '"')
+        if (is_fields)
+        {
+            /*
+             * fields 值必须是对象：
+             * "fields":{"LED":"1","MOTOR":"50"}
+             *
+             * 每个键值对原样存入 out->fields；
+             * 值既可以是字符串，也可以是数字（原文存入）。
+             */
+            const char *fkey_start;
+            const char *fkey_end;
+            size_t fkey_len;
+
+            if (*p != '{')
+            {
+                return -1;
+            }
+            p++;
+
+            for (;;)
+            {
+                p = json_skip_whitespace(p, end);
+
+                if (p >= end)
+                {
+                    return -1;   /* fields 未闭合 */
+                }
+
+                if (*p == '}')
+                {
+                    p++;
+                    break;       /* fields 对象结束 */
+                }
+
+                if (*p != '"')
+                {
+                    return -1;   /* 字段键必须是字符串 */
+                }
+
+                /* 解析字段键名 */
+                p++;
+                fkey_start = p;
+
+                while (p < end && *p != '"')
+                {
+                    if (*p == '\\')
+                    {
+                        p++;
+                    }
+                    p++;
+                }
+
+                if (p >= end)
+                {
+                    return -1;
+                }
+
+                fkey_end = p;
+                p++;
+
+                /* 期待 ':' */
+                p = json_skip_whitespace(p, end);
+                if (p >= end || *p != ':')
+                {
+                    return -1;
+                }
+                p++;
+
+                p = json_skip_whitespace(p, end);
+                if (p >= end)
+                {
+                    return -1;
+                }
+
+                fkey_len = (size_t)(fkey_end - fkey_start);
+
+                if (*p == '"')
+                {
+                    /* 字符串值 */
+                    const char *value_start;
+                    const char *value_end;
+                    size_t value_length;
+
+                    p++;
+                    value_start = p;
+
+                    while (p < end && *p != '"')
+                    {
+                        if (*p == '\\')
+                        {
+                            p++;
+                        }
+                        p++;
+                    }
+
+                    if (p >= end)
+                    {
+                        return -1;   /* 值字符串未闭合 */
+                    }
+
+                    value_end = p;
+                    p++;
+
+                    value_length = (size_t)(value_end - value_start);
+
+                    if (kv_array_add(
+                            out->fields,
+                            &out->field_count,
+                            fkey_start,
+                            fkey_len,
+                            value_start,
+                            value_length) != 0)
+                    {
+                        return -1;
+                    }
+                }
+                else
+                {
+                    /* 数字值：原文存入 value */
+                    const char *value_start = p;
+                    size_t value_length;
+
+                    if (*p == '-')
+                    {
+                        p++;
+                    }
+
+                    if (p >= end || *p < '0' || *p > '9')
+                    {
+                        return -1;
+                    }
+
+                    while (p < end && *p >= '0' && *p <= '9')
+                    {
+                        p++;
+                    }
+
+                    if (p < end && *p == '.')
+                    {
+                        p++;
+                        if (p >= end || *p < '0' || *p > '9')
+                        {
+                            return -1;
+                        }
+                        while (p < end && *p >= '0' && *p <= '9')
+                        {
+                            p++;
+                        }
+                    }
+
+                    if (p < end && (*p == 'e' || *p == 'E'))
+                    {
+                        p++;
+                        if (p < end && (*p == '+' || *p == '-'))
+                        {
+                            p++;
+                        }
+                        if (p >= end || *p < '0' || *p > '9')
+                        {
+                            return -1;
+                        }
+                        while (p < end && *p >= '0' && *p <= '9')
+                        {
+                            p++;
+                        }
+                    }
+
+                    value_length = (size_t)(p - value_start);
+
+                    if (kv_array_add(
+                            out->fields,
+                            &out->field_count,
+                            fkey_start,
+                            fkey_len,
+                            value_start,
+                            value_length) != 0)
+                    {
+                        return -1;
+                    }
+                }
+
+                /* 期待 ',' 或 '}' */
+                p = json_skip_whitespace(p, end);
+
+                if (p >= end)
+                {
+                    return -1;
+                }
+
+                if (*p == ',')
+                {
+                    p++;
+                }
+                else if (*p == '}')
+                {
+                    p++;
+                    break;
+                }
+                else
+                {
+                    return -1;
+                }
+            }
+
+            out->found_fields = 1;
+        }
+        else if (*p == '"')
         {
             /* 字符串值 */
             const char *value_start;
@@ -551,16 +960,21 @@ static int json_parse_object(
 /*
  * 将JSON字符串转换为CMD帧解析结果。
  *
- * 输入格式与 message_json_build_command() 的生成格式一致：
- * {"node":"GATEWAY","seq":1,"type":"CMD","led":1}
+ * 支持两种输入格式：
  *
- * 为兼容起见，也接受 "led":"1" 这种字符串形式的参数。
- * 其它无关字段（如温度、湿度）会被忽略；
- * 若 "type" 字段存在但取值不是 "CMD"，则解析失败。
+ * 1. 新格式（推荐，命令参数为通用键值对对象）：
+ *    {"node":"GATEWAY","seq":1,"type":"CMD","fields":{"LED":"1","MOTOR":"50"}}
+ *
+ * 2. 旧格式（兼容，单个 led 参数自动转为 LED 键值对）：
+ *    {"node":"GATEWAY","seq":1,"type":"CMD","led":1}
+ *
+ * 必需字段为 node/seq/type；fields 对象可选，其中每个键值对
+ * 都会原样存入 command->fields。
+ * 无关字段会被忽略，缺失必需字段或type不是"CMD"时解析失败。
  *
  * @param line        JSON文本（可带结尾的\r\n）
  * @param line_length JSON文本长度
- * @param command     解析结果输出（成功时填充sender/sequence/led_value，
+ * @param command     解析结果输出（成功时填充sender/sequence/fields，
  *                    失败时清零）
  *
  * @return 成功返回已消费的字节数（不含结尾'\0'），失败返回-1
@@ -590,7 +1004,7 @@ int message_json_decode_command(
 
     /* 必需字段必须齐全 */
     if (!obj.found_node || !obj.found_seq ||
-        !obj.found_led || !obj.found_type)
+        !obj.found_type)
     {
         return -1;
     }
@@ -608,7 +1022,27 @@ int message_json_decode_command(
 
     strcpy(command->sender, obj.node_id);
     command->sequence = obj.sequence;
-    command->led_value = obj.led_value;
+
+    /*
+     * 命令参数：
+     * 优先使用 fields 对象；
+     * 旧格式的单个 led 参数自动转为 LED 键值对。
+     */
+    if (obj.found_fields)
+    {
+        memcpy(command->fields, obj.fields, sizeof(obj.fields));
+        command->field_count = obj.field_count;
+    }
+    else if (obj.found_led)
+    {
+        snprintf(command->fields[0].key, sizeof(command->fields[0].key), "LED");
+        snprintf(command->fields[0].value, sizeof(command->fields[0].value), "%d", obj.led_value);
+        command->field_count = 1;
+    }
+    else
+    {
+        command->field_count = 0;
+    }
 
     return consumed;
 }
@@ -616,15 +1050,20 @@ int message_json_decode_command(
 /*
  * 将JSON字符串转换为ACK帧解析结果。
  *
- * 输入格式与 message_json_build_ack() 的生成格式一致：
- * {"node":"NODE01","seq":1,"type":"ACK","led":1}
+ * 支持两种输入格式：
  *
- * 兼容 "led":"1" 这种字符串形式的参数；
+ * 1. 新格式（推荐，回显为通用键值对对象）：
+ *    {"node":"NODE01","seq":1,"type":"ACK","fields":{"LED":"1"}}
+ *
+ * 2. 旧格式（兼容，单个 led 参数自动转为 LED 键值对）：
+ *    {"node":"NODE01","seq":1,"type":"ACK","led":1}
+ *
+ * 必需字段为 node/seq/type；fields 对象可选。
  * 无关字段会被忽略，缺失必需字段或type不是"ACK"时解析失败。
  *
  * @param line        JSON文本（可带结尾的\r\n）
  * @param line_length JSON文本长度
- * @param ack         解析结果输出（成功时填充node_id/sequence/led_value，
+ * @param ack         解析结果输出（成功时填充node_id/sequence/fields，
  *                    失败时清零）
  *
  * @return 成功返回已消费的字节数（不含结尾'\0'），失败返回-1
@@ -654,7 +1093,7 @@ int message_json_decode_ack(
 
     /* 必需字段必须齐全 */
     if (!obj.found_node || !obj.found_seq ||
-        !obj.found_led || !obj.found_type)
+        !obj.found_type)
     {
         return -1;
     }
@@ -672,7 +1111,27 @@ int message_json_decode_ack(
 
     strcpy(ack->node_id, obj.node_id);
     ack->sequence = obj.sequence;
-    ack->led_value = obj.led_value;
+
+    /*
+     * 回显状态：
+     * 优先使用 fields 对象；
+     * 旧格式的单个 led 参数自动转为 LED 键值对。
+     */
+    if (obj.found_fields)
+    {
+        memcpy(ack->fields, obj.fields, sizeof(obj.fields));
+        ack->field_count = obj.field_count;
+    }
+    else if (obj.found_led)
+    {
+        snprintf(ack->fields[0].key, sizeof(ack->fields[0].key), "LED");
+        snprintf(ack->fields[0].value, sizeof(ack->fields[0].value), "%d", obj.led_value);
+        ack->field_count = 1;
+    }
+    else
+    {
+        ack->field_count = 0;
+    }
 
     return consumed;
 }
@@ -857,20 +1316,58 @@ static int json_parse_x10(
 /*
  * 将JSON字符串转换为DATA帧解析结果。
  *
- * 输入格式与 message_json_build_data() 的生成格式一致：
- * {"node":"NODE01","seq":1,"type":"DATA","temperature":25.3,"humidity":60.1}
+ * 支持两种输入格式：
  *
- * temperature/humidity 支持带小数的数字，解析结果放大10倍
- * （25.3 -> 253，60.1 -> 601），与 frame_data_t 的语义一致。
+ * 1. 新格式（推荐，数据区为通用键值对对象）：
+ *    {"node":"NODE01","seq":1,"type":"DATA","fields":{"T":"253","H":"601"}}
+ *
+ * 2. 旧格式（兼容，temperature/humidity 为数字，解析后放大10倍
+ *    转成 T/H 两条键值对）：
+ *    {"node":"NODE01","seq":1,"type":"DATA","temperature":25.3,"humidity":60.1}
+ *
+ * 必需字段为 node/seq/type；fields 对象可选，其中每个键值对
+ * 都会原样存入 data->fields。
  * 无关字段会被忽略，缺失必需字段或type不是"DATA"时解析失败。
  *
  * @param line        JSON文本（可带结尾的\r\n）
  * @param line_length JSON文本长度
- * @param data        解析结果输出（成功时填充node_id/sequence/
- *                    temperature_x10/humidity_x10，失败时清零）
+ * @param data        解析结果输出（成功时填充node_id/sequence/fields，
+ *                    失败时清零）
  *
  * @return 成功返回已消费的字节数（不含结尾'\0'），失败返回-1
  */
+/*
+ * 往 DATA 解析结果中追加一条键值对。
+ *
+ * @param data      目标结构体
+ * @param key       key 文本
+ * @param key_len   key 长度
+ * @param value     value 文本
+ * @param value_len value 长度
+ *
+ * @return 0成功，-1参数非法/超限/容量已满
+ */
+static int json_data_add_field(
+    frame_data_t *data,
+    const char *key,
+    size_t key_len,
+    const char *value,
+    size_t value_len)
+{
+    if (data == NULL)
+    {
+        return -1;
+    }
+
+    return kv_array_add(
+        data->fields,
+        &data->field_count,
+        key,
+        key_len,
+        value,
+        value_len);
+}
+
 int message_json_decode_data(
     const char *line,
     size_t line_length,
@@ -880,12 +1377,8 @@ int message_json_decode_data(
     const char *end;
     int found_node;
     int found_seq;
-    int found_temp;
-    int found_humi;
     int found_type;
     uint32_t sequence;
-    int temperature_x10;
-    int humidity_x10;
 
     if (line == NULL ||
         line_length == 0U ||
@@ -910,12 +1403,8 @@ int message_json_decode_data(
 
     found_node = 0;
     found_seq = 0;
-    found_temp = 0;
-    found_humi = 0;
     found_type = 0;
     sequence = 0;
-    temperature_x10 = 0;
-    humidity_x10 = 0;
 
     for (;;)
     {
@@ -927,6 +1416,7 @@ int message_json_decode_data(
         int is_temp;
         int is_humi;
         int is_type;
+        int is_fields;
 
         p = json_skip_whitespace(p, end);
 
@@ -992,8 +1482,219 @@ int message_json_decode_data(
                    memcmp(key_start, "humidity", 8) == 0);
         is_type = (key_length == 4 &&
                    memcmp(key_start, "type", 4) == 0);
+        is_fields = (key_length == 6 &&
+                     memcmp(key_start, "fields", 6) == 0);
 
-        if (*p == '"')
+        if (is_fields)
+        {
+            /*
+             * fields 值必须是对象：
+             * "fields":{"T":"253","H":"601"}
+             *
+             * 每个键值对原样存入 data->fields；
+             * 值既可以是字符串，也可以是数字（原文存入）。
+             */
+            const char *fkey_start;
+            const char *fkey_end;
+            size_t fkey_len;
+
+            if (*p != '{')
+            {
+                return -1;
+            }
+            p++;
+
+            for (;;)
+            {
+                p = json_skip_whitespace(p, end);
+
+                if (p >= end)
+                {
+                    return -1;   /* fields 未闭合 */
+                }
+
+                if (*p == '}')
+                {
+                    p++;
+                    break;       /* fields 对象结束 */
+                }
+
+                if (*p != '"')
+                {
+                    return -1;   /* 字段键必须是字符串 */
+                }
+
+                /* 解析字段键名 */
+                p++;
+                fkey_start = p;
+
+                while (p < end && *p != '"')
+                {
+                    if (*p == '\\')
+                    {
+                        p++;
+                    }
+                    p++;
+                }
+
+                if (p >= end)
+                {
+                    return -1;
+                }
+
+                fkey_end = p;
+                p++;
+
+                /* 期待 ':' */
+                p = json_skip_whitespace(p, end);
+                if (p >= end || *p != ':')
+                {
+                    return -1;
+                }
+                p++;
+
+                p = json_skip_whitespace(p, end);
+                if (p >= end)
+                {
+                    return -1;
+                }
+
+                fkey_len = (size_t)(fkey_end - fkey_start);
+
+                if (fkey_len == 0U ||
+                    fkey_len >= FRAME_KV_KEY_MAX ||
+                    data->field_count >= FRAME_DATA_MAX_FIELDS)
+                {
+                    return -1;
+                }
+
+                if (*p == '"')
+                {
+                    /* 字符串值 */
+                    const char *value_start;
+                    const char *value_end;
+                    size_t value_length;
+
+                    p++;
+                    value_start = p;
+
+                    while (p < end && *p != '"')
+                    {
+                        if (*p == '\\')
+                        {
+                            p++;
+                        }
+                        p++;
+                    }
+
+                    if (p >= end)
+                    {
+                        return -1;   /* 值字符串未闭合 */
+                    }
+
+                    value_end = p;
+                    p++;
+
+                    value_length = (size_t)(value_end - value_start);
+
+                    if (json_data_add_field(
+                            data,
+                            fkey_start,
+                            fkey_len,
+                            value_start,
+                            value_length) != 0)
+                    {
+                        return -1;
+                    }
+                }
+                else
+                {
+                    /* 数字值：原文存入 value */
+                    const char *value_start = p;
+                    size_t value_length;
+
+                    if (*p == '-')
+                    {
+                        p++;
+                    }
+
+                    if (p >= end || *p < '0' || *p > '9')
+                    {
+                        return -1;
+                    }
+
+                    while (p < end && *p >= '0' && *p <= '9')
+                    {
+                        p++;
+                    }
+
+                    if (p < end && *p == '.')
+                    {
+                        p++;
+                        if (p >= end || *p < '0' || *p > '9')
+                        {
+                            return -1;
+                        }
+                        while (p < end && *p >= '0' && *p <= '9')
+                        {
+                            p++;
+                        }
+                    }
+
+                    if (p < end && (*p == 'e' || *p == 'E'))
+                    {
+                        p++;
+                        if (p < end && (*p == '+' || *p == '-'))
+                        {
+                            p++;
+                        }
+                        if (p >= end || *p < '0' || *p > '9')
+                        {
+                            return -1;
+                        }
+                        while (p < end && *p >= '0' && *p <= '9')
+                        {
+                            p++;
+                        }
+                    }
+
+                    value_length = (size_t)(p - value_start);
+
+                    if (json_data_add_field(
+                            data,
+                            fkey_start,
+                            fkey_len,
+                            value_start,
+                            value_length) != 0)
+                    {
+                        return -1;
+                    }
+                }
+
+                /* 期待 ',' 或 '}' */
+                p = json_skip_whitespace(p, end);
+
+                if (p >= end)
+                {
+                    return -1;
+                }
+
+                if (*p == ',')
+                {
+                    p++;
+                }
+                else if (*p == '}')
+                {
+                    p++;
+                    break;
+                }
+                else
+                {
+                    return -1;
+                }
+            }
+        }
+        else if (*p == '"')
         {
             /* 字符串值 */
             const char *value_start;
@@ -1051,21 +1752,34 @@ int message_json_decode_data(
             if (is_temp || is_humi)
             {
                 int x10;
+                char value_text[FRAME_KV_VALUE_MAX];
+                int value_length;
 
                 if (json_parse_x10(&p, end, &x10) != 0)
                 {
                     return -1;
                 }
 
-                if (is_temp)
+                /*
+                 * 旧格式兼容：
+                 * temperature/humidity 放大10倍后转成 T/H 键值对。
+                 */
+                value_length = snprintf(
+                    value_text,
+                    sizeof(value_text),
+                    "%d",
+                    x10);
+
+                if (value_length < 0 ||
+                    (size_t)value_length >= sizeof(value_text) ||
+                    json_data_add_field(
+                        data,
+                        is_temp ? "T" : "H",
+                        1U,
+                        value_text,
+                        (size_t)value_length) != 0)
                 {
-                    temperature_x10 = x10;
-                    found_temp = 1;
-                }
-                else
-                {
-                    humidity_x10 = x10;
-                    found_humi = 1;
+                    return -1;
                 }
             }
             else if (is_seq)
@@ -1184,16 +1898,12 @@ int message_json_decode_data(
     /* 必需字段必须齐全 */
     if (!found_node ||
         !found_seq ||
-        !found_temp ||
-        !found_humi ||
         !found_type)
     {
         return -1;
     }
 
     data->sequence = sequence;
-    data->temperature_x10 = temperature_x10;
-    data->humidity_x10 = humidity_x10;
 
     return (int)(p - line);
 }

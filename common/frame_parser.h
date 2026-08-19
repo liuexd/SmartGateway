@@ -25,12 +25,15 @@
  * 一帧经过CRC校验后的通用结果。
  *
  * raw：
- * @1,NODE01,000001,DATA,T=253,H=601*3F2E\r\n
+ * @1,NODE01,000001,DATA,T=253,H=601,P=1013*3F2E\r\n
  * （完整原始帧，含帧头@、分隔符*、CRC和\r\n）
  *
  * payload：
- * 1,NODE01,000001,DATA,T=253,H=601
+ * 1,NODE01,000001,DATA,T=253,H=601,P=1013
  * （参与CRC计算的数据区，不含@、*、CRC和\r\n）
+ *
+ * 注：DATA 帧数据区为任意 KEY=VALUE 列表（见 frame_data_t），
+ * 其中的 T/H 仅为示例，字段含义由协议字典约定。
  *
  * received_crc   ：帧中携带的CRC值（帧尾*后面的4位十六进制）
  * calculated_crc ：对payload重新计算得到的CRC值
@@ -49,20 +52,60 @@ typedef struct
 } parsed_frame_t;
 
 /*
- * DATA（温湿度数据）帧解析后的数据。
+ * DATA（数据）帧解析后的数据。
  *
- * node_id        ：节点编号，例如 "NODE01"
- * sequence       ：帧序号，范围 0~999999
- * temperature_x10：温度放大10倍后的整数，253 表示 25.3℃
- * humidity_x10   ：湿度放大10倍后的整数，601 表示 60.1%
+ * node_id     ：节点编号，例如 "NODE01"
+ * sequence    ：帧序号，范围 0~999999
+ * fields      ：数据区键值对数组，例如 T=253、H=601、P=1013...
+ * field_count ：实际字段数量
+ *
+ * 字段的具体含义由协议字典约定，解析器不解释任何 key；
+ * 需要取某个字段时用 frame_data_find_field() 按 key 查找。
  */
 typedef struct
 {
     char node_id[32];
     uint32_t sequence;
-    int temperature_x10;
-    int humidity_x10;
+
+    frame_kv_t fields[FRAME_DATA_MAX_FIELDS];
+    size_t field_count;
 } frame_data_t;
+
+/*
+ * 按 key 在 DATA 帧解析结果中查找字段值。
+ *
+ * 例如 frame_data_find_field(&data, "T") 返回 "253"。
+ *
+ * @param data 已解析的 DATA 帧
+ * @param key  要查找的字段名，例如 "T"、"H"、"P"
+ *
+ * @return 找到时返回字段值字符串（'\0'结尾）；
+ *         未找到或参数非法时返回 NULL
+ */
+const char *frame_data_find_field(
+    const frame_data_t *data,
+    const char *key
+);
+
+/*
+ * 在任意键值对数组中按 key 查找字段值。
+ *
+ * DATA / CMD / ACK 的数据区都是 frame_kv_t 数组，
+ * 本函数可通用查找，例如：
+ *   frame_fields_find(cmd.fields, cmd.field_count, "LED")
+ *
+ * @param fields      键值对数组
+ * @param field_count 数组长度
+ * @param key         要查找的字段名，例如 "LED"、"MOTOR"
+ *
+ * @return 找到时返回字段值字符串（'\0'结尾）；
+ *         未找到或参数非法时返回 NULL
+ */
+const char *frame_fields_find(
+    const frame_kv_t *fields,
+    size_t field_count,
+    const char *key
+);
 
 /*
  * 解析器运行统计。
@@ -198,7 +241,11 @@ size_t frame_parser_feed(
  * 把已经通过CRC校验的DATA帧进一步解析为结构体。
  *
  * 帧格式示例：
- * 1,NODE01,000001,DATA,T=253,H=601
+ * 1,NODE01,000001,DATA,T=253,H=601,P=1013
+ *
+ * 解析结果中数据区为通用键值对数组 fields[]，
+ * 可承载任意字段（T/H/P/LED...），不限于温湿度；
+ * 用 frame_data_find_field() 按 key 取值。
  *
  * @param frame 已经通过CRC校验的帧
  * @param out   解析结果输出（成功时填充，失败时内容不变）
@@ -214,7 +261,11 @@ int frame_decode_data(
  * 把已经通过CRC校验的CMD帧进一步解析为结构体。
  *
  * 帧格式示例：
- * 1,GW01,000001,CMD,LED=1
+ * 1,GW01,000001,CMD,DEV=2,LED=1,MOTOR=50
+ *
+ * 解析结果中命令参数为通用键值对数组 fields[]，
+ * 可承载任意参数（LED/MOTOR/DEV...），不限于LED；
+ * 用 frame_fields_find() 按 key 取值。
  *
  * @param frame 已经通过CRC校验的帧
  * @param out   解析结果输出（成功时填充，失败时内容不变）
@@ -231,6 +282,9 @@ int frame_decode_command(
  *
  * 帧格式示例：
  * 1,NODE01,000001,ACK,LED=1
+ *
+ * 解析结果中回显状态为通用键值对数组 fields[]，
+ * 用 frame_fields_find() 按 key 取值。
  *
  * @param frame 已经通过CRC校验的帧
  * @param out   解析结果输出（成功时填充，失败时内容不变）
@@ -269,7 +323,7 @@ int frame_decode_nack(
  */
 typedef enum {
     FRAME_MESSAGE_UNKNOWN = 0, /* 未知类型，无法识别的帧 */
-    FRAME_MESSAGE_DATA,        /* 温湿度数据帧（DATA） */
+    FRAME_MESSAGE_DATA,        /* 数据帧（DATA，通用键值对） */
     FRAME_MESSAGE_CMD,         /* 控制命令帧（CMD） */
     FRAME_MESSAGE_ACK,         /* 命令成功应答帧（ACK） */
     FRAME_MESSAGE_NACK,        /* 命令失败应答帧（NACK） */

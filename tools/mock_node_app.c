@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -111,23 +112,61 @@ static void on_node_frame(
         case FRAME_MESSAGE_CMD:
         {
             frame_command_t cmd;
+            const char *led_text;
+            int led_value;
 
             if (frame_decode_command(frame, &cmd) == 0)
             {
                 /*
-                 * 解析成功：模拟设备执行操作。
+                 * 解析成功：从通用键值对中取 LED 参数。
                  *
+                 * 节点按协议字典解释字段：
+                 * 这里只处理 LED（0=灭，1=亮），
+                 * 其它未知字段忽略（未知命令/参数视为不支持）。
+                 */
+                led_text = frame_fields_find(
+                    cmd.fields,
+                    cmd.field_count,
+                    "LED"
+                );
+
+                if (led_text == NULL)
+                {
+                    /*
+                     * 命令里没有LED参数：
+                     * 设备不支持该命令，回发NACK。
+                     */
+                    printf(
+                        "[NODE] CMD from=%s seq=%06u no LED field "
+                        "-> unsupported, NACK\n",
+                        cmd.sender,
+                        (unsigned int)cmd.sequence
+                    );
+
+                    reply_length = frame_build_nack(
+                        reply,
+                        sizeof(reply),
+                        "NODE01",
+                        cmd.sequence,
+                        "unsupported_cmd"
+                    );
+                    break;
+                }
+
+                led_value = atoi(led_text);
+
+                /*
                  * LED控制值必须是0或1；
                  * 其它值视为设备不支持该操作，操作失败。
                  */
-                if (cmd.led_value != 0 && cmd.led_value != 1)
+                if (led_value != 0 && led_value != 1)
                 {
                     printf(
-                        "[NODE] CMD from=%s seq=%06u led=%d "
+                        "[NODE] CMD from=%s seq=%06u LED=%s "
                         "-> unsupported, NACK\n",
                         cmd.sender,
                         (unsigned int)cmd.sequence,
-                        cmd.led_value
+                        led_text
                     );
 
                     reply_length = frame_build_nack(
@@ -153,11 +192,11 @@ static void on_node_frame(
                          * 模拟设备偶发硬件故障，回发NACK。
                          */
                         printf(
-                            "[NODE] CMD from=%s seq=%06u led=%d "
+                            "[NODE] CMD from=%s seq=%06u LED=%s "
                             "-> simulated fault, NACK\n",
                             cmd.sender,
                             (unsigned int)cmd.sequence,
-                            cmd.led_value
+                            led_text
                         );
 
                         reply_length = frame_build_nack(
@@ -172,24 +211,42 @@ static void on_node_frame(
                     {
                         /*
                          * 操作成功：更新设备LED状态，回发ACK确认。
+                         *
+                         * ACK 使用通用键值对回显设备状态，
+                         * 与 DATA/CMD 保持同一套 KV 机制。
                          */
-                        context->led_state = cmd.led_value;
+                        frame_kv_t ack_fields[1];
 
-                        printf(
-                            "[NODE] CMD from=%s seq=%06u led=%d "
-                            "-> OK, led_state=%d, ACK\n",
-                            cmd.sender,
-                            (unsigned int)cmd.sequence,
-                            cmd.led_value,
+                        context->led_state = led_value;
+
+                        snprintf(
+                            ack_fields[0].key,
+                            sizeof(ack_fields[0].key),
+                            "LED"
+                        );
+                        snprintf(
+                            ack_fields[0].value,
+                            sizeof(ack_fields[0].value),
+                            "%d",
                             context->led_state
                         );
 
-                        reply_length = frame_build_ack(
+                        printf(
+                            "[NODE] CMD from=%s seq=%06u LED=%s "
+                            "-> OK, led_state=%d, ACK\n",
+                            cmd.sender,
+                            (unsigned int)cmd.sequence,
+                            led_text,
+                            context->led_state
+                        );
+
+                        reply_length = frame_build_ack_kv(
                             reply,
                             sizeof(reply),
                             "NODE01",
                             cmd.sequence,
-                            context->led_state
+                            ack_fields,
+                            1U
                         );
                     }
                 }
@@ -346,27 +403,42 @@ int mock_node_app_run(
         }
 
         /*
-         * 到达上报时间点：构造并上报一帧温湿度数据。
+         * 到达上报时间点：构造并上报一帧数据。
          *
-         * 让温湿度缓慢变化，便于确认收到的是新数据。
+         * 使用通用 KV 接口 frame_build_data_kv()：
+         *   - DEV=1 标识设备类型（温湿度传感器，见协议字典）；
+         *   - T/H/P 为传感器数据；
+         * 演示同一套协议承载任意字段、任意设备类型。
          */
+        frame_kv_t fields[4];
+
         temperature_x10 = 250 + (int)(sequence % 10U);
         humidity_x10 = 500 + (int)(sequence % 20U);
 
-        frame_length = frame_build_data(
+        snprintf(fields[0].key, sizeof(fields[0].key), FRAME_KV_DEV);
+        snprintf(fields[0].value, sizeof(fields[0].value), "%d",
+                 FRAME_DEVICE_THSENSOR);
+        snprintf(fields[1].key, sizeof(fields[1].key), "T");
+        snprintf(fields[1].value, sizeof(fields[1].value), "%d", temperature_x10);
+        snprintf(fields[2].key, sizeof(fields[2].key), "H");
+        snprintf(fields[2].value, sizeof(fields[2].value), "%d", humidity_x10);
+        snprintf(fields[3].key, sizeof(fields[3].key), "P");
+        snprintf(fields[3].value, sizeof(fields[3].value), "%d", 1013 + (int)(sequence % 10U));
+
+        frame_length = frame_build_data_kv(
             frame,
             sizeof(frame),
             "NODE01",
             sequence,
-            temperature_x10,
-            humidity_x10
+            fields,
+            4U
         );
 
         if (frame_length < 0)
         {
             fprintf(
                 stderr,
-                "frame_build_data failed: %d\n",
+                "frame_build_data_kv failed: %d\n",
                 frame_length
             );
 
@@ -383,10 +455,12 @@ int mock_node_app_run(
         }
 
         printf(
-            "TX seq=%06u, T=%.1f, H=%.1f\n",
+            "TX seq=%06u, dev=%s, fields=T=%d,H=%d,P=%d\n",
             (unsigned int)sequence,
-            temperature_x10 / 10.0,
-            humidity_x10 / 10.0
+            frame_device_type_name(FRAME_DEVICE_THSENSOR),
+            temperature_x10,
+            humidity_x10,
+            1013 + (int)(sequence % 10U)
         );
 
         /*

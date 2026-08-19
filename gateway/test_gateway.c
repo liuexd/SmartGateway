@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 /*
@@ -34,15 +35,35 @@ static void on_frame(
         (unsigned int)data.sequence
     );
 
-    printf(
-        "Temperature : %.1f C\n",
-        data.temperature_x10 / 10.0
-    );
+    for (size_t i = 0; i < data.field_count; i++)
+    {
+        printf(
+            "Field       : %s=%s\n",
+            data.fields[i].key,
+            data.fields[i].value
+        );
+    }
 
-    printf(
-        "Humidity    : %.1f %%\n",
-        data.humidity_x10 / 10.0
-    );
+    /*
+     * 温湿度可读输出（可选字段，存在才打印）。
+     */
+    {
+        const char *t = frame_data_find_field(&data, "T");
+        const char *h = frame_data_find_field(&data, "H");
+
+        if (t != NULL && h != NULL)
+        {
+            printf(
+                "Temperature : %.1f C\n",
+                atoi(t) / 10.0
+            );
+
+            printf(
+                "Humidity    : %.1f %%\n",
+                atoi(h) / 10.0
+            );
+        }
+    }
 }
 
 int main(int argc, char *argv[])

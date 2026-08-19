@@ -360,13 +360,39 @@ void gateway_app_on_frame(
             }
 
             printf(
-                "[DATA] node=%s seq=%06u "
-                "temperature=%.1f C humidity=%.1f %%\n",
+                "[DATA] node=%s seq=%06u fields=",
                 data.node_id,
-                (unsigned int)data.sequence,
-                data.temperature_x10 / 10.0,
-                data.humidity_x10 / 10.0
+                (unsigned int)data.sequence
             );
+
+            for (size_t i = 0; i < data.field_count; i++)
+            {
+                printf(
+                    "%s%s=%s",
+                    (i > 0U) ? "," : "",
+                    data.fields[i].key,
+                    data.fields[i].value
+                );
+            }
+
+            printf("\n");
+
+            /*
+             * 温湿度可读输出（可选字段，存在才打印）。
+             */
+            {
+                const char *t = frame_data_find_field(&data, "T");
+                const char *h = frame_data_find_field(&data, "H");
+
+                if (t != NULL && h != NULL)
+                {
+                    printf(
+                        "        temperature=%.1f C humidity=%.1f %%\n",
+                        atoi(t) / 10.0,
+                        atoi(h) / 10.0
+                    );
+                }
+            }
 
             json_length = message_json_build_data(
                 json,
@@ -402,11 +428,22 @@ void gateway_app_on_frame(
             }
 
             printf(
-                "[ACK] node=%s seq=%06u led=%d\n",
+                "[ACK] node=%s seq=%06u fields=",
                 ack.node_id,
-                (unsigned int)ack.sequence,
-                ack.led_value
+                (unsigned int)ack.sequence
             );
+
+            for (size_t i = 0; i < ack.field_count; i++)
+            {
+                printf(
+                    "%s%s=%s",
+                    (i > 0U) ? "," : "",
+                    ack.fields[i].key,
+                    ack.fields[i].value
+                );
+            }
+
+            printf("\n");
 
             json_length = message_json_build_ack(
                 json,
@@ -526,18 +563,30 @@ void gateway_app_on_tcp_line(
     }
 
     printf(
-        "[CMD] from server sender=%s seq=%06u led=%d\n",
+        "[CMD] from server sender=%s seq=%06u fields=",
         command.sender,
-        (unsigned int)command.sequence,
-        command.led_value
+        (unsigned int)command.sequence
     );
 
-    frame_length = frame_build_command(
+    for (size_t i = 0; i < command.field_count; i++)
+    {
+        printf(
+            "%s%s=%s",
+            (i > 0U) ? "," : "",
+            command.fields[i].key,
+            command.fields[i].value
+        );
+    }
+
+    printf("\n");
+
+    frame_length = frame_build_command_kv(
         frame,
         sizeof(frame),
         command.sender,
         command.sequence,
-        command.led_value
+        command.fields,
+        command.field_count
     );
 
     if (frame_length < 0)

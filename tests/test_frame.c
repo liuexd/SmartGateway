@@ -155,6 +155,50 @@ static int test_invalid_node_id(void)
     return 0;
 }
 
+/*
+ * 设备类型字典解析测试。
+ */
+static int test_device_type_dict(void)
+{
+    if (frame_device_type_from_text("1") != FRAME_DEVICE_THSENSOR)
+    {
+        printf("[FAIL] dev 1 should be THSENSOR\n");
+        return -1;
+    }
+
+    if (frame_device_type_from_text("2") != FRAME_DEVICE_RELAY)
+    {
+        printf("[FAIL] dev 2 should be RELAY\n");
+        return -1;
+    }
+
+    if (frame_device_type_from_text("3") != FRAME_DEVICE_MOTOR)
+    {
+        printf("[FAIL] dev 3 should be MOTOR\n");
+        return -1;
+    }
+
+    if (frame_device_type_from_text("99") != FRAME_DEVICE_UNKNOWN ||
+        frame_device_type_from_text(NULL) != FRAME_DEVICE_UNKNOWN ||
+        frame_device_type_from_text("") != FRAME_DEVICE_UNKNOWN)
+    {
+        printf("[FAIL] unknown dev should be UNKNOWN\n");
+        return -1;
+    }
+
+    if (strcmp(frame_device_type_name(FRAME_DEVICE_THSENSOR), "THSENSOR") != 0 ||
+        strcmp(frame_device_type_name(FRAME_DEVICE_RELAY), "RELAY") != 0 ||
+        strcmp(frame_device_type_name(FRAME_DEVICE_MOTOR), "MOTOR") != 0 ||
+        strcmp(frame_device_type_name(FRAME_DEVICE_UNKNOWN), "UNKNOWN") != 0)
+    {
+        printf("[FAIL] device type name mismatch\n");
+        return -1;
+    }
+
+    printf("[PASS] Device type dict test\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed_count = 0;
@@ -180,6 +224,11 @@ int main(void)
     }
 
     if (test_invalid_node_id() != 0)
+    {
+        failed_count++;
+    }
+
+    if (test_device_type_dict() != 0)
     {
         failed_count++;
     }

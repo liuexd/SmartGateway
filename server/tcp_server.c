@@ -35,9 +35,9 @@ int tcp_server_create(unsigned int port)
     server_addr.sin_port = htons((uint16_t)port);
 
     /*
-     * 只允许本地127.0.0.1连接。
+     * 监听所有网络接口，允许局域网/外网连接。
      */
-    server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     /*
      * 允许端口快速重用，避免重启时TIME_WAIT阻塞。

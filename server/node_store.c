@@ -134,6 +134,32 @@ static node_entry_t *node_store_find(
     return NULL;
 }
 
+/*
+ * 按 node_id 查找已占用的槽位（只读版本）。
+ *
+ * 与 node_store_find 的区别：接受 const 存储句柄，
+ * 供只读查询接口（设备类型/在线状态）使用。
+ *
+ * @return 找到返回槽位指针，未找到返回NULL
+ */
+static const node_entry_t *node_store_find_const(
+    const node_store_t *store,
+    const char *node_id)
+{
+    size_t i;
+
+    for (i = 0; i < store->count; i++)
+    {
+        if (store->entries[i].used &&
+            strcmp(store->entries[i].data.node_id, node_id) == 0)
+        {
+            return &store->entries[i];
+        }
+    }
+
+    return NULL;
+}
+
 int node_store_update(
     node_store_t *store,
     const frame_data_t *data)
@@ -218,4 +244,97 @@ int node_store_query(
     }
 
     return -1;
+}
+
+int node_store_query_device_type(
+    const node_store_t *store,
+    const char *node_id,
+    frame_device_type_t *type_out)
+{
+    const node_entry_t *entry;
+
+    if (store == NULL ||
+        node_id == NULL ||
+        node_id[0] == '\0' ||
+        type_out == NULL)
+    {
+        return -1;
+    }
+
+    entry = node_store_find_const(store, node_id);
+
+    if (entry == NULL)
+    {
+        return -1;
+    }
+
+    /*
+     * 设备类型从最近一次上报的 DEV 字段实时解析：
+     * 节点未上报 DEV 时返回 UNKNOWN。
+     */
+    *type_out = frame_device_type_from_text(
+        frame_data_find_field(&entry->data, FRAME_KV_DEV));
+
+    return 0;
+}
+
+int node_store_is_online(
+    const node_store_t *store,
+    const char *node_id,
+    time_t timeout_sec,
+    int *online_out)
+{
+    const node_entry_t *entry;
+    time_t now;
+
+    if (store == NULL ||
+        node_id == NULL ||
+        node_id[0] == '\0' ||
+        timeout_sec < 0 ||
+        online_out == NULL)
+    {
+        return -1;
+    }
+
+    entry = node_store_find_const(store, node_id);
+
+    if (entry == NULL)
+    {
+        return -1;
+    }
+
+    now = node_store_now();
+
+    *online_out = (now - entry->last_update < timeout_sec) ? 1 : 0;
+
+    return 0;
+}
+
+void node_store_foreach(
+    const node_store_t *store,
+    node_store_visit_cb_t callback,
+    void *user_data)
+{
+    size_t i;
+
+    if (store == NULL || callback == NULL)
+    {
+        return;
+    }
+
+    for (i = 0; i < store->count; i++)
+    {
+        if (!store->entries[i].used)
+        {
+            continue;
+        }
+
+        if (callback(
+                &store->entries[i].data,
+                store->entries[i].last_update,
+                user_data) != 0)
+        {
+            break;
+        }
+    }
 }

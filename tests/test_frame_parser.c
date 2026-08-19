@@ -37,7 +37,7 @@ static void on_frame(
     context->last_frame = *frame;
 
     /*
-     * 进一步解析NODE、序号、温湿度。
+     * 进一步解析NODE、序号、数据字段。
      */
     if (frame_decode_data(
             frame,
@@ -133,12 +133,9 @@ static int test_complete_frame(void)
         return -1;
     }
 
-    if (context.last_data.temperature_x10 != 253)
-    {
-        return -1;
-    }
-
-    if (context.last_data.humidity_x10 != 601)
+    if (context.last_data.field_count != 2U ||
+        strcmp(frame_data_find_field(&context.last_data, "T"), "253") != 0 ||
+        strcmp(frame_data_find_field(&context.last_data, "H"), "601") != 0)
     {
         return -1;
     }

@@ -26,6 +26,12 @@
 #define CMD_MAX_RETRIES     2     /* 超时最大重试次数 */
 #define CMD_RETRY_TABLE     16    /* 单次超时检查的输出容量 */
 
+/* 节点注册表打印周期（秒） */
+#define REGISTRY_PRINT_INTERVAL 10
+
+/* 节点在线判定阈值（秒）：超过该时长未上报视为离线 */
+#define NODE_ONLINE_TIMEOUT_SEC 30
+
 /*
  * on_line 回调上下文：
  * 打包节点存储与命令管理器，供回调使用。
@@ -245,13 +251,48 @@ static void on_line(
         return;
     }
 
-    printf(
-        "[NodeStore] node=%s seq=%u temperature=%.1f C humidity=%.1f %%\n",
-        data.node_id,
-        (unsigned int)data.sequence,
-        data.temperature_x10 / 10.0,
-        data.humidity_x10 / 10.0
-    );
+    {
+        frame_device_type_t dev_type;
+
+        dev_type = frame_device_type_from_text(
+            frame_data_find_field(&data, FRAME_KV_DEV));
+
+        printf(
+            "[NodeStore] node=%s seq=%u dev=%s fields=",
+            data.node_id,
+            (unsigned int)data.sequence,
+            frame_device_type_name(dev_type)
+        );
+    }
+
+    for (size_t i = 0; i < data.field_count; i++)
+    {
+        printf(
+            "%s%s=%s",
+            (i > 0U) ? "," : "",
+            data.fields[i].key,
+            data.fields[i].value
+        );
+    }
+
+    printf("\n");
+
+    /*
+     * 温湿度可读输出（可选字段，存在才打印）。
+     */
+    {
+        const char *t = frame_data_find_field(&data, "T");
+        const char *h = frame_data_find_field(&data, "H");
+
+        if (t != NULL && h != NULL)
+        {
+            printf(
+                "           temperature=%.1f C humidity=%.1f %%\n",
+                atoi(t) / 10.0,
+                atoi(h) / 10.0
+            );
+        }
+    }
 }
 
 /*
@@ -294,23 +335,91 @@ static int send_all(
 }
 
 /*
+ * 节点注册表遍历回调。
+ *
+ * 为每个已注册节点打印一行：node_id、设备类型、在线状态、最近上报时间。
+ */
+static int print_registry_entry(
+    const frame_data_t *data,
+    time_t last_update,
+    void *user_data)
+{
+    frame_device_type_t dev_type;
+    int online;
+    const node_store_t *store;
+    struct tm tm_buf;
+    char time_text[32];
+
+    (void)user_data;
+
+    store = (const node_store_t *)user_data;
+
+    dev_type = frame_device_type_from_text(
+        frame_data_find_field(data, FRAME_KV_DEV));
+
+    if (node_store_is_online(store, data->node_id,
+                             NODE_ONLINE_TIMEOUT_SEC, &online) != 0)
+    {
+        online = 0;
+    }
+
+    if (localtime_r(&last_update, &tm_buf) != NULL)
+    {
+        strftime(time_text, sizeof(time_text), "%H:%M:%S", &tm_buf);
+    }
+    else
+    {
+        strcpy(time_text, "????");
+    }
+
+    printf(
+        "  %-8s %-10s %s  last=%s\n",
+        data->node_id,
+        frame_device_type_name(dev_type),
+        online ? "[ONLINE ]" : "[OFFLINE]",
+        time_text
+    );
+
+    return 0;
+}
+
+/*
+ * 打印当前节点注册表。
+ *
+ * 列出所有已注册节点及其设备类型/在线状态。
+ */
+static void print_node_registry(const node_store_t *store)
+{
+    printf("\n--- Node registry ---\n");
+    node_store_foreach(store, print_registry_entry, (void *)store);
+    printf("---------------------\n");
+}
+
+/*
  * 从stdin读取一行命令，下发到网关。
  *
  * 支持：
  *   led <value>  -> 下发LED控制命令（参数合法性由设备侧校验）
+ *   nodes        -> 打印当前节点注册表
  *   help         -> 打印帮助
+ *
+ * LED命令内部转换为通用键值对（LED=value），
+ * 后续接入更多设备类型时，可扩展为任意 KEY=VALUE 参数。
  *
  * 命令序号由 command_manager 统一分配，并记录为等待应答状态。
  *
  * @param client_fd 网关连接socket（<0表示未连接）
  * @param manager   命令管理器
+ * @param store     节点存储（用于 nodes 命令）
  */
 static void handle_stdin_command(
     int client_fd,
-    command_manager_t *manager)
+    command_manager_t *manager,
+    node_store_t *store)
 {
     char command[CMD_BUFFER_SIZE];
     int led_value = -1;
+    frame_kv_t fields[1];
     uint32_t sequence;
 
     if (fgets(command, sizeof(command), stdin) == NULL)
@@ -323,7 +432,13 @@ static void handle_stdin_command(
 
     if (strcmp(command, "help") == 0)
     {
-        printf("Commands: led <value> | help\n");
+        printf("Commands: led <value> | nodes | help\n");
+        return;
+    }
+
+    if (strcmp(command, "nodes") == 0)
+    {
+        print_node_registry(store);
         return;
     }
 
@@ -343,12 +458,19 @@ static void handle_stdin_command(
         }
 
         /*
+         * LED参数转换为通用键值对。
+         */
+        snprintf(fields[0].key, sizeof(fields[0].key), "LED");
+        snprintf(fields[0].value, sizeof(fields[0].value), "%d", led_value);
+
+        /*
          * 分配序号并记录为等待应答。
          */
         if (command_manager_send(
                 manager,
                 CMD_SENDER,
-                led_value,
+                fields,
+                1U,
                 &sequence
             ) != 0)
         {
@@ -362,7 +484,8 @@ static void handle_stdin_command(
         memset(&cmd, 0, sizeof(cmd));
         strcpy(cmd.sender, CMD_SENDER);
         cmd.sequence = sequence;
-        cmd.led_value = led_value;
+        memcpy(cmd.fields, fields, sizeof(fields));
+        cmd.field_count = 1;
 
         json_length = message_json_build_command(
             json,
@@ -408,6 +531,7 @@ int main(int argc, char **argv)
     server_context_t server_ctx;
     char receive_buffer[RECEIVE_BUFFER_SIZE];
     size_t receive_length = 0;
+    time_t next_registry_print = 0;
 
     if(argc>=2)
     {
@@ -454,30 +578,44 @@ int main(int argc, char **argv)
     }
     printf("TCP server listening on 127.0.0.1:%u\n",(unsigned int)port);
     printf("Press Ctrl+C to stop.\n");
-    printf("Commands: led <value> to send a command to the gateway\n");
+    printf("Commands: led <value> | nodes | help\n");
     while(g_running)
     {
         struct pollfd pollfd[3];
         nfds_t poll_count;
         int poll_result;
+        time_t now;
 
         uint32_t retry_sequences[CMD_RETRY_TABLE];
-        int retry_leds[CMD_RETRY_TABLE];
+        frame_kv_t retry_fields[CMD_RETRY_TABLE][FRAME_DATA_MAX_FIELDS];
+        size_t retry_field_counts[CMD_RETRY_TABLE];
         uint32_t timeout_sequences[CMD_RETRY_TABLE];
         size_t retry_count = 0;
         size_t timeout_count = 0;
         size_t i;
 
         /*
+         * 周期性打印节点注册表（每 REGISTRY_PRINT_INTERVAL 秒）。
+         */
+        now = time(NULL);
+
+        if (now >= next_registry_print)
+        {
+            print_node_registry(store);
+            next_registry_print = now + REGISTRY_PRINT_INTERVAL;
+        }
+
+        /*
          * 检查超时未应答的命令并重发。
          */
         command_manager_check_timeouts(
             manager,
-            time(NULL),
+            now,
             CMD_TIMEOUT_SEC,
             CMD_MAX_RETRIES,
             retry_sequences,
-            retry_leds,
+            retry_fields,
+            retry_field_counts,
             CMD_RETRY_TABLE,
             &retry_count,
             timeout_sequences,
@@ -505,7 +643,8 @@ int main(int argc, char **argv)
             memset(&cmd, 0, sizeof(cmd));
             strcpy(cmd.sender, CMD_SENDER);
             cmd.sequence = retry_sequences[i];
-            cmd.led_value = retry_leds[i];
+            memcpy(cmd.fields, retry_fields[i], sizeof(retry_fields[i]));
+            cmd.field_count = retry_field_counts[i];
 
             json_length = message_json_build_command(
                 json,
@@ -586,7 +725,7 @@ int main(int argc, char **argv)
 
             if ((pollfd[stdin_index].revents & POLLIN) != 0)
             {
-                handle_stdin_command(client_fd, manager);
+                handle_stdin_command(client_fd, manager, store);
             }
         }
         //出现新的连接

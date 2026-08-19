@@ -17,8 +17,10 @@
 /*
  * 将DATA帧解析结果转换为JSON字符串。
  *
- * 生成格式：
- * {"node":"NODE01","seq":1,"type":"DATA","temperature":25.3,"humidity":60.1}
+ * 生成格式（数据区为通用键值对对象）：
+ * {"node":"NODE01","seq":1,"type":"DATA","fields":{"T":"253","H":"601"}}
+ *
+ * 值统一按字符串输出，保持与串口帧一致的原始精度。
  *
  * @param out     输出缓冲区
  * @param out_size 输出缓冲区大小
@@ -62,8 +64,8 @@ int message_json_build_nack(
 /*
  * 将CMD帧解析结果转换为JSON字符串。
  *
- * 生成格式：
- * {"node":"GATEWAY","seq":1,"type":"CMD","led":1}
+ * 生成格式（命令参数为通用键值对对象）：
+ * {"node":"GATEWAY","seq":1,"type":"CMD","fields":{"LED":"1","MOTOR":"50"}}
  *
  * @return 成功返回写入的字节数（不含'\0'），失败返回负数
  */
@@ -75,15 +77,20 @@ int message_json_build_command(
 /*
  * 将JSON字符串转换为CMD帧解析结果。
  *
- * 输入格式与 message_json_build_command() 的生成格式一致：
- * {"node":"GATEWAY","seq":1,"type":"CMD","led":1}
+ * 支持两种输入格式：
  *
- * 兼容 "led":"1" 这种字符串形式的参数；
+ * 1. 新格式（推荐，命令参数为通用键值对对象）：
+ *    {"node":"GATEWAY","seq":1,"type":"CMD","fields":{"LED":"1","MOTOR":"50"}}
+ *
+ * 2. 旧格式（兼容，单个 led 参数，自动转为 LED 键值对）：
+ *    {"node":"GATEWAY","seq":1,"type":"CMD","led":1}
+ *
+ * 必需字段为 node/seq/type；fields 对象可选。
  * 无关字段会被忽略，缺失必需字段或type不是"CMD"时解析失败。
  *
  * @param line        JSON文本（可带结尾的\r\n）
  * @param line_length JSON文本长度
- * @param command     解析结果输出（成功时填充sender/sequence/led_value，
+ * @param command     解析结果输出（成功时填充sender/sequence/fields，
  *                    失败时清零）
  *
  * @return 成功返回已消费的字节数（不含结尾'\0'），失败返回负数
@@ -97,15 +104,20 @@ int message_json_decode_command(
 /*
  * 将JSON字符串转换为ACK帧解析结果。
  *
- * 输入格式与 message_json_build_ack() 的生成格式一致：
- * {"node":"NODE01","seq":1,"type":"ACK","led":1}
+ * 支持两种输入格式：
  *
- * 兼容 "led":"1" 这种字符串形式的参数；
+ * 1. 新格式（推荐，回显为通用键值对对象）：
+ *    {"node":"NODE01","seq":1,"type":"ACK","fields":{"LED":"1"}}
+ *
+ * 2. 旧格式（兼容，单个 led 参数，自动转为 LED 键值对）：
+ *    {"node":"NODE01","seq":1,"type":"ACK","led":1}
+ *
+ * 必需字段为 node/seq/type；fields 对象可选。
  * 无关字段会被忽略，缺失必需字段或type不是"ACK"时解析失败。
  *
  * @param line        JSON文本（可带结尾的\r\n）
  * @param line_length JSON文本长度
- * @param ack         解析结果输出（成功时填充node_id/sequence/led_value，
+ * @param ack         解析结果输出（成功时填充node_id/sequence/fields，
  *                    失败时清零）
  *
  * @return 成功返回已消费的字节数（不含结尾'\0'），失败返回负数
@@ -140,17 +152,23 @@ int message_json_decode_nack(
 /*
  * 将JSON字符串转换为DATA帧解析结果。
  *
- * 输入格式与 message_json_build_data() 的生成格式一致：
- * {"node":"NODE01","seq":1,"type":"DATA","temperature":25.3,"humidity":60.1}
+ * 支持两种输入格式：
  *
- * temperature/humidity 支持带小数的数字，解析结果放大10倍
- * （25.3 -> 253，60.1 -> 601），与 frame_data_t 的语义一致。
+ * 1. 新格式（推荐，数据区为通用键值对对象）：
+ *    {"node":"NODE01","seq":1,"type":"DATA","fields":{"T":"253","H":"601"}}
+ *
+ * 2. 旧格式（兼容，temperature/humidity 为数字，解析后放大10倍
+ *    转成 T/H 两条键值对）：
+ *    {"node":"NODE01","seq":1,"type":"DATA","temperature":25.3,"humidity":60.1}
+ *
+ * 必需字段为 node/seq/type；fields 对象可选，其中每个键值对
+ * 都会原样存入 data->fields。
  * 无关字段会被忽略，缺失必需字段或type不是"DATA"时解析失败。
  *
  * @param line        JSON文本（可带结尾的\r\n）
  * @param line_length JSON文本长度
- * @param data        解析结果输出（成功时填充node_id/sequence/
- *                    temperature_x10/humidity_x10，失败时清零）
+ * @param data        解析结果输出（成功时填充node_id/sequence/fields，
+ *                    失败时清零）
  *
  * @return 成功返回已消费的字节数（不含结尾'\0'），失败返回负数
  */
