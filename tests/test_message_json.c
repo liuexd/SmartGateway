@@ -50,6 +50,127 @@ static int test_build_data(void)
     return 0;
 }
 
+static int test_node02_light_round_trip(void)
+{
+    frame_data_t data;
+    frame_data_t decode;
+    char json[256];
+    const char *light_raw;
+    int length;
+    int consumed;
+
+    /*
+     *构造NODE02光敏数据
+     */
+    memset(&data, 0 , sizeof(data));
+    memset(&decode, 0 ,sizeof(decode));
+
+    strcpy(data.node_id,"NODE02");
+    data.sequence = 1;
+
+    snprintf(
+        data.fields[0].key,
+        sizeof(data.fields[0].key),
+        "LIGHT_RAW"
+    );
+
+    snprintf(
+        data.fields[0].value,
+        sizeof(data.fields[0].value),
+        "%d",2200
+    );
+
+    data.field_count = 1;
+
+    /*
+     *frame_data_t -> JSON
+     */
+    length = message_json_build_data(
+        json,
+        sizeof(json),
+        &data
+    );
+
+    if(length < 0)
+    {
+        printf("[FAIL]  NODE02 build_data returned %d\n",length);
+        return -1;
+    }
+
+    printf("NODE02 Generated: %s", json);
+
+    /*
+     * 检查生成的JSON 是否符合
+     */
+
+    if (strcmp(
+            json,
+            "{\"node\":\"NODE02\",\"seq\":1,\"type\":\"DATA\","
+            "\"fields\":{\"LIGHT_RAW\":\"2200\"}}\n"
+        ) != 0)
+    {
+        printf("[FAIL] NODE02 LIGHT_RAW JSON mismatch\n");
+        return -1;
+    }
+
+    /*
+     *JSON -> frame_data_t
+     */
+     consumed = message_json_decode_data(
+        json,
+        (size_t)length,
+        &decode
+     );
+
+     if(consumed != length - 1 )
+     {
+        printf(
+            "[FAIL] NODE02 decode_data consumed=%d, experted=%d\n",
+            consumed,
+            length - 1);
+        return -1;
+     }
+     
+     if(strcmp(decode.node_id, "NODE02") != 0)
+     {
+        printf("[FAIL] NODE02 node_id mismatch\n");
+        return -1;
+     }
+
+     if(decode.sequence != 1)
+     {
+        printf("[FAIL] NODE02 sequence mismatch\n");
+        return -1;
+     }
+
+     /*
+      *从通用字段KV字段查找LIGHT_RAW
+      */
+     light_raw = frame_data_find_field(
+        &decode,
+        "LIGHT_RAW"
+     );
+
+     if(light_raw == NULL)
+     {
+        printf("[FAIL] NODE02 LIGHT_RAW field not found\n");
+        return -1;
+     }
+
+     if(strcmp(light_raw, "2200") != 0)
+     {
+        printf(
+            "[FAIL] NODE02 LIGHT_RAW value=%s, experted=2200\n",
+            light_raw
+        );
+        return -1;
+     }
+
+     printf("[PASS] NODE02 LIGHT_RAW round-trip test\n");
+
+     return 0;
+}
+
 static int test_build_ack(void)
 {
     frame_ack_t ack;
@@ -519,6 +640,7 @@ int main(void)
     int failures = 0;
 
     failures += test_build_data();
+    failures += test_node02_light_round_trip();
     failures += test_build_ack();
     failures += test_build_nack();
     failures += test_build_command();

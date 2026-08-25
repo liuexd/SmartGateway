@@ -29,6 +29,41 @@ static frame_data_t make_data(
     return data;
 }
 
+static frame_data_t make_light_data(
+    const char *node_id,
+    uint32_t sequence,
+    int light_raw
+)
+{
+    frame_data_t data;
+    memset(&data,0,sizeof(data));
+
+    strncpy(
+        data.node_id,
+        node_id,
+        sizeof(data.node_id)-1U
+    );
+
+    data.sequence = sequence;
+
+    snprintf(
+        data.fields[0].key,
+        sizeof(data.fields[0].key),
+        "LIGHT_RAW"
+    );
+
+        snprintf(
+        data.fields[0].value,
+        sizeof(data.fields[0].value),
+        "%d",
+        light_raw
+    );
+
+    data.field_count = 1;
+
+    return data;
+}
+
 /*
  * 构造一个带 DEV 设备类型字段的数据。
  */
@@ -141,6 +176,98 @@ static int test_update_query(void)
     node_store_destroy(store);
 
     printf("[PASS] update/query test\n");
+    return 0;
+}
+
+static int test_node02_light_data(void)
+{
+    node_store_t *store;
+    frame_data_t data;
+    frame_data_t out;
+    const char *light_raw;
+
+    /*
+     *创建最多保存四个阶段的node_store。
+     */
+    store = node_store_create(4);
+
+     if(store == NULL)
+     {
+        printf("[FAIL] NODE02 node_store create failed\n");
+        return -1;
+     }
+
+    /*
+     *构建node02
+     *node = NODE02, seq = 1, LIGHT_RAW = 2200
+     */
+
+     data = make_light_data(
+        "NODE02",
+        1,
+        2200
+     );
+
+     if(node_store_update(store, &data) != 0)
+     {
+        printf("[FAIL] NODE02 node_store update failed\n");
+        node_store_destroy(store);
+        return -1;
+     }
+
+     if(node_store_query(
+            store,
+            "NODE02",
+            &out) != 0)
+    {
+        printf("[FAIL] NODE02 node_store query failed\n");
+        node_store_destroy(store);
+        return -1;
+    }
+
+    /*
+     * 检查节点身份和序号
+     */
+    if(strcmp(out.node_id,"NODE02") != 0)
+    {
+        printf("[FAIL] NODE02 node_id mismatch\n");
+        node_store_destroy(store);
+        return -1;
+    }
+    if(out.sequence != 1)
+    {
+        printf("[FAIL] NODE02 sequence mismatch\n");
+        node_store_destroy(store);
+        return -1;
+    }
+
+    /*
+     *从KV中提取LIGHT_RAW
+     */
+    light_raw = frame_data_find_field(
+        &out,
+        "LIGHT_RAW"
+    );
+
+    if(light_raw == NULL)
+    {
+        printf("[FAIL] NODE02 LIGHT_RAW not found\n");
+        node_store_destroy(store);
+        return -1;
+    }
+
+    if(strcmp(light_raw, "2200") != 0)
+    {
+        printf("[FAIL] NODE02 LIGHT_RAW=%s, excepted=2200\n",
+        light_raw);
+        node_store_destroy(store);
+        return -1;
+    }
+
+    node_store_destroy(store);
+
+    printf("[PASS] NODE02 LIGHT_RAW node_store test\n");
+
     return 0;
 }
 
@@ -423,6 +550,9 @@ int main(void)
 
     failures += test_create_destroy();
     failures += test_update_query();
+
+    failures += test_node02_light_data();
+
     failures += test_lru_eviction();
     failures += test_null_params();
     failures += test_device_type_and_online();
