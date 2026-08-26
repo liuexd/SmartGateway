@@ -65,12 +65,22 @@ TOOLS_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(TOOLS_SRCS))
 
 
 # ============================================================
+# MOCK WIFI NODE
+# ============================================================
+
+MOCK_WIFI_SRCS := \
+	tools/mock_wifi_node.c
+
+MOCK_WIFI_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(MOCK_WIFI_SRCS))
+
+
+# ============================================================
 # 默认目标
 # ============================================================
 
-.PHONY: all gateway server mock_node clean
+.PHONY: all gateway server mock_node mock_wifi_node clean
 
-all: gateway server mock_node
+all: gateway server mock_node mock_wifi_node
 
 
 # ============================================================
@@ -100,6 +110,16 @@ $(BUILD_DIR)/gateway_server: $(COMMON_OBJS) $(SERVER_OBJS)
 mock_node: $(BUILD_DIR)/mock_node
 
 $(BUILD_DIR)/mock_node: $(COMMON_OBJS) $(TOOLS_OBJS)
+	$(CC) $^ -o $@
+
+
+# ============================================================
+# 生成WIFI模拟节点程序
+# ============================================================
+
+mock_wifi_node: $(BUILD_DIR)/mock_wifi_node
+
+$(BUILD_DIR)/mock_wifi_node: $(COMMON_OBJS) $(MOCK_WIFI_OBJS)
 	$(CC) $^ -o $@
 
 
