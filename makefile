@@ -33,6 +33,7 @@ GATEWAY_SRCS := \
 	gateway/main.c \
 	gateway/gateway_app.c \
 	gateway/gateway_loop.c \
+	gateway/wifi_server.c \
 	gateway/serial_port.c \
 	gateway/tcp_client.c
 

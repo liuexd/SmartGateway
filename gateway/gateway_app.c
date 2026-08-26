@@ -622,6 +622,94 @@ void gateway_app_on_tcp_line(
     );
 }
 
+void gateway_app_on_wifi_line(
+    const char *line,
+    size_t length,
+    void *user_data
+)
+{
+    gateway_context_t *context;
+    frame_data_t data;
+    const char *light_raw;
+
+    char json[256];
+    int json_length;
+
+    if(line == NULL || user_data == NULL)
+    {
+        return;
+    }
+
+    context = (gateway_context_t *)user_data;
+
+    if(message_json_decode_data(line,length,&data) < 0)
+    {
+        context ->decode_errors++;
+
+        fprintf(stderr,
+        "[WIFI] DATA decode failed: %.*s\n",
+        (int)length,
+        line
+        );
+
+        return;
+    }
+
+    printf(
+        "[WIFI DATA] node=%s seq=%06u fields=",
+        data.node_id,
+        data.sequence
+    );
+
+    for(size_t i=0; i<data.field_count;i++)
+    {
+        printf("%s%s=%s",
+        (i > 0U) ? "," :"",//添加中间的逗号
+        data.fields[i].key,
+        data.fields[i].value
+        );
+    }
+
+    printf("\n");
+
+    light_raw = frame_data_find_field(
+        &data,"LIGHT_RAW"
+        );
+
+    if(light_raw != NULL)
+    {
+        printf(
+            "            LIGHT_RAW=%s\n",
+            light_raw
+        );
+    }
+
+    /*
+     *将解码后的WIFIDATA重新序列化为标准JSON
+     *再通过现有的TCP发送给服务器
+     */
+
+    json_length = message_json_build_data(
+        json,
+        sizeof(json),
+        &data
+    );
+
+    if(json_length < 0)
+    {
+        fprintf(stderr,
+            "[WIFI] JSON build failed\n"
+        );
+        return;
+    }
+
+    gateway_app_send_json(
+        context,
+        json,
+        json_length
+    );
+}
+
 void gateway_app_print_stats(
     const gateway_context_t *context,
     const frame_parser_t *parser

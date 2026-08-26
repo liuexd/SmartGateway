@@ -111,6 +111,15 @@ void gateway_app_on_tcp_line(
 );
 
 /*
+ * 处理WIFI节点收到的一行DATA JSON
+ */
+void gateway_app_on_wifi_line(
+    const char*line,
+    size_t length,
+    void *user_data
+);
+
+/*
  * 打印退出时的统计信息。
  *
  * @param context 网关上下文

@@ -3,6 +3,7 @@
 #include "gateway_loop.h"
 #include "gateway_app.h"
 #include "line_parser.h"
+#include "wifi_server.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -17,6 +18,7 @@
  * 读缓冲大小。
  */
 #define GATEWAY_READ_BUFFER_SIZE 256
+#define GATEWAY_WIFI_PORT 7000
 
 /*
  * TCP接收累计缓冲区大小。
@@ -28,12 +30,19 @@ int gateway_loop_run(
     int baud_rate,
     gateway_context_t *context,
     frame_parser_t *parser,
-    const volatile int *running
-)
+    const volatile int *running)
 {
+    // gateway-server通信专用
     uint8_t read_buffer[GATEWAY_READ_BUFFER_SIZE];
     char tcp_buffer[GATEWAY_TCP_BUFFER_SIZE];
     size_t tcp_length = 0;
+
+    // wifi_node-gateway通信专用
+    char wifi_buffer[GATEWAY_TCP_BUFFER_SIZE];
+    size_t wifi_length = 0;
+
+    int wifi_listen_fd;
+    int wifi_client_fd = -1;
 
     if (serial_device == NULL ||
         context == NULL ||
@@ -50,6 +59,17 @@ int gateway_loop_run(
     /*
      * 外层循环负责串口断线重连。
      */
+
+    wifi_listen_fd = wifi_server_open(GATEWAY_WIFI_PORT);
+
+    if (wifi_listen_fd < 0)
+    {
+        fprintf(stderr, "[WIFI] cannot listen on port %d: %s\n", GATEWAY_WIFI_PORT, strerror(errno));
+        return -1;
+    }
+
+    printf("[WIFI] listening on port %d", GATEWAY_WIFI_PORT);
+
     while (*running)
     {
         int serial_fd;
@@ -57,8 +77,7 @@ int gateway_loop_run(
 
         serial_fd = serial_port_open(
             serial_device,
-            baud_rate
-        );
+            baud_rate);
 
         if (serial_fd < 0)
         {
@@ -66,8 +85,7 @@ int gateway_loop_run(
                 stderr,
                 "[IO] cannot open %s: %s; retry in 1 second\n",
                 serial_device,
-                strerror(errno)
-            );
+                strerror(errno));
 
             sleep(1);
             continue;
@@ -84,8 +102,7 @@ int gateway_loop_run(
         printf(
             "[IO] serial connected: %s, connection=%lu\n",
             serial_device,
-            context->serial_connections
-        );
+            context->serial_connections);
 
         /*
          * 记录当前串口fd，供应用层下发命令。
@@ -101,7 +118,13 @@ int gateway_loop_run(
          */
         while (*running && !disconnected)
         {
-            struct pollfd pollfds[2];
+            /*
+             * pollfds[0] = 蓝牙/串口
+             * pollfds[1] = GateWay -> Server TCP
+             * pollfds[2] = WIFI 节点监听 socket
+             * pollfds[3] = 已接入的 WIFI 节点客户端
+             */
+            struct pollfd pollfds[4];
             nfds_t poll_count;
             int poll_result;
 
@@ -110,15 +133,20 @@ int gateway_loop_run(
             pollfds[0].fd = serial_fd;
             pollfds[0].events = POLLIN;
             pollfds[0].revents = 0;
-            poll_count = 1;
 
-            if (context->tcp_fd >= 0)
-            {
-                pollfds[1].fd = context->tcp_fd;
-                pollfds[1].events = POLLIN;
-                pollfds[1].revents = 0;
-                poll_count = 2;
-            }
+            pollfds[1].fd = context->tcp_fd;
+            pollfds[1].events = POLLIN;
+            pollfds[1].revents = 0;
+
+            pollfds[2].fd = wifi_listen_fd;
+            pollfds[2].events = POLLIN;
+            pollfds[2].revents = 0;
+
+            pollfds[3].fd = wifi_client_fd;
+            pollfds[3].events = POLLIN;
+            pollfds[3].revents = 0;
+
+            poll_count = 4;
 
             poll_result = poll(pollfds, poll_count, 1000);
 
@@ -143,6 +171,104 @@ int gateway_loop_run(
                 continue;
             }
 
+            if ((pollfds[2].revents & POLLIN) != 0)
+            {
+                int new_client_fd;
+
+                new_client_fd = wifi_server_accept(wifi_listen_fd);
+                if (new_client_fd < 0)
+                {
+                    if (errno != EINTR)
+                    {
+                        fprintf(stderr,
+                                "[WIFI] accept failed: %s\n",
+                                strerror(errno));
+                    }
+                }
+                else
+                {
+                    // 目前只允许一个WiFi节点连接网关
+                    if (wifi_client_fd >= 0)
+                    {
+                        printf(
+                            "[WIFI] another node tried to connect; rejected\n");
+                        wifi_server_close(new_client_fd);
+                    }
+                    else
+                    {
+                        wifi_client_fd = new_client_fd;
+                        printf(
+                            "[WIFI] node connected, fd = %d\n",
+                            wifi_client_fd);
+                    }
+                }
+            }
+
+            if (
+                wifi_client_fd >= 0 &&
+                (pollfds[3].revents &
+                 (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0)
+            {
+                ssize_t received;
+
+                received = recv(wifi_client_fd,
+                                read_buffer,
+                                sizeof(read_buffer),
+                                0);
+                if (received > 0)
+                {
+                    size_t received_size;
+
+                    received_size = (size_t)received;
+
+                    if (wifi_length + received_size > sizeof(wifi_buffer))
+                    {
+                        fprintf(stderr,
+                                "[WIFI] receive buffer overflow\n");
+
+                        wifi_length = 0;
+                    }
+                    else
+                    {
+                        memcpy(
+                            wifi_buffer + wifi_length,
+                            read_buffer,
+                            received_size);
+
+                        wifi_length += received_size;
+
+                        line_parser_feed(
+                            wifi_buffer,
+                            &wifi_length,
+                            sizeof(wifi_buffer),
+                            gateway_app_on_wifi_line,
+                            context
+                        );
+                    }
+                }
+                else if (received == 0)
+                {
+                    printf("[WIFI] node disconnected\n");
+
+                    wifi_server_close(wifi_client_fd);
+                    wifi_client_fd = -1;
+                    wifi_length = 0;
+                }
+                else
+                {
+                    if (errno != EINTR)
+                    {
+                        fprintf(stderr,
+                                "[WIFI] recv failed: %s\n",
+                                strerror(errno));
+
+                        wifi_server_close(wifi_client_fd);
+                        wifi_client_fd = -1;
+                        wifi_length = 0;
+                    }
+                }
+            }
+
             /*
              * 处理TCP数据：服务器下发的命令JSON。
              */
@@ -155,8 +281,7 @@ int gateway_loop_run(
                     context->tcp_fd,
                     read_buffer,
                     sizeof(read_buffer),
-                    0
-                );
+                    0);
 
                 if (received > 0)
                 {
@@ -167,8 +292,7 @@ int gateway_loop_run(
                     {
                         fprintf(
                             stderr,
-                            "[TCP] accumulated receive buffer overflow\n"
-                        );
+                            "[TCP] accumulated receive buffer overflow\n");
 
                         /*
                          * 丢弃整条消息，等待服务器重新发送。
@@ -180,8 +304,7 @@ int gateway_loop_run(
                         memcpy(
                             tcp_buffer + tcp_length,
                             read_buffer,
-                            received_size
-                        );
+                            received_size);
                         tcp_length += received_size;
 
                         /*
@@ -192,8 +315,7 @@ int gateway_loop_run(
                             &tcp_length,
                             sizeof(tcp_buffer),
                             gateway_app_on_tcp_line,
-                            context
-                        );
+                            context);
                     }
                 }
                 else if (received == 0)
@@ -210,8 +332,7 @@ int gateway_loop_run(
                     fprintf(
                         stderr,
                         "[TCP] recv failed: %s\n",
-                        strerror(errno)
-                    );
+                        strerror(errno));
 
                     tcp_client_close(context->tcp_fd);
                     context->tcp_fd = -1;
@@ -230,8 +351,7 @@ int gateway_loop_run(
                 read_length = serial_port_read(
                     serial_fd,
                     read_buffer,
-                    sizeof(read_buffer)
-                );
+                    sizeof(read_buffer));
 
                 if (read_length > 0)
                 {
@@ -244,13 +364,11 @@ int gateway_loop_run(
                         read_buffer,
                         (size_t)read_length,
                         gateway_app_on_frame,
-                        context
-                    );
+                        context);
                 }
                 else if (
                     read_length ==
-                    SERIAL_READ_WOULD_BLOCK
-                )
+                    SERIAL_READ_WOULD_BLOCK)
                 {
                     /*
                      * poll之后数据被其他事件消耗，
@@ -295,6 +413,12 @@ int gateway_loop_run(
             sleep(1);
         }
     }
+
+    /*
+     * 退出主循环后清理WiFi资源。
+     */
+    wifi_server_close(wifi_client_fd);
+    wifi_server_close(wifi_listen_fd);
 
     return 0;
 }
