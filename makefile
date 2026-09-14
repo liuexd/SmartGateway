@@ -2,7 +2,8 @@
 CC := gcc
 
 # 编译选项
-CFLAGS := -Wall -Wextra -Werror -std=c11
+CFLAGS := -Wall -Wextra -Werror -std=c11 -pthread
+LDFLAGS := -pthread
 
 # 头文件搜索目录
 CPPFLAGS := -Icommon -Igateway -Iserver
@@ -34,6 +35,7 @@ GATEWAY_SRCS := \
 	gateway/gateway_app.c \
 	gateway/gateway_loop.c \
 	gateway/wifi_server.c \
+	gateway/wifi_client.c \
 	gateway/serial_port.c \
 	gateway/tcp_client.c
 
@@ -91,7 +93,7 @@ all: gateway server mock_node mock_wifi_node
 gateway: $(BUILD_DIR)/smart_gateway
 
 $(BUILD_DIR)/smart_gateway: $(COMMON_OBJS) $(GATEWAY_OBJS)
-	$(CC) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 
 # ============================================================
@@ -101,7 +103,7 @@ $(BUILD_DIR)/smart_gateway: $(COMMON_OBJS) $(GATEWAY_OBJS)
 server: $(BUILD_DIR)/gateway_server
 
 $(BUILD_DIR)/gateway_server: $(COMMON_OBJS) $(SERVER_OBJS)
-	$(CC) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 
 # ============================================================
@@ -111,7 +113,7 @@ $(BUILD_DIR)/gateway_server: $(COMMON_OBJS) $(SERVER_OBJS)
 mock_node: $(BUILD_DIR)/mock_node
 
 $(BUILD_DIR)/mock_node: $(COMMON_OBJS) $(TOOLS_OBJS)
-	$(CC) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 
 # ============================================================
@@ -121,7 +123,7 @@ $(BUILD_DIR)/mock_node: $(COMMON_OBJS) $(TOOLS_OBJS)
 mock_wifi_node: $(BUILD_DIR)/mock_wifi_node
 
 $(BUILD_DIR)/mock_wifi_node: $(COMMON_OBJS) $(MOCK_WIFI_OBJS)
-	$(CC) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 
 # ============================================================

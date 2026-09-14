@@ -654,8 +654,7 @@ void gateway_app_on_wifi_line(
 
         return;
     }
-
-    printf(
+  printf(
         "[WIFI DATA] node=%s seq=%06u fields=",
         data.node_id,
         data.sequence

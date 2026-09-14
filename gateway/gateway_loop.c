@@ -4,9 +4,12 @@
 #include "gateway_app.h"
 #include "line_parser.h"
 #include "wifi_server.h"
+#include "wifi_client.h"
 
+#include  <stdlib.h>
 #include <errno.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -38,11 +41,10 @@ int gateway_loop_run(
     size_t tcp_length = 0;
 
     // wifi_node-gateway通信专用
-    char wifi_buffer[GATEWAY_TCP_BUFFER_SIZE];
-    size_t wifi_length = 0;
-
+    //后续由于程序改为多线程，导致wifi_buffer、wifi_length、client_fd只属于每个work自己
     int wifi_listen_fd;
-    int wifi_client_fd = -1;
+    wifi_worker_group_t wifi_workers;
+
 
     if (serial_device == NULL ||
         context == NULL ||
@@ -68,7 +70,18 @@ int gateway_loop_run(
         return -1;
     }
 
-    printf("[WIFI] listening on port %d", GATEWAY_WIFI_PORT);
+    printf("[WIFI] listening on port %d\n", GATEWAY_WIFI_PORT);
+
+    if(wifi_worker_group_init(&wifi_workers)!=0)
+    {
+        fprintf(stderr,
+        "[WIFI]  worker group init failed\n"
+        );
+
+        wifi_server_close(wifi_listen_fd);
+
+        return -1;
+    }
 
     while (*running)
     {
@@ -78,7 +91,7 @@ int gateway_loop_run(
         serial_fd = serial_port_open(
             serial_device,
             baud_rate);
-
+        //这里会导致如果串口进不去程序才会进入内部，后面会用多线程进行优化
         if (serial_fd < 0)
         {
             fprintf(
@@ -142,11 +155,7 @@ int gateway_loop_run(
             pollfds[2].events = POLLIN;
             pollfds[2].revents = 0;
 
-            pollfds[3].fd = wifi_client_fd;
-            pollfds[3].events = POLLIN;
-            pollfds[3].revents = 0;
-
-            poll_count = 4;
+            poll_count = 3;
 
             poll_result = poll(pollfds, poll_count, 1000);
 
@@ -187,87 +196,64 @@ int gateway_loop_run(
                 }
                 else
                 {
-                    // 目前只允许一个WiFi节点连接网关
-                    if (wifi_client_fd >= 0)
-                    {
-                        printf(
-                            "[WIFI] another node tried to connect; rejected\n");
-                        wifi_server_close(new_client_fd);
-                    }
-                    else
-                    {
-                        wifi_client_fd = new_client_fd;
-                        printf(
-                            "[WIFI] node connected, fd = %d\n",
-                            wifi_client_fd);
-                    }
-                }
-            }
+                    wifi_client_context_t *client;
+                    pthread_t thread;
+                    int pthread_result;
+                    //
+                    client = malloc(sizeof(*client));
 
-            if (
-                wifi_client_fd >= 0 &&
-                (pollfds[3].revents &
-                 (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0)
-            {
-                ssize_t received;
-
-                received = recv(wifi_client_fd,
-                                read_buffer,
-                                sizeof(read_buffer),
-                                0);
-                if (received > 0)
-                {
-                    size_t received_size;
-
-                    received_size = (size_t)received;
-
-                    if (wifi_length + received_size > sizeof(wifi_buffer))
+                    if(client == NULL)
                     {
                         fprintf(stderr,
-                                "[WIFI] receive buffer overflow\n");
+                            "[WIFI] malloc client context failed\n");
+                            wifi_server_close(new_client_fd);
 
-                        wifi_length = 0;
                     }
-                    else
-                    {
-                        memcpy(
-                            wifi_buffer + wifi_length,
-                            read_buffer,
-                            received_size);
+                    else{
+                        client->client_fd = new_client_fd;
+                        client->gateway_context = context;
+                        client->running = running;
+                        client->wifi_worker_group = &wifi_workers;
 
-                        wifi_length += received_size;
+                        wifi_worker_group_add(&wifi_workers);
 
-                        line_parser_feed(
-                            wifi_buffer,
-                            &wifi_length,
-                            sizeof(wifi_buffer),
-                            gateway_app_on_wifi_line,
-                            context
+                        pthread_result = pthread_create(
+                            &thread,
+                            NULL,
+                            wifi_client_worker,
+                            client
                         );
-                    }
-                }
-                else if (received == 0)
-                {
-                    printf("[WIFI] node disconnected\n");
 
-                    wifi_server_close(wifi_client_fd);
-                    wifi_client_fd = -1;
-                    wifi_length = 0;
-                }
-                else
-                {
-                    if (errno != EINTR)
-                    {
-                        fprintf(stderr,
-                                "[WIFI] recv failed: %s\n",
-                                strerror(errno));
+                        if(pthread_result != 0)
+                        {
+                            fprintf(
+                                stderr,
+                                "[WIFI] pthread_create failed: %s\n",
+                                strerror(pthread_result)
+                            );
 
-                        wifi_server_close(wifi_client_fd);
-                        wifi_client_fd = -1;
-                        wifi_length = 0;
+                            wifi_server_close(new_client_fd);
+                            free(client);
+                            wifi_worker_group_remove(&wifi_workers);
+                        }
+                        else{
+                            printf("[WIFI] worker create, fd=%d\n",new_client_fd);
+
+                            pthread_result = pthread_detach(thread);
+
+                            if(pthread_result != 0)
+                            {
+                                fprintf(
+                                    stderr,
+                                    "[WIFI] pthread_detach failed: %s\n",
+                                    strerror(pthread_result)
+                                );
+                            }
+                        }
                     }
                 }
             }
+
 
             /*
              * 处理TCP数据：服务器下发的命令JSON。
@@ -417,8 +403,14 @@ int gateway_loop_run(
     /*
      * 退出主循环后清理WiFi资源。
      */
-    wifi_server_close(wifi_client_fd);
     wifi_server_close(wifi_listen_fd);
+    printf("[WIFI] waiting for client workers...\n");
+
+    wifi_worker_group_wait(&wifi_workers);
+
+    printf("[WIFI] all client workers stopped\n");
+
+    wifi_worker_group_destroy(&wifi_workers);
 
     return 0;
 }
