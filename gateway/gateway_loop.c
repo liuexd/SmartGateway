@@ -5,6 +5,7 @@
 #include "line_parser.h"
 #include "wifi_server.h"
 #include "wifi_client.h"
+#include "bluetooth_worker.h"
 
 #include  <stdlib.h>
 #include <errno.h>
@@ -45,6 +46,12 @@ int gateway_loop_run(
     int wifi_listen_fd;
     wifi_worker_group_t wifi_workers;
 
+    //蓝牙节点
+    pthread_t bluetooth_thread;
+    bluetooth_worker_context_t bluetooth_context;
+    int bluetooth_thread_created = 0;
+
+
 
     if (serial_device == NULL ||
         context == NULL ||
@@ -83,327 +90,256 @@ int gateway_loop_run(
         return -1;
     }
 
-    while (*running)
-    {
-        int serial_fd;
-        int disconnected = 0;
+    bluetooth_context.serial_device = serial_device;
+    bluetooth_context.baud_rate = baud_rate;
+    bluetooth_context.gateway_context = context;
+    bluetooth_context.parser = parser = parser;
+    bluetooth_context.running = running;
 
-        serial_fd = serial_port_open(
-            serial_device,
-            baud_rate);
-        //这里会导致如果串口进不去程序才会进入内部，后面会用多线程进行优化
-        if (serial_fd < 0)
+    {
+        int pthread_result;
+        pthread_result = pthread_create(
+            &bluetooth_thread,
+            NULL,
+            bluetooth_worker,
+            &bluetooth_context
+        );
+
+        if(pthread_result != 0)
         {
             fprintf(
                 stderr,
-                "[IO] cannot open %s: %s; retry in 1 second\n",
-                serial_device,
-                strerror(errno));
+                "[BT] pthread_create failed: %s\n",
+                strerror(pthread_result)
+            );
 
-            sleep(1);
+            wifi_worker_group_destroy(&wifi_workers);
+
+            wifi_server_close(wifi_listen_fd);
+
+            return -1;
+        }
+
+        bluetooth_thread_created = 1;
+    }
+
+    while (*running)
+    {
+        /*
+            * pollfds[0] = 蓝牙/串口
+            * pollfds[1] = GateWay -> Server TCP
+            * pollfds[2] = WIFI 节点监听 socket
+            * pollfds[3] = 已接入的 WIFI 节点客户端
+            */
+        struct pollfd pollfds[2];
+        nfds_t poll_count;
+        int poll_result;
+
+        gateway_app_try_tcp_connect(context);
+
+        pollfds[0].fd = context->tcp_fd;
+        pollfds[0].events = POLLIN;
+        pollfds[0].revents = 0;
+
+        pollfds[1].fd = wifi_listen_fd;
+        pollfds[1].events = POLLIN;
+        pollfds[1].revents = 0;
+
+        poll_count = 2;
+
+        poll_result = poll(pollfds, poll_count, 1000);
+
+        if (poll_result < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            fprintf(stderr, "[IO] poll failed: %s\n", strerror(errno));
             continue;
         }
 
-        context->serial_connections++;
-
-        /*
-         * 重新连接后丢弃上一次断线残留的半帧，
-         * 但保留统计信息。
-         */
-        frame_parser_reset(parser);
-
-        printf(
-            "[IO] serial connected: %s, connection=%lu\n",
-            serial_device,
-            context->serial_connections);
-
-        /*
-         * 记录当前串口fd，供应用层下发命令。
-         */
-        context->serial_fd = serial_fd;
-
-        /*
-         * 内层循环负责正常读取。
-         *
-         * 串口和TCP同时监听：
-         *   串口可读 -> 解析协议帧（DATA/ACK/NACK）并上报服务器；
-         *   TCP可读  -> 解析服务器下发的命令JSON，组帧后写串口。
-         */
-        while (*running && !disconnected)
+        if (poll_result == 0)
         {
             /*
-             * pollfds[0] = 蓝牙/串口
-             * pollfds[1] = GateWay -> Server TCP
-             * pollfds[2] = WIFI 节点监听 socket
-             * pollfds[3] = 已接入的 WIFI 节点客户端
-             */
-            struct pollfd pollfds[4];
-            nfds_t poll_count;
-            int poll_result;
+                * 一秒内没有数据不是错误。
+                * 继续检查退出标志。
+                */
+            continue;
+        }
 
-            gateway_app_try_tcp_connect(context);
+        if ((pollfds[1].revents & POLLIN) != 0)
+        {
+            int new_client_fd;
 
-            pollfds[0].fd = serial_fd;
-            pollfds[0].events = POLLIN;
-            pollfds[0].revents = 0;
-
-            pollfds[1].fd = context->tcp_fd;
-            pollfds[1].events = POLLIN;
-            pollfds[1].revents = 0;
-
-            pollfds[2].fd = wifi_listen_fd;
-            pollfds[2].events = POLLIN;
-            pollfds[2].revents = 0;
-
-            poll_count = 3;
-
-            poll_result = poll(pollfds, poll_count, 1000);
-
-            if (poll_result < 0)
+            new_client_fd = wifi_server_accept(wifi_listen_fd);
+            if (new_client_fd < 0)
             {
-                if (errno == EINTR)
+                if (errno != EINTR)
                 {
-                    continue;
+                    fprintf(stderr,
+                            "[WIFI] accept failed: %s\n",
+                            strerror(errno));
                 }
-
-                fprintf(stderr, "[IO] poll failed: %s\n", strerror(errno));
-                disconnected = 1;
-                continue;
             }
-
-            if (poll_result == 0)
+            else
             {
-                /*
-                 * 一秒内没有数据不是错误。
-                 * 继续检查退出标志。
-                 */
-                continue;
-            }
+                wifi_client_context_t *client;
+                pthread_t thread;
+                int pthread_result;
+                //
+                client = malloc(sizeof(*client));
 
-            if ((pollfds[2].revents & POLLIN) != 0)
-            {
-                int new_client_fd;
-
-                new_client_fd = wifi_server_accept(wifi_listen_fd);
-                if (new_client_fd < 0)
+                if(client == NULL)
                 {
-                    if (errno != EINTR)
-                    {
-                        fprintf(stderr,
-                                "[WIFI] accept failed: %s\n",
-                                strerror(errno));
-                    }
+                    fprintf(stderr,
+                        "[WIFI] malloc client context failed\n");
+                        wifi_server_close(new_client_fd);
+
                 }
-                else
-                {
-                    wifi_client_context_t *client;
-                    pthread_t thread;
-                    int pthread_result;
-                    //
-                    client = malloc(sizeof(*client));
+                else{
+                    client->client_fd = new_client_fd;
+                    client->gateway_context = context;
+                    client->running = running;
+                    client->wifi_worker_group = &wifi_workers;
 
-                    if(client == NULL)
+                    wifi_worker_group_add(&wifi_workers);
+
+                    pthread_result = pthread_create(
+                        &thread,
+                        NULL,
+                        wifi_client_worker,
+                        client
+                    );
+
+                    if(pthread_result != 0)
                     {
-                        fprintf(stderr,
-                            "[WIFI] malloc client context failed\n");
-                            wifi_server_close(new_client_fd);
+                        fprintf(
+                            stderr,
+                            "[WIFI] pthread_create failed: %s\n",
+                            strerror(pthread_result)
+                        );
 
+                        wifi_server_close(new_client_fd);
+                        free(client);
+                        wifi_worker_group_remove(&wifi_workers);
                     }
                     else{
-                        client->client_fd = new_client_fd;
-                        client->gateway_context = context;
-                        client->running = running;
-                        client->wifi_worker_group = &wifi_workers;
+                        printf("[WIFI] worker create, fd=%d\n",new_client_fd);
 
-                        wifi_worker_group_add(&wifi_workers);
-
-                        pthread_result = pthread_create(
-                            &thread,
-                            NULL,
-                            wifi_client_worker,
-                            client
-                        );
+                        pthread_result = pthread_detach(thread);
 
                         if(pthread_result != 0)
                         {
                             fprintf(
                                 stderr,
-                                "[WIFI] pthread_create failed: %s\n",
+                                "[WIFI] pthread_detach failed: %s\n",
                                 strerror(pthread_result)
                             );
-
-                            wifi_server_close(new_client_fd);
-                            free(client);
-                            wifi_worker_group_remove(&wifi_workers);
-                        }
-                        else{
-                            printf("[WIFI] worker create, fd=%d\n",new_client_fd);
-
-                            pthread_result = pthread_detach(thread);
-
-                            if(pthread_result != 0)
-                            {
-                                fprintf(
-                                    stderr,
-                                    "[WIFI] pthread_detach failed: %s\n",
-                                    strerror(pthread_result)
-                                );
-                            }
                         }
                     }
                 }
             }
+        }
 
 
-            /*
-             * 处理TCP数据：服务器下发的命令JSON。
-             */
-            if (context->tcp_fd >= 0 &&
-                (pollfds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0)
+        /*
+            * 处理TCP数据：服务器下发的命令JSON。
+            */
+        if (context->tcp_fd >= 0 &&
+            (pollfds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0)
+        {
+            ssize_t received;
+
+            received = recv(
+                context->tcp_fd,
+                read_buffer,
+                sizeof(read_buffer),
+                0);
+
+            if (received > 0)
             {
-                ssize_t received;
+                size_t received_size = (size_t)received;
 
-                received = recv(
-                    context->tcp_fd,
-                    read_buffer,
-                    sizeof(read_buffer),
-                    0);
-
-                if (received > 0)
-                {
-                    size_t received_size = (size_t)received;
-
-                    if (tcp_length + received_size >
-                        sizeof(tcp_buffer))
-                    {
-                        fprintf(
-                            stderr,
-                            "[TCP] accumulated receive buffer overflow\n");
-
-                        /*
-                         * 丢弃整条消息，等待服务器重新发送。
-                         */
-                        tcp_length = 0;
-                    }
-                    else
-                    {
-                        memcpy(
-                            tcp_buffer + tcp_length,
-                            read_buffer,
-                            received_size);
-                        tcp_length += received_size;
-
-                        /*
-                         * 按行拆分JSON消息，逐条处理。
-                         */
-                        line_parser_feed(
-                            tcp_buffer,
-                            &tcp_length,
-                            sizeof(tcp_buffer),
-                            gateway_app_on_tcp_line,
-                            context);
-                    }
-                }
-                else if (received == 0)
-                {
-                    printf("[TCP] server disconnected\n");
-
-                    tcp_client_close(context->tcp_fd);
-                    context->tcp_fd = -1;
-                    tcp_length = 0;
-                    context->next_tcp_retry = time(NULL) + 1;
-                }
-                else if (errno != EINTR)
+                if (tcp_length + received_size >
+                    sizeof(tcp_buffer))
                 {
                     fprintf(
                         stderr,
-                        "[TCP] recv failed: %s\n",
-                        strerror(errno));
+                        "[TCP] accumulated receive buffer overflow\n");
 
-                    tcp_client_close(context->tcp_fd);
-                    context->tcp_fd = -1;
+                    /*
+                        * 丢弃整条消息，等待服务器重新发送。
+                        */
                     tcp_length = 0;
-                    context->next_tcp_retry = time(NULL) + 1;
-                }
-            }
-
-            /*
-             * 处理串口数据：节点上报的协议帧。
-             */
-            if ((pollfds[0].revents & POLLIN) != 0)
-            {
-                ssize_t read_length;
-
-                read_length = serial_port_read(
-                    serial_fd,
-                    read_buffer,
-                    sizeof(read_buffer));
-
-                if (read_length > 0)
-                {
-                    /*
-                     * 不能把read_buffer当字符串处理。
-                     * 它不一定带'\0'，也不一定是一整帧。
-                     */
-                    frame_parser_feed(
-                        parser,
-                        read_buffer,
-                        (size_t)read_length,
-                        gateway_app_on_frame,
-                        context);
-                }
-                else if (
-                    read_length ==
-                    SERIAL_READ_WOULD_BLOCK)
-                {
-                    /*
-                     * poll之后数据被其他事件消耗，
-                     * 或发生竞争，不属于错误。
-                     */
-                    continue;
-                }
-                else if (read_length == 0)
-                {
-                    fprintf(stderr, "[IO] serial device reached EOF\n");
-                    disconnected = 1;
                 }
                 else
                 {
-                    fprintf(stderr, "[IO] read failed: %s\n", strerror(errno));
-                    disconnected = 1;
+                    memcpy(
+                        tcp_buffer + tcp_length,
+                        read_buffer,
+                        received_size);
+                    tcp_length += received_size;
+
+                    /*
+                        * 按行拆分JSON消息，逐条处理。
+                        */
+                    line_parser_feed(
+                        tcp_buffer,
+                        &tcp_length,
+                        sizeof(tcp_buffer),
+                        gateway_app_on_tcp_line,
+                        context);
                 }
             }
-
-            /*
-             * 串口挂断/错误时退出内层循环，
-             * 由外层循环负责重连。
-             */
-            if ((pollfds[0].revents &
-                 (POLLHUP | POLLERR | POLLNVAL)) != 0)
+            else if (received == 0)
             {
-                fprintf(stderr, "[IO] serial device disconnected\n");
-                disconnected = 1;
+                printf("[TCP] server disconnected\n");
+
+                tcp_client_close(context->tcp_fd);
+                context->tcp_fd = -1;
+                tcp_length = 0;
+                context->next_tcp_retry = time(NULL) + 1;
+            }
+            else if (errno != EINTR)
+            {
+                fprintf(
+                    stderr,
+                    "[TCP] recv failed: %s\n",
+                    strerror(errno));
+
+                tcp_client_close(context->tcp_fd);
+                context->tcp_fd = -1;
+                tcp_length = 0;
+                context->next_tcp_retry = time(NULL) + 1;
             }
         }
+    }
 
-        context->serial_fd = -1;
-        serial_port_close(serial_fd);
-
-        /*
-         * 程序不是因为Ctrl+C退出，
-         * 而是串口断开，则等待1秒重新连接。
-         */
-        if (*running)
-        {
-            fprintf(stderr, "[IO] retry connection in 1 second\n");
-            sleep(1);
-        }
+    /*
+     * 程序不是因为Ctrl+C退出，
+     * 而是串口断开，则等待1秒重新连接。
+     */
+    if (*running)
+    {
+        fprintf(stderr, "[IO] retry connection in 1 second\n");
+        sleep(1);
     }
 
     /*
      * 退出主循环后清理WiFi资源。
      */
     wifi_server_close(wifi_listen_fd);
+
+    printf("[BT] waitting for Bluetooth worker...\n");
+
+    if(bluetooth_thread_created)
+    {
+        pthread_join(bluetooth_thread,NULL);
+    }
+    printf("[BT] Bluetooth worker stopped\n");
+
     printf("[WIFI] waiting for client workers...\n");
 
     wifi_worker_group_wait(&wifi_workers);

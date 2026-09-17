@@ -34,6 +34,7 @@ GATEWAY_SRCS := \
 	gateway/main.c \
 	gateway/gateway_app.c \
 	gateway/gateway_loop.c \
+	gateway/bluetooth_worker.c \
 	gateway/wifi_server.c \
 	gateway/wifi_client.c \
 	gateway/serial_port.c \
