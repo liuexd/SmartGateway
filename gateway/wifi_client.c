@@ -22,7 +22,8 @@ void *wifi_client_worker(void *arg)
     gateway_context_t  *gateway_context;
     const volatile int *running;
     wifi_worker_group_t  *worker_group;
-
+    message_queue_t *upstream_queue;
+    gateway_app_upstream_context_t app_context;
 
     uint8_t  read_buffer[WIFI_CLIENT_READ_BUFFER_SIZE];
     char wifi_buffer[WIFI_CLIENT_BUFFER_SIZE];
@@ -42,6 +43,7 @@ void *wifi_client_worker(void *arg)
     gateway_context = client->gateway_context;
     running = client->running;
     worker_group = client->wifi_worker_group;
+    upstream_queue = client ->upstream_queue;
 
     /*
      * 启动参数结构体已经没有用了。
@@ -49,6 +51,9 @@ void *wifi_client_worker(void *arg)
      */
 
     free(client);
+
+    app_context.gateway_context = gateway_context;
+    app_context.upstream_queue = upstream_queue;
 
     printf("[WIFI WORKER] started, fd=%d\n", client_fd);
 
@@ -140,7 +145,7 @@ void *wifi_client_worker(void *arg)
                     &wifi_length,
                     sizeof(wifi_buffer),
                     gateway_app_on_wifi_line,
-                    gateway_context
+                    &app_context
                 );
 
                 continue;
@@ -216,7 +221,6 @@ void *wifi_client_worker(void *arg)
     //         );
 
     //         wifi_length += received_size;
-
     //         /*
     //          *TCP没有消息边界
     //          *继续复用现有的JSON Lines解析器

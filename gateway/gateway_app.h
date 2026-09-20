@@ -4,8 +4,24 @@
 #include "frame_parser.h"
 #include "serial_port.h"
 #include "tcp_client.h"
+#include "message_queue.h"
 
 #include <time.h>
+
+/*
+ * 设备上行回调上下文。
+ *
+ * Bluetooth Worker / WiFi Worker 都通过它访问：
+ * 1. 原有 Gateway 运行状态；
+ * 2. M7-6 上行消息队列。
+ */
+typedef struct 
+{
+    gateway_context_t *gateway_context;
+
+    message_queue_t *upstream_queue;
+}gateway_app_upstream_context_t;
+
 
 /*
  * =====================================================================

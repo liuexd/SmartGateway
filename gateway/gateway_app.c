@@ -269,45 +269,52 @@ void gateway_app_try_tcp_connect(gateway_context_t *context)
 }
 
 /*
- * 通过TCP将JSON发送到服务器。
+ * 通过TCP将JSON加入队列
  *
  * 未连接时丢弃并计数（后续可考虑缓存重发）。
  */
-static void gateway_app_send_json(
-    gateway_context_t *context,
+static void gateway_app_enqueue_json(
+    message_queue_t *queue,
     const char *json,
     int json_length
 )
 {
-    if (context == NULL || json == NULL || json_length < 0)
+    gateway_message_t message;
+    int result;
+
+    if (queue == NULL || json == NULL || json_length < 0)
     {
         return;
     }
 
-    if (context->tcp_fd < 0)
+    if((size_t)json_length > sizeof(message.data))
     {
-        context->tcp_dropped++;
-        fprintf(stderr, "[TCP] not connected, message dropped\n");
+        fprintf(stderr,
+        "[QUEUE] json too large, byte = %d",json_length);
         return;
     }
 
-    if (tcp_client_send_all(
-            context->tcp_fd,
-            json,
-            (size_t)json_length
-        ) != 0)
-    {
-        context->tcp_send_error++;
-        fprintf(stderr, "[TCP] send failed: %s\n", strerror(errno));
+    memset(&message,0,sizeof(message));
 
-        tcp_client_close(context->tcp_fd);
-        context->tcp_fd = -1;
-        context->next_tcp_retry = time(NULL) + 1;
+    memcpy(message.data,json,(size_t)json_length);
+
+    message.length = (size_t)json_length;
+
+    result = message_queue_push(queue,&message);
+
+    if(result == MESSAGE_QUEUE_SHUTDOWN)
+    {
         return;
     }
 
-    context->tcp_send++;
-    printf("[TCP] JSON send, bytes = %u\n", (unsigned int)json_length);
+    if(result != MESSAGE_QUEUE_OK)
+    {
+        fprintf(stderr,
+        "[QUEUE] push failed\n");
+        return ;
+    }
+
+    printf("[QUEUE] upstream enqueued, byte=%d\n",json_length);
 }
 
 /*
@@ -326,7 +333,19 @@ void gateway_app_on_frame(
     void *user_data
 )
 {
+    gateway_app_upstream_context_t *upstream_context;
     gateway_context_t *context;
+    message_queue_t *upstream_queue;
+    
+    upstream_context = (gateway_app_upstream_context_t *)user_data;
+    context = upstream_context->gateway_context;
+    upstream_queue = upstream_context->upstream_queue;
+
+    if(context == NULL ||upstream_queue == NULL)
+    {
+        return ;
+    }
+
     frame_message_type_t type;
     char json[256];
     int json_length;
@@ -406,7 +425,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            gateway_app_send_json(context, json, json_length);
+            gateway_app_enqueue_json(upstream_queue, json, json_length);
             break;
         }
 
@@ -457,7 +476,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            gateway_app_send_json(context, json, json_length);
+            gateway_app_enqueue_json(upstream_queue, json, json_length);
             break;
         }
 
@@ -497,7 +516,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            gateway_app_send_json(context, json, json_length);
+            gateway_app_enqueue_json(upstream_queue, json, json_length);
             break;
         }
 
@@ -628,7 +647,19 @@ void gateway_app_on_wifi_line(
     void *user_data
 )
 {
+    gateway_app_upstream_context_t *upstream_context;
     gateway_context_t *context;
+    message_queue_t *upstream_queue;
+
+    upstream_context = (gateway_app_upstream_context_t *)user_data;
+    context = upstream_context->gateway_context;
+    upstream_queue = upstream_context->upstream_queue;
+
+    if(context == NULL || upstream_context == NULL)
+    {
+        return ;
+    }
+
     frame_data_t data;
     const char *light_raw;
 
@@ -702,8 +733,8 @@ void gateway_app_on_wifi_line(
         return;
     }
 
-    gateway_app_send_json(
-        context,
+    gateway_app_enqueue_json(
+        upstream_queue,
         json,
         json_length
     );

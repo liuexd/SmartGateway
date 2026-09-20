@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "frame_parser.h"
+#include "message_queue.h"
 
 /*
  * 活跃 worker 线程计数与退出同步。
@@ -39,6 +40,7 @@ typedef struct
      *按下Ctrl+C后变为0
      */
     const volatile int *running;
+    message_queue_t *upstream_queue;
 
     /*
      *本worker所属的线程组，用于退出时计数-1。

@@ -24,6 +24,8 @@ void *bluetooth_worker(void *arg)
     gateway_context_t *context;
     frame_parser_t *parser;
     const volatile int *running;
+    message_queue_t *upstream_queue;
+    gateway_app_upstream_context_t app_context;
 
     uint8_t read_buffer[BLUETOOTH_READ_BUFFER_SIZE];
 
@@ -39,10 +41,12 @@ void *bluetooth_worker(void *arg)
     context = worker->gateway_context;
     parser =worker->parser;
     running = worker->running;
+    upstream_queue = worker->upstream_queue;
 
     if(serial_device == NULL ||
         context == NULL ||
         parser == NULL ||
+        upstream_queue == NULL ||
         running == NULL
     )
     {
@@ -53,6 +57,9 @@ void *bluetooth_worker(void *arg)
         worker->serial_device,
         worker->baud_rate
     );
+
+    app_context.gateway_context = context;
+    app_context.upstream_queue =upstream_queue;
 
     while(*running)
     {
@@ -155,7 +162,7 @@ void *bluetooth_worker(void *arg)
                         read_buffer,
                         (size_t)read_length,
                         gateway_app_on_frame,
-                        context
+                        &app_context
                     );
                 }
                 else if(

@@ -2,32 +2,29 @@
 
 #include "gateway_loop.h"
 #include "gateway_app.h"
-#include "line_parser.h"
 #include "wifi_server.h"
 #include "wifi_client.h"
 #include "bluetooth_worker.h"
+#include "message_queue.h"
+#include "server_link.h"
 
 #include  <stdlib.h>
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <time.h>
-#include <unistd.h>
 
 /*
- * 读缓冲大小。
+ * WiFi 节点监听端口。
+ *
+ * 主循环只负责 accept 新的 WiFi 节点并派发 worker，
+ * 因此只需监听这一个 fd：
+ *   - 串口 I/O      -> bluetooth_worker 线程
+ *   - 北向 TCP      -> server_link_worker 线程
+ *   - WiFi 客户端   -> 各自 detached 的 wifi_client_worker 线程
  */
-#define GATEWAY_READ_BUFFER_SIZE 256
 #define GATEWAY_WIFI_PORT 7000
-
-/*
- * TCP接收累计缓冲区大小。
- */
-#define GATEWAY_TCP_BUFFER_SIZE 1024
 
 int gateway_loop_run(
     const char *serial_device,
@@ -36,22 +33,23 @@ int gateway_loop_run(
     frame_parser_t *parser,
     const volatile int *running)
 {
-    // gateway-server通信专用
-    uint8_t read_buffer[GATEWAY_READ_BUFFER_SIZE];
-    char tcp_buffer[GATEWAY_TCP_BUFFER_SIZE];
-    size_t tcp_length = 0;
 
     // wifi_node-gateway通信专用
     //后续由于程序改为多线程，导致wifi_buffer、wifi_length、client_fd只属于每个work自己
     int wifi_listen_fd;
     wifi_worker_group_t wifi_workers;
 
+    message_queue_t upstream_queue;
+
+    //北向连接服务器管理线程
+    pthread_t server_thread;
+    server_link_context_t server_context;
+    int server_thread_created = 0;
+
     //蓝牙节点
     pthread_t bluetooth_thread;
     bluetooth_worker_context_t bluetooth_context;
     int bluetooth_thread_created = 0;
-
-
 
     if (serial_device == NULL ||
         context == NULL ||
@@ -90,11 +88,51 @@ int gateway_loop_run(
         return -1;
     }
 
+    if(message_queue_init(&upstream_queue) != MESSAGE_QUEUE_OK)
+    {
+        fprintf(stderr,
+            "[QUEUE] upstream queue init failed\n");
+
+            wifi_worker_group_destroy(&wifi_workers);
+
+            wifi_server_close(wifi_listen_fd);
+
+            return -1;
+    }
+
+    server_context.gateway_context = context;
+    server_context.upstream_queue = &upstream_queue;
+    server_context.running = running;
+
+    {
+        int  pthread_result;
+
+        pthread_result = pthread_create(&server_thread,NULL,
+            server_link_worker,&server_context);
+        if(pthread_result != 0)
+        {
+            fprintf(stderr,
+                "[SERVER LINK] pthread_create failed: %s\n",
+                strerror(pthread_result));
+
+                message_queue_destroy(&upstream_queue);
+
+                wifi_worker_group_destroy(&wifi_workers);
+
+                wifi_server_close(wifi_listen_fd);
+
+                return -1;
+        }
+
+        server_thread_created = 1;
+    }
+
     bluetooth_context.serial_device = serial_device;
     bluetooth_context.baud_rate = baud_rate;
     bluetooth_context.gateway_context = context;
-    bluetooth_context.parser = parser = parser;
+    bluetooth_context.parser = parser;
     bluetooth_context.running = running;
+    bluetooth_context.upstream_queue = &upstream_queue;
 
     {
         int pthread_result;
@@ -112,6 +150,13 @@ int gateway_loop_run(
                 "[BT] pthread_create failed: %s\n",
                 strerror(pthread_result)
             );
+            message_queue_shutdown(&upstream_queue);
+
+            if(server_thread_created)
+            {
+                pthread_join(server_thread,NULL);
+            }
+            message_queue_destroy(&upstream_queue);
 
             wifi_worker_group_destroy(&wifi_workers);
 
@@ -126,28 +171,22 @@ int gateway_loop_run(
     while (*running)
     {
         /*
-            * pollfds[0] = 蓝牙/串口
-            * pollfds[1] = GateWay -> Server TCP
-            * pollfds[2] = WIFI 节点监听 socket
-            * pollfds[3] = 已接入的 WIFI 节点客户端
+            * 主循环只监听 wifi_listen_fd 一个 fd。
+            *
+            * 其余 I/O 都已在各自的 worker 线程中处理：
+            *   - 串口            -> bluetooth_worker
+            *   - 北向 TCP        -> server_link_worker
+            *   - WiFi 客户端数据 -> wifi_client_worker
             */
-        struct pollfd pollfds[2];
-        nfds_t poll_count;
+        struct pollfd pollfds;
         int poll_result;
 
-        gateway_app_try_tcp_connect(context);
+        pollfds.fd = wifi_listen_fd;
+        pollfds.events = POLLIN;
+        pollfds.revents = 0;
 
-        pollfds[0].fd = context->tcp_fd;
-        pollfds[0].events = POLLIN;
-        pollfds[0].revents = 0;
 
-        pollfds[1].fd = wifi_listen_fd;
-        pollfds[1].events = POLLIN;
-        pollfds[1].revents = 0;
-
-        poll_count = 2;
-
-        poll_result = poll(pollfds, poll_count, 1000);
+        poll_result = poll(&pollfds, 1, 1000);
 
         if (poll_result < 0)
         {
@@ -169,7 +208,7 @@ int gateway_loop_run(
             continue;
         }
 
-        if ((pollfds[1].revents & POLLIN) != 0)
+        if ((pollfds.revents & POLLIN) != 0)
         {
             int new_client_fd;
 
@@ -203,6 +242,7 @@ int gateway_loop_run(
                     client->gateway_context = context;
                     client->running = running;
                     client->wifi_worker_group = &wifi_workers;
+                    client->upstream_queue = &upstream_queue;
 
                     wifi_worker_group_add(&wifi_workers);
 
@@ -245,94 +285,22 @@ int gateway_loop_run(
 
 
         /*
-            * 处理TCP数据：服务器下发的命令JSON。
+            * 处理TCP数据：服务器下发的命令JSON。已经由server_link负责接收任务
             */
-        if (context->tcp_fd >= 0 &&
-            (pollfds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0)
-        {
-            ssize_t received;
-
-            received = recv(
-                context->tcp_fd,
-                read_buffer,
-                sizeof(read_buffer),
-                0);
-
-            if (received > 0)
-            {
-                size_t received_size = (size_t)received;
-
-                if (tcp_length + received_size >
-                    sizeof(tcp_buffer))
-                {
-                    fprintf(
-                        stderr,
-                        "[TCP] accumulated receive buffer overflow\n");
-
-                    /*
-                        * 丢弃整条消息，等待服务器重新发送。
-                        */
-                    tcp_length = 0;
-                }
-                else
-                {
-                    memcpy(
-                        tcp_buffer + tcp_length,
-                        read_buffer,
-                        received_size);
-                    tcp_length += received_size;
-
-                    /*
-                        * 按行拆分JSON消息，逐条处理。
-                        */
-                    line_parser_feed(
-                        tcp_buffer,
-                        &tcp_length,
-                        sizeof(tcp_buffer),
-                        gateway_app_on_tcp_line,
-                        context);
-                }
-            }
-            else if (received == 0)
-            {
-                printf("[TCP] server disconnected\n");
-
-                tcp_client_close(context->tcp_fd);
-                context->tcp_fd = -1;
-                tcp_length = 0;
-                context->next_tcp_retry = time(NULL) + 1;
-            }
-            else if (errno != EINTR)
-            {
-                fprintf(
-                    stderr,
-                    "[TCP] recv failed: %s\n",
-                    strerror(errno));
-
-                tcp_client_close(context->tcp_fd);
-                context->tcp_fd = -1;
-                tcp_length = 0;
-                context->next_tcp_retry = time(NULL) + 1;
-            }
-        }
     }
 
     /*
-     * 程序不是因为Ctrl+C退出，
-     * 而是串口断开，则等待1秒重新连接。
-     */
-    if (*running)
-    {
-        fprintf(stderr, "[IO] retry connection in 1 second\n");
-        sleep(1);
-    }
-
-    /*
-     * 退出主循环后清理WiFi资源。
+     * 退出主循环后清理WiFi资源。不再接收新的wifi节点进行连接
      */
     wifi_server_close(wifi_listen_fd);
 
     printf("[BT] waitting for Bluetooth worker...\n");
+
+    /*
+     *非常重要
+     *先唤醒在queue_push当中的Worker
+     */
+    message_queue_shutdown(&upstream_queue);
 
     if(bluetooth_thread_created)
     {
@@ -346,7 +314,18 @@ int gateway_loop_run(
 
     printf("[WIFI] all client workers stopped\n");
 
+    if(server_thread_created)
+    {
+        pthread_join(server_thread,NULL);
+    }
+
     wifi_worker_group_destroy(&wifi_workers);
+
+    /*
+     *等待所有的生产中都已经退出之后
+     *才能真正的销毁queue
+     */
+    message_queue_destroy(&upstream_queue);
 
     return 0;
 }

@@ -18,6 +18,8 @@ typedef struct
     gateway_context_t *gateway_context;
     frame_parser_t *parser;
 
+    message_queue_t *upstream_queue;
+
     const volatile int *running;
 
 } bluetooth_worker_context_t;
