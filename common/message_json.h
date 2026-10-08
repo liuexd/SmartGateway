@@ -150,6 +150,29 @@ int message_json_decode_nack(
 );
 
 /*
+ * 只提取JSON中的 "type" 字段值，不做任何类型校验。
+ *
+ * 用于在还不知道消息类型时先分派：
+ * WiFi 上行与蓝牙一样会收到 DATA/ACK/NACK 三类，
+ * 必须先看 type 才知道该用哪个 decode 函数。
+ *
+ * 解析失败或没有 type 字段时返回 -1，type_out 保持不变。
+ *
+ * @param line       JSON文本（可带结尾的\r\n）
+ * @param line_length JSON文本长度
+ * @param type_out   输出：type 字符串（如 "DATA"/"ACK"/"NACK"）
+ * @param type_size  type_out 缓冲区大小
+ *
+ * @return 成功返回0；解析失败、无type字段或缓冲区太小返回-1
+ */
+int message_json_peek_type(
+    const char *line,
+    size_t line_length,
+    char *type_out,
+    size_t type_size
+);
+
+/*
  * 将JSON字符串转换为DATA帧解析结果。
  *
  * 支持两种输入格式：

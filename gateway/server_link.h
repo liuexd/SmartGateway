@@ -20,6 +20,8 @@ typedef struct
      */
     message_queue_t *upstream_queue;
 
+    device_manager_t *device_manager;
+
     /*
      * Gateway全局运行标志。
      */

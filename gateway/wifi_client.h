@@ -6,6 +6,7 @@
 
 #include "frame_parser.h"
 #include "message_queue.h"
+#include "device_manager.h"
 
 /*
  * 活跃 worker 线程计数与退出同步。
@@ -40,6 +41,9 @@ typedef struct
      *按下Ctrl+C后变为0
      */
     const volatile int *running;
+
+    device_manager_t *device_manager;
+
     message_queue_t *upstream_queue;
 
     /*

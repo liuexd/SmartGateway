@@ -186,13 +186,30 @@ int frame_build_data(
  * 参数含义由协议字典约定（如 LED 0=灭 1=亮），
  * 协议层不解释任何 key，节点侧按需取用。
  */
-typedef struct 
+typedef struct
 {
+    /*
+     * 命令目标节点。
+     *
+     * 例如：
+     * NODE01
+     * NODE02
+     */
+    char target_node[32];
+
+    /*
+     * 命令发送方。
+     *
+     * 当前系统中仍可使用 GATEWAY。
+     * 该字段最终用于生成节点侧 CMD 帧。
+     */
     char sender[32];
+
     uint32_t sequence;
 
     frame_kv_t fields[FRAME_DATA_MAX_FIELDS];
     size_t field_count;
+
 } frame_command_t;
 
 /*

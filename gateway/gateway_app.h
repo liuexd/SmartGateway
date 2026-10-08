@@ -5,6 +5,7 @@
 #include "serial_port.h"
 #include "tcp_client.h"
 #include "message_queue.h"
+#include "device_manager.h"
 
 #include <time.h>
 
@@ -15,12 +16,35 @@
  * 1. 原有 Gateway 运行状态；
  * 2. M7-6 上行消息队列。
  */
-typedef struct 
+typedef struct
 {
     gateway_context_t *gateway_context;
 
     message_queue_t *upstream_queue;
+
+    device_manager_t *device_manager;
+
+    device_transport_t transport;
+
+    int device_fd;
+
+    char bound_node_id[DEVICE_NODE_ID_SIZE];
+
 }gateway_app_upstream_context_t;
+
+/*
+ * 下行（Server -> 网关）回调上下文。
+ *
+ * 运行在 Server Link Thread，也就是 tcp_fd 的拥有者线程，
+ * 因此路由失败时可以直接同步回一条 NACK 给 Server。
+ */
+typedef struct
+{
+    gateway_context_t *gateway_context;
+
+    device_manager_t *device_manager;
+
+}gateway_app_downlink_context_t;
 
 
 /*
@@ -109,16 +133,22 @@ void gateway_app_on_frame(
  *
  * 流程：
  *   1. message_json_decode_command() 解码JSON -> frame_command_t；
- *   2. frame_build_command() 组帧；
- *   3. serial_port_write_all() 通过串口下发给节点。
+ *   2. device_manager_enqueue_command() 按 target_node 投递到该设备的命令队列。
  *
- * 该函数可作为 line_parser_feed() 的回调
- * （user_data必须是gateway_context_t*，
- *  serial_fd 由 gateway_loop 在串口连接建立/断开时更新）。
+ * 注意：本函数运行在 Server Link Thread 中，
+ * **不直接碰任何串口/socket**。真正的下行发送由
+ * 拥有该链路的设备 worker（bluetooth_worker / wifi_client_worker）
+ * 在获得连接所有权的前提下完成。
+ *
+ * 这样做的原因：串口 fd 的所有权唯一，只有 bluetooth_worker 会
+ * open/write/close 它；否则会在断线时出现"已关闭的fd又被写入"的竞态。
+ *
+ * 该函数可作为 line_parser_feed() 的回调，
+ * user_data 必须是 gateway_app_downlink_context_t*。
  *
  * @param line      完整JSON行（不含'\n'，已去除结尾的'\r'）
  * @param length    JSON长度
- * @param user_data 必须是 gateway_context_t*
+ * @param user_data 必须是 gateway_app_downlink_context_t*
  */
 void gateway_app_on_tcp_line(
     const char *line,
@@ -152,5 +182,12 @@ void gateway_app_print_stats(
  * @param context 网关上下文
  */
 void gateway_app_close(gateway_context_t *context);
+
+void gateway_app_enqueue_nack(
+    message_queue_t *upstream_queue,
+    const char *node_id,
+    uint32_t sequence,
+    const char *error
+);
 
 #endif

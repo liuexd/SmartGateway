@@ -40,7 +40,8 @@ GATEWAY_SRCS := \
 	gateway/serial_port.c \
 	gateway/tcp_client.c \
 	gateway/message_queue.c \
-	gateway/server_link.c
+	gateway/server_link.c \
+	gateway/device_manager.c
 
 GATEWAY_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(GATEWAY_SRCS))
 
@@ -168,7 +169,10 @@ UNIT_TEST_NAMES := \
 	test_line_parser \
 	test_message_json \
 	test_message_queue \
-	test_node_store
+	test_node_store \
+	test_device_manager \
+	test_command_manager \
+	test_tcp_send_timeout
 
 # 集成测试（需要先启动 build/gateway_server）
 #
@@ -178,8 +182,13 @@ UNIT_TEST_NAMES := \
 TCP_TEST_NAMES := \
 	test_tcp_client
 
+# 手动联调工具：常驻读取，需要人工提供串口/服务端，无自动终态。
+#
+#   test_tcp_loop ：向 Server 持续发送 JSON（while(1)+sleep(1)）
+#   test_gateway  ：常驻读取网关串口并打印解析出的帧（while(1)）
 MANUAL_TEST_NAMES := \
-	test_tcp_loop
+	test_tcp_loop \
+	test_gateway
 
 TEST_LIBS := \
 	common/crc16.c \
@@ -188,8 +197,10 @@ TEST_LIBS := \
 	common/line_parser.c \
 	common/message_json.c \
 	server/node_store.c \
+	server/command_manager.c \
 	gateway/message_queue.c \
-	gateway/tcp_client.c
+	gateway/tcp_client.c \
+	gateway/device_manager.c
 
 UNIT_TEST_BINS := $(addprefix $(TEST_DIR)/,$(UNIT_TEST_NAMES))
 TCP_TEST_BINS  := $(addprefix $(TEST_DIR)/,$(TCP_TEST_NAMES))

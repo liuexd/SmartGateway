@@ -30,19 +30,21 @@
 /*
  * 单个命令条目。
  *
- * state     ：当前状态（见 command_state_t）
- * sequence  ：命令序号，与ACK/NACK应答配对
- * sender    ：发送方标识
- * fields    ：命令参数（通用键值对，如 LED=1、MOTOR=50）
- * field_count：命令参数数量
- * sent_time ：最近一次下发时间（超时判断用）
- * retries   ：已重试次数
+ * state       ：当前状态（见 command_state_t）
+ * sequence    ：命令序号，与ACK/NACK应答配对
+ * sender      ：发送方标识
+ * target_node ：目标节点编号（如 NODE01）
+ * fields      ：命令参数（通用键值对，如 LED=1、MOTOR=50）
+ * field_count ：命令参数数量
+ * sent_time   ：最近一次下发时间（超时判断用）
+ * retries     ：已重试次数
  */
 typedef struct
 {
     command_state_t state;
     uint32_t sequence;
     char sender[32];
+    char target_node[COMMAND_TARGET_NODE_SIZE];
     frame_kv_t fields[FRAME_DATA_MAX_FIELDS];
     size_t field_count;
     time_t sent_time;
@@ -137,6 +139,7 @@ static command_entry_t *command_manager_find(
 
 int command_manager_send(
     command_manager_t *manager,
+    const char *target_node,
     const char *sender,
     const frame_kv_t *fields,
     size_t field_count,
@@ -148,6 +151,8 @@ int command_manager_send(
     if (manager == NULL ||
         sender == NULL ||
         sender[0] == '\0' ||
+        target_node == NULL ||
+        target_node[0] == '\0' ||
         sequence_out == NULL)
     {
         return -1;
@@ -165,6 +170,10 @@ int command_manager_send(
 
     /*
      * 找一个空闲槽位。
+     *
+     * 注意：长度校验必须放在这里之后，
+     * entry 此时还未指向任何条目，
+     * 不能提前拿 sizeof(entry->target_node) 去比较。
      */
     entry = NULL;
 
@@ -185,12 +194,14 @@ int command_manager_send(
         return -1;
     }
 
-    if (strlen(sender) >= sizeof(entry->sender))
+    if (strlen(sender) >= sizeof(entry->sender) ||
+        strlen(target_node) >= sizeof(entry->target_node))
     {
         return -1;
     }
 
     strcpy(entry->sender, sender);
+    strcpy(entry->target_node, target_node);
     entry->sequence = manager->next_sequence;
 
     if (field_count > 0U)
@@ -241,6 +252,17 @@ int command_manager_on_ack(
         return -1;
     }
 
+    /*
+     * 应答必须来自命令的原目标节点。
+     *
+     * 注意这行必须在 entry == NULL 检查之后：
+     * 否则 entry 为空时会直接解引用崩溃。
+     */
+    if (strcmp(entry->target_node, ack->node_id) != 0)
+    {
+        return -1;
+    }
+
     if (entry->state != COMMAND_STATE_WAITING)
     {
         /*
@@ -269,6 +291,15 @@ int command_manager_on_nack(
     entry = command_manager_find(manager, nack->sequence);
 
     if (entry == NULL)
+    {
+        return -1;
+    }
+
+    /*
+     * 同 on_ack：应答必须来自命令的原目标节点。
+     * 这行必须在 entry == NULL 检查之后。
+     */
+    if (strcmp(entry->target_node, nack->node_id) != 0)
     {
         return -1;
     }
@@ -317,6 +348,7 @@ int command_manager_check_timeouts(
     int timeout_sec,
     int max_retries,
     uint32_t *retry_sequences,
+    char (*retry_target_nodes)[COMMAND_TARGET_NODE_SIZE],
     frame_kv_t (*retry_fields)[FRAME_DATA_MAX_FIELDS],
     size_t *retry_field_counts,
     size_t retry_capacity,
@@ -381,6 +413,26 @@ int command_manager_check_timeouts(
                 if (retries < retry_capacity)
                 {
                     retry_sequences[retries] = entry->sequence;
+
+                    /*
+                     * 目标节点必须一起带回去：
+                     * 重发时同样需要它才能路由到正确链路。
+                     */
+                    if (retry_target_nodes != NULL)
+                    {
+                        memset(
+                            retry_target_nodes[retries],
+                            0,
+                            sizeof(retry_target_nodes[retries])
+                        );
+
+                        snprintf(
+                            retry_target_nodes[retries],
+                            sizeof(retry_target_nodes[retries]),
+                            "%s",
+                            entry->target_node
+                        );
+                    }
 
                     if (retry_fields != NULL)
                     {

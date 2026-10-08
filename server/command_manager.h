@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <time.h>
 
+#define COMMAND_TARGET_NODE_SIZE 32
 /*
  * =====================================================================
  * 命令管理器（command_manager）
@@ -88,6 +89,7 @@ int command_manager_build_cmd(
  *
  * @param manager      命令管理器
  * @param sender       发送方标识（网关编号），例如 "GATEWAY"
+ * @param target_node  目标节点编号（如 "NODE01"），重发时用于重建路由目标
  * @param fields       命令参数键值对数组（如 LED=1、MOTOR=50，可NULL表示无参数）
  * @param field_count  命令参数数量
  * @param sequence_out 输出：分配的命令序号
@@ -96,6 +98,7 @@ int command_manager_build_cmd(
  */
 int command_manager_send(
     command_manager_t *manager,
+    const char *target_node,
     const char *sender,
     const frame_kv_t *fields,
     size_t field_count,
@@ -105,9 +108,10 @@ int command_manager_send(
 /*
  * 处理节点返回的ACK应答。
  *
- * 按 ack->sequence 找到对应命令，标记为已确认。
+ * 按 ack->sequence 找到对应命令，并确认应答来自命令的原目标节点，
+ * 然后标记为已确认。
  *
- * @return 0找到并处理；-1未找到对应命令或参数错误
+ * @return 0找到并处理；-1未找到对应命令、节点身份不匹配或参数错误
  */
 int command_manager_on_ack(
     command_manager_t *manager,
@@ -117,9 +121,10 @@ int command_manager_on_ack(
 /*
  * 处理节点返回的NACK应答。
  *
- * 按 nack->sequence 找到对应命令，记录失败原因。
+ * 按 nack->sequence 找到对应命令，并确认应答来自命令的原目标节点，
+ * 然后记录失败原因。
  *
- * @return 0找到并处理；-1未找到对应命令或参数错误
+ * @return 0找到并处理；-1未找到对应命令、节点身份不匹配或参数错误
  */
 int command_manager_on_nack(
     command_manager_t *manager,
@@ -146,14 +151,17 @@ int command_manager_query(
  *
  * 对处于 WAITING 且超过 timeout_sec 的命令：
  *   - 重试次数未达 max_retries：重发（状态保持WAITING，retries+1），
- *     序号和参数分别写入 retry_sequences / retry_fields 数组；
+ *     序号、目标节点和参数分别写入 retry_* 数组；
  *   - 重试次数已耗尽：标记为 TIMEOUT，序号写入 timeout_sequences 数组。
+ *
+ * 重发必须带上 target_node，否则网关无法路由该命令。
  *
  * @param manager           命令管理器
  * @param now               当前时间（time(NULL)）
  * @param timeout_sec       超时阈值（秒）
  * @param max_retries       最大重试次数
  * @param retry_sequences   输出：需要重发的序号列表（可NULL）
+ * @param retry_target_nodes 输出：与retry_sequences对应的目标节点（可NULL）
  * @param retry_fields      输出：与retry_sequences对应的命令参数（可NULL）
  * @param retry_field_counts 输出：与retry_sequences对应的参数数量（可NULL）
  * @param retry_capacity    retry_sequences/retry_fields 容量
@@ -170,6 +178,7 @@ int command_manager_check_timeouts(
     int timeout_sec,
     int max_retries,
     uint32_t *retry_sequences,
+    char (*retry_target_nodes)[COMMAND_TARGET_NODE_SIZE],
     frame_kv_t (*retry_fields)[FRAME_DATA_MAX_FIELDS],
     size_t *retry_field_counts,
     size_t retry_capacity,

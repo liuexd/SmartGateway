@@ -7,6 +7,7 @@
 #include "bluetooth_worker.h"
 #include "message_queue.h"
 #include "server_link.h"
+#include "device_manager.h"
 
 #include  <stdlib.h>
 #include <errno.h>
@@ -38,6 +39,8 @@ int gateway_loop_run(
     //后续由于程序改为多线程，导致wifi_buffer、wifi_length、client_fd只属于每个work自己
     int wifi_listen_fd;
     wifi_worker_group_t wifi_workers;
+
+    device_manager_t device_manager;
 
     message_queue_t upstream_queue;
 
@@ -100,9 +103,23 @@ int gateway_loop_run(
             return -1;
     }
 
+    if(device_manager_init(&device_manager) != DEVICE_MANAGER_OK)
+    {
+        fprintf(stderr,"[DEVICE] manager init failed\n");
+
+        message_queue_destroy(&upstream_queue);
+
+        wifi_worker_group_destroy(&wifi_workers);
+
+        wifi_server_close(wifi_listen_fd);
+
+        return -1;
+    }
+
     server_context.gateway_context = context;
     server_context.upstream_queue = &upstream_queue;
     server_context.running = running;
+    server_context.device_manager = &device_manager;
 
     {
         int  pthread_result;
@@ -119,6 +136,8 @@ int gateway_loop_run(
 
                 wifi_worker_group_destroy(&wifi_workers);
 
+                device_manager_destroy(&device_manager);
+
                 wifi_server_close(wifi_listen_fd);
 
                 return -1;
@@ -133,6 +152,7 @@ int gateway_loop_run(
     bluetooth_context.parser = parser;
     bluetooth_context.running = running;
     bluetooth_context.upstream_queue = &upstream_queue;
+    bluetooth_context.device_manager = &device_manager;
 
     {
         int pthread_result;
@@ -243,6 +263,7 @@ int gateway_loop_run(
                     client->running = running;
                     client->wifi_worker_group = &wifi_workers;
                     client->upstream_queue = &upstream_queue;
+                    client->device_manager = &device_manager;
 
                     wifi_worker_group_add(&wifi_workers);
 
@@ -285,8 +306,8 @@ int gateway_loop_run(
 
 
         /*
-            * 处理TCP数据：服务器下发的命令JSON。已经由server_link负责接收任务
-            */
+         * 处理TCP数据：服务器下发的命令JSON。已经由server_link负责接收任务
+         */
     }
 
     /*
@@ -326,6 +347,8 @@ int gateway_loop_run(
      *才能真正的销毁queue
      */
     message_queue_destroy(&upstream_queue);
+
+    device_manager_destroy(&device_manager);
 
     return 0;
 }

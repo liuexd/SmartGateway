@@ -3,6 +3,7 @@
 
 #include "gateway_app.h"
 #include "frame_parser.h"
+#include "device_manager.h"
 
 /*
  *Bluetooth Worker 启动参数
@@ -19,6 +20,8 @@ typedef struct
     frame_parser_t *parser;
 
     message_queue_t *upstream_queue;
+
+    device_manager_t *device_manager;
 
     const volatile int *running;
 

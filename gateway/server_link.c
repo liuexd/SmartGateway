@@ -66,8 +66,10 @@ void *server_link_worker(void *arg)
 
     gateway_context_t *context;
     message_queue_t *queue;
+    device_manager_t *device_manager;
     const volatile int *runningg;
 
+    gateway_app_downlink_context_t downlink_context;
     gateway_message_t pending_messsage;
     int have_pending_message = 0;
 
@@ -87,13 +89,22 @@ void *server_link_worker(void *arg)
     context = worker->gateway_context;
     queue = worker->upstream_queue;
     runningg = worker->running;
+    device_manager = worker->device_manager;
 
     if(worker->gateway_context ==NULL||
         worker->upstream_queue == NULL||
-        worker->running ==NULL)
+        worker->running ==NULL ||
+        worker->device_manager == NULL)
     {
         return NULL;
     }
+
+    /*
+     * 下行回调上下文：把 gateway 运行状态和设备注册表
+     * 交给 gateway_app_on_tcp_line() 使用。
+     */
+    downlink_context.gateway_context = context;
+    downlink_context.device_manager = device_manager;
 
     printf("[SERVER WORKER] started\n");
 
@@ -126,7 +137,7 @@ void *server_link_worker(void *arg)
             {
                 fprintf(stderr,
                     "[SERVER WORKER] queue pop failed\n");
-                
+
                     break;
             }
         }
@@ -153,9 +164,27 @@ void *server_link_worker(void *arg)
             }
 
             /*
-             *新连接建立，丢弃上一次残留的半条JSON。
+             * 新连接建立，丢弃上一次残留的半条JSON。
              */
             tcp_length = 0;
+
+            /*
+             * 置为非阻塞：
+             * 下行 recv 已经靠 poll 驱动，
+             * 上行 send 则由 tcp_client_send_all 内部的 poll 控制超时。
+             * 两者都不应无限阻塞。
+             *
+             * 失败不致命：即使仍为阻塞模式，
+             * tcp_client_send_all 的 poll 超时依然能生效。
+             */
+            if(tcp_client_set_nonblocking(
+                    context->tcp_fd) != 0)
+            {
+                fprintf(stderr,
+                    "[SERVER WORKER] set nonblocking failed: %s\n",
+                    strerror(errno)
+                );
+            }
         }
 
                 /*
@@ -272,14 +301,14 @@ void *server_link_worker(void *arg)
                         memcpy(tcp_buffer + tcp_length,
                             read_buffer,
                             received_size);
-                        
+
                         tcp_length += received_size;
-                        
+
                         line_parser_feed(tcp_buffer,
                             &tcp_length,
                             sizeof(tcp_buffer),
                             gateway_app_on_tcp_line,
-                            context
+                            &downlink_context
                         );
                     }
                 }
@@ -289,6 +318,14 @@ void *server_link_worker(void *arg)
 
                     server_link_disconnect(context,&tcp_length);
 
+                    continue;
+                }
+                else if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    /*
+                     * 非阻塞 socket 上 poll 报可读但数据已被取走，
+                     * 属于正常竞争；绝不能当成错误而断连。
+                     */
                     continue;
                 }
                 else if (errno != EINTR)

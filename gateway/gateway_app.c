@@ -317,6 +317,231 @@ static void gateway_app_enqueue_json(
     printf("[QUEUE] upstream enqueued, byte=%d\n",json_length);
 }
 
+void gateway_app_enqueue_nack(
+    message_queue_t *upstream_queue,
+    const char *node_id,
+    uint32_t sequence,
+    const char *error
+)
+{
+    frame_nack_t nack;
+
+    char json[256];
+
+    int json_length;
+
+    if (upstream_queue == NULL ||
+        node_id == NULL ||
+        node_id[0] == '\0' ||
+        error == NULL ||
+        error[0] == '\0')
+    {
+        return;
+    }
+
+
+    if (strlen(node_id) >=
+        sizeof(nack.node_id))
+    {
+        return;
+    }
+
+
+    if (strlen(error) >=
+        sizeof(nack.error))
+    {
+        return;
+    }
+
+
+    memset(
+        &nack,
+        0,
+        sizeof(nack)
+    );
+
+
+    strcpy(
+        nack.node_id,
+        node_id
+    );
+
+
+    nack.sequence =
+        sequence;
+
+
+    strcpy(
+        nack.error,
+        error
+    );
+
+
+    json_length =
+        message_json_build_nack(
+            json,
+            sizeof(json),
+            &nack
+        );
+
+
+    if (json_length < 0)
+    {
+        fprintf(
+            stderr,
+            "[NACK] JSON build failed, "
+            "node=%s seq=%06u\n",
+            node_id,
+            (unsigned int)sequence
+        );
+
+        return;
+    }
+
+    gateway_app_enqueue_json(
+        upstream_queue,
+        json,
+        json_length
+    );
+
+    printf(
+        "[NACK] queued node=%s seq=%06u error=%s\n",
+        node_id,
+        (unsigned int)sequence,
+        error
+    );
+}
+
+static int gateway_app_touch_device(
+    gateway_app_upstream_context_t *upstream_context,
+    const char *node_id
+)
+{
+    int result;
+
+    if(upstream_context == NULL ||
+        upstream_context->device_manager ==NULL ||
+        node_id == NULL ||
+        node_id[0] == '\0')
+    {
+        return -1;
+    }
+
+    /*
+     *第一条合法消息
+     *还没有绑定node_id
+     */
+    if(upstream_context->bound_node_id[0] == '\0')
+    {
+        size_t node_id_length;
+
+        node_id_length = strlen(node_id);
+        frame_command_t replaced_commands[DEVICE_COMMAND_QUEUE_CAPACITY];
+
+        size_t replaced_count;
+        size_t i;
+
+        //比较的两段都可以换成字节数可以进行比较
+        if(node_id_length >= sizeof(upstream_context->bound_node_id))
+        {
+            fprintf(stderr,
+            "[DEVICE] node id too long\n");
+
+            return -1;
+        }
+
+        replaced_count = 0U;
+
+
+        result =
+            device_manager_bind_connection_collect_commands(
+                upstream_context->device_manager,
+                node_id,
+                upstream_context->transport,
+                upstream_context->device_fd,
+                pthread_self(),
+                replaced_commands,
+                DEVICE_COMMAND_QUEUE_CAPACITY,
+                &replaced_count
+        );
+
+        if(result != DEVICE_MANAGER_OK)
+        {
+            fprintf(
+                stderr,
+                "[DEVICE] register failed, node=%s, result=%d\n",
+                node_id,
+                result);
+
+            return -1;
+        }
+
+        for (i = 0U;
+            i < replaced_count;
+            i++)
+        {
+            gateway_app_enqueue_nack(
+                upstream_context->upstream_queue,
+                replaced_commands[i].target_node,
+                replaced_commands[i].sequence,
+                "transport_replaced"
+            );
+        }
+        if (replaced_count > 0U)
+        {
+            printf(
+                "[DEVICE] connection takeover node=%s, "
+                "failed %zu pending command(s)\n",
+                node_id,
+                replaced_count
+            );
+        }
+
+        /*
+         * 记录本连接的身份，后续帧必须与之一致。
+         *
+         * memcpy 已带上结尾的 '\0'（node_id_length + 1U），
+         * 因此这里不需要额外的 strcpy。
+         */
+        memcpy(upstream_context->bound_node_id,node_id,node_id_length+1U);
+
+        printf("[DEVICE] register node=%s, transport=%s, fd=%d\n",node_id,
+            (upstream_context->transport == DEVICE_TRANSPORT_BLUETOOTH)
+                ? "BLUETOOTH" : "WIFI",
+            upstream_context->device_fd);
+
+        return 0;
+    }
+    //一个物理连接不能运行中突然冒充另一个node
+    if(strcmp(upstream_context->bound_node_id,node_id) != 0)
+    {
+        fprintf(
+            stderr,
+            "[DEVICE] identity mismatch: bound=%s, received=%s\n",
+            upstream_context->bound_node_id,
+            node_id
+        );
+
+        return -1;
+    }
+
+    result = device_manager_update_last_seen(
+        upstream_context->device_manager,
+        node_id
+    );
+
+    if(result != DEVICE_MANAGER_OK)
+    {
+        fprintf(
+            stderr,
+            "[DEVICE] update last_seen failed, node=%s",
+            node_id
+        );
+        return -1;
+    }
+    return 0;
+}
+
 /*
  * 每成功解析出一帧后，frame_parser_feed()
  * 会调用这个回调函数。
@@ -336,15 +561,6 @@ void gateway_app_on_frame(
     gateway_app_upstream_context_t *upstream_context;
     gateway_context_t *context;
     message_queue_t *upstream_queue;
-    
-    upstream_context = (gateway_app_upstream_context_t *)user_data;
-    context = upstream_context->gateway_context;
-    upstream_queue = upstream_context->upstream_queue;
-
-    if(context == NULL ||upstream_queue == NULL)
-    {
-        return ;
-    }
 
     frame_message_type_t type;
     char json[256];
@@ -355,7 +571,14 @@ void gateway_app_on_frame(
         return;
     }
 
-    context = (gateway_context_t *)user_data;
+    upstream_context = (gateway_app_upstream_context_t *)user_data;
+    context = upstream_context->gateway_context;
+    upstream_queue = upstream_context->upstream_queue;
+
+    if(context == NULL ||upstream_queue == NULL)
+    {
+        return ;
+    }
 
     type = frame_get_message_type(frame);
 
@@ -375,6 +598,11 @@ void gateway_app_on_frame(
                     frame->raw
                 );
 
+                return;
+            }
+
+            if(gateway_app_touch_device(upstream_context,data.node_id)!=0)
+            {
                 return;
             }
 
@@ -446,6 +674,11 @@ void gateway_app_on_frame(
                 return;
             }
 
+            if(gateway_app_touch_device(upstream_context,ack.node_id)!=0)
+            {
+                return;
+            }
+
             printf(
                 "[ACK] node=%s seq=%06u fields=",
                 ack.node_id,
@@ -497,6 +730,11 @@ void gateway_app_on_frame(
                 return;
             }
 
+            if(gateway_app_touch_device(upstream_context,nack.node_id)!=0)
+            {
+                return;
+            }
+
             printf(
                 "[NACK] node=%s seq=%06u error=%s\n",
                 nack.node_id,
@@ -538,12 +776,154 @@ void gateway_app_on_frame(
 }
 
 /*
+ * 路由失败时，由网关代理目标节点回一条 NACK。
+ *
+ * 使用场景：
+ *   命令已经无法送达节点（目标不存在 / 已离线 / 该节点命令队列满），
+ *   如果什么都不做，Server 只能干等到 CMD_TIMEOUT_SEC 才判定超时，
+ *   期间还会盲目重发若干次。
+ *
+ *   网关比 Server 更清楚南向链路的真实状态，
+ *   所以这里主动回一条 NACK，让 Server 的 command_manager
+ *   立刻把该命令标记为 NACKED，而不是白等一轮超时。
+ *
+ * 关键点：
+ *   nack.node_id 必须填**原命令的目标节点**，不能填发送方 GATEWAY。
+ *   Server 侧 command_manager_on_nack() 会校验 seq + node_id
+ *   是否与在途命令匹配，填错会被当成伪造应答而拒绝。
+ *
+ * 线程说明：
+ *   本函数只会在 Server Link Thread 中执行（gateway_app_on_tcp_line 的
+ *   调用者），而 tcp_fd 的拥有者正是该线程，
+ *   因此这里直接同步写 tcp_fd 是安全的，不构成跨线程写冲突。
+ *
+ * @param context 网关上下文（提供 tcp_fd）
+ * @param command 原命令（提供 target_node 与 sequence）
+ * @param error   失败原因，如 "route_offline"
+ *
+ * @return 0已回复；-1参数非法或发送失败
+ */
+static int gateway_app_send_route_nack(
+    gateway_context_t *context,
+    const frame_command_t *command,
+    const char *error
+)
+{
+    frame_nack_t nack;
+
+    char json[256];
+
+    int json_length;
+
+    if (context == NULL ||
+        command == NULL ||
+        error == NULL ||
+        error[0] == '\0')
+    {
+        return -1;
+    }
+
+
+    if (context->tcp_fd < 0)
+    {
+        return -1;
+    }
+
+
+    memset(
+        &nack,
+        0,
+        sizeof(nack)
+    );
+
+    /*
+     * 注意：
+     * 这里的node_id必须填写原命令的目标节点。
+     *
+     * Server的command_manager才能通过：
+     *
+     * sequence + node_id
+     *
+     * 找到正确命令。
+     */
+    strcpy(nack.node_id,command->target_node);
+
+    nack.sequence = command->sequence;
+
+    if (strlen(error) >=
+        sizeof(nack.error))
+    {
+        return -1;
+    }
+
+    strcpy(
+        nack.error,
+        error
+    );
+
+    json_length = message_json_build_nack(
+            json,
+            sizeof(json),
+            &nack
+    );
+
+    if (json_length < 0)
+    {
+        fprintf(
+            stderr,
+            "[ROUTE NACK] JSON build failed\n"
+        );
+
+        return -1;
+    }
+
+    /*
+     * 当前函数由Server Link Thread执行，
+     * 因此可以同步回复当前Server连接。
+     */
+    if (tcp_client_send_all(
+            context->tcp_fd,
+            json,
+            (size_t)json_length
+        ) != 0)
+    {
+        context->tcp_send_error++;
+
+        fprintf(
+            stderr,
+            "[ROUTE NACK] send failed, "
+            "target=%s seq=%06u error=%s\n",
+            command->target_node,
+            (unsigned int)command->sequence,
+            error
+        );
+
+        return -1;
+    }
+
+    context->tcp_send++;
+
+    printf(
+        "[ROUTE NACK] target=%s seq=%06u error=%s\n",
+        command->target_node,
+        (unsigned int)command->sequence,
+        error
+    );
+
+
+    return 0;
+
+}
+/*
  * 处理从TCP服务器收到的一行JSON（控制命令）。
  *
  * 流程：
  * 1、message_json_decode_command() 解码JSON -> frame_command_t
- * 2、frame_build_command() 组帧
- * 3、serial_port_write_all() 通过串口下发给节点
+ * 2、device_manager_enqueue_command() 按目标节点投递到该设备的命令队列
+ *
+ * 本函数运行在 Server Link Thread，不直接操作串口：
+ * 串口 fd 唯一属于 bluetooth_worker，
+ * 由它从队列取出命令后再写入。
  */
 void gateway_app_on_tcp_line(
     const char *line,
@@ -551,17 +931,31 @@ void gateway_app_on_tcp_line(
     void *user_data
 )
 {
+    gateway_app_downlink_context_t *downlink_context;
+
     gateway_context_t *context;
+    device_manager_t *device_manager;
+
     frame_command_t command;
-    char frame[FRAME_MAX_LEN];
-    int frame_length;
+
+    int result;
 
     if (line == NULL || user_data == NULL)
     {
         return;
     }
 
-    context = (gateway_context_t *)user_data;
+    downlink_context = (gateway_app_downlink_context_t *)user_data;
+
+    context = downlink_context->gateway_context;
+
+    device_manager = downlink_context->device_manager;
+
+    if(context == NULL ||
+        device_manager == NULL)
+    {
+        return;
+    }
 
     if (message_json_decode_command(
             line,
@@ -582,7 +976,8 @@ void gateway_app_on_tcp_line(
     }
 
     printf(
-        "[CMD] from server sender=%s seq=%06u fields=",
+        "[CMD] target=%s sender=%s seq=%06u fields=",
+        command.target_node,
         command.sender,
         (unsigned int)command.sequence
     );
@@ -599,46 +994,95 @@ void gateway_app_on_tcp_line(
 
     printf("\n");
 
-    frame_length = frame_build_command_kv(
-        frame,
-        sizeof(frame),
-        command.sender,
-        command.sequence,
-        command.fields,
-        command.field_count
+    result = device_manager_enqueue_command(
+        device_manager,
+        command.target_node,
+        &command
     );
 
-    if (frame_length < 0)
+    switch (result)
     {
-        fprintf(stderr, "[FRAME] build command failed\n");
-        return;
+        case DEVICE_MANAGER_OK:
+
+            printf(
+                "[ROUTE] target=%s seq=%06u queued\n",
+                command.target_node,
+                (unsigned int)command.sequence
+            );
+
+            break;
+
+
+        case DEVICE_MANAGER_NOT_FOUND:
+
+            fprintf(
+                stderr,
+                "[ROUTE] target=%s not found\n",
+                command.target_node
+            );
+
+            gateway_app_send_route_nack(
+                context,
+                &command,
+                "route_not_found"
+            );
+
+            break;
+
+
+        case DEVICE_MANAGER_OFFLINE:
+
+            fprintf(
+                stderr,
+                "[ROUTE] target=%s offline\n",
+                command.target_node
+            );
+
+            gateway_app_send_route_nack(
+                context,
+                &command,
+                "route_offline"
+            );
+
+            break;
+
+
+        case DEVICE_MANAGER_QUEUE_FULL:
+
+            fprintf(
+                stderr,
+                "[ROUTE] target=%s command queue full\n",
+                command.target_node
+            );
+
+            gateway_app_send_route_nack(
+                context,
+                &command,
+                "route_queue_full"
+            );
+
+            break;
+
+
+        default:
+
+            fprintf(
+                stderr,
+                "[ROUTE] enqueue failed, "
+                "target=%s result=%d\n",
+                command.target_node,
+                result
+            );
+
+            gateway_app_send_route_nack(
+                context,
+                &command,
+                "route_internal"
+            );
+
+            break;
     }
 
-    if (context->serial_fd < 0)
-    {
-        fprintf(
-            stderr,
-            "[SERIAL] not connected, command dropped\n"
-        );
-
-        return;
-    }
-
-    if (serial_port_write_all(
-            context->serial_fd,
-            frame,
-            (size_t)frame_length,
-            1000
-        ) != 0)
-    {
-        fprintf(stderr, "[SERIAL] write failed: %s\n", strerror(errno));
-        return;
-    }
-
-    printf(
-        "[SERIAL] command sent, bytes = %d\n",
-        frame_length
-    );
 }
 
 void gateway_app_on_wifi_line(
@@ -651,6 +1095,13 @@ void gateway_app_on_wifi_line(
     gateway_context_t *context;
     message_queue_t *upstream_queue;
 
+    char type_name[8];
+
+    if(line == NULL || user_data == NULL)
+    {
+        return;
+    }
+
     upstream_context = (gateway_app_upstream_context_t *)user_data;
     context = upstream_context->gateway_context;
     upstream_queue = upstream_context->upstream_queue;
@@ -660,84 +1111,234 @@ void gateway_app_on_wifi_line(
         return ;
     }
 
-    frame_data_t data;
-    const char *light_raw;
-
-    char json[256];
-    int json_length;
-
-    if(line == NULL || user_data == NULL)
+    /*
+     * WiFi 节点和蓝牙节点一样会回 DATA / ACK / NACK 三类，
+     * 必须按 type 分派。
+     *
+     * 之前这里直接调 message_json_decode_data()，
+     * 而它硬校验 type=="DATA"，
+     * 导致 WiFi 的 ACK/NACK 全部解析失败被丢弃，
+     * Server 侧命令永远等不到应答、只能反复超时重发。
+     */
+    if (message_json_peek_type(
+            line,
+            length,
+            type_name,
+            sizeof(type_name)) != 0)
     {
-        return;
-    }
-
-    context = (gateway_context_t *)user_data;
-
-    if(message_json_decode_data(line,length,&data) < 0)
-    {
-        context ->decode_errors++;
+        context->decode_errors++;
 
         fprintf(stderr,
-        "[WIFI] DATA decode failed: %.*s\n",
-        (int)length,
-        line
+            "[WIFI] cannot read message type: %.*s\n",
+            (int)length,
+            line
         );
 
         return;
     }
-  printf(
-        "[WIFI DATA] node=%s seq=%06u fields=",
-        data.node_id,
-        data.sequence
-    );
 
-    for(size_t i=0; i<data.field_count;i++)
+    if (strcmp(type_name, "ACK") == 0)
     {
-        printf("%s%s=%s",
-        (i > 0U) ? "," :"",//添加中间的逗号
-        data.fields[i].key,
-        data.fields[i].value
+        frame_ack_t ack;
+        char ack_json[256];
+        int ack_length;
+
+        if (message_json_decode_ack(line, length, &ack) < 0)
+        {
+            context->decode_errors++;
+
+            fprintf(stderr,
+                "[WIFI] ACK decode failed: %.*s\n",
+                (int)length,
+                line
+            );
+
+            return;
+        }
+
+        if (gateway_app_touch_device(
+                upstream_context,
+                ack.node_id) != 0)
+        {
+            return;
+        }
+
+        printf(
+            "[WIFI ACK] node=%s seq=%06u fields=",
+            ack.node_id,
+            (unsigned int)ack.sequence
         );
+
+        for (size_t i = 0; i < ack.field_count; i++)
+        {
+            printf(
+                "%s%s=%s",
+                (i > 0U) ? "," : "",
+                ack.fields[i].key,
+                ack.fields[i].value
+            );
+        }
+
+        printf("\n");
+
+        ack_length = message_json_build_ack(
+            ack_json,
+            sizeof(ack_json),
+            &ack
+        );
+
+        if (ack_length < 0)
+        {
+            fprintf(stderr, "[WIFI] ACK JSON build failed\n");
+            return;
+        }
+
+        gateway_app_enqueue_json(
+            upstream_queue,
+            ack_json,
+            ack_length
+        );
+
+        return;
     }
 
-    printf("\n");
-
-    light_raw = frame_data_find_field(
-        &data,"LIGHT_RAW"
-        );
-
-    if(light_raw != NULL)
+    if (strcmp(type_name, "NACK") == 0)
     {
+        frame_nack_t nack;
+        char nack_json[256];
+        int nack_length;
+
+        if (message_json_decode_nack(line, length, &nack) < 0)
+        {
+            context->decode_errors++;
+
+            fprintf(stderr,
+                "[WIFI] NACK decode failed: %.*s\n",
+                (int)length,
+                line
+            );
+
+            return;
+        }
+
+        if (gateway_app_touch_device(
+                upstream_context,
+                nack.node_id) != 0)
+        {
+            return;
+        }
+
         printf(
-            "            LIGHT_RAW=%s\n",
-            light_raw
+            "[WIFI NACK] node=%s seq=%06u error=%s\n",
+            nack.node_id,
+            (unsigned int)nack.sequence,
+            nack.error
         );
+
+        nack_length = message_json_build_nack(
+            nack_json,
+            sizeof(nack_json),
+            &nack
+        );
+
+        if (nack_length < 0)
+        {
+            fprintf(stderr, "[WIFI] NACK JSON build failed\n");
+            return;
+        }
+
+        gateway_app_enqueue_json(
+            upstream_queue,
+            nack_json,
+            nack_length
+        );
+
+        return;
     }
 
     /*
-     *将解码后的WIFIDATA重新序列化为标准JSON
-     *再通过现有的TCP发送给服务器
+     * 其余按 DATA 处理（含 type 不是 DATA 的未知类型，
+     * 由 decode_data 自己校验并报错）。
      */
-
-    json_length = message_json_build_data(
-        json,
-        sizeof(json),
-        &data
-    );
-
-    if(json_length < 0)
     {
-        fprintf(stderr,
-            "[WIFI] JSON build failed\n"
-        );
-        return;
-    }
+        frame_data_t data;
+        const char *light_raw;
+        char json[256];
+        int json_length;
 
-    gateway_app_enqueue_json(
-        upstream_queue,
-        json,
-        json_length
-    );
+        if(message_json_decode_data(line,length,&data) < 0)
+        {
+            context ->decode_errors++;
+
+            fprintf(stderr,
+            "[WIFI] DATA decode failed: %.*s\n",
+            (int)length,
+            line
+            );
+
+            return;
+        }
+
+        if (gateway_app_touch_device(upstream_context,data.node_id
+        ) != 0)
+        {
+            return;
+        }
+
+        printf(
+            "[WIFI DATA] node=%s seq=%06u fields=",
+            data.node_id,
+            data.sequence
+        );
+
+        for(size_t i=0; i<data.field_count;i++)
+        {
+            printf("%s%s=%s",
+            (i > 0U) ? "," :"",//添加中间的逗号
+            data.fields[i].key,
+            data.fields[i].value
+            );
+        }
+
+        printf("\n");
+
+        light_raw = frame_data_find_field(
+            &data,"LIGHT_RAW"
+            );
+
+        if(light_raw != NULL)
+        {
+            printf(
+                "            LIGHT_RAW=%s\n",
+                light_raw
+            );
+        }
+
+        /*
+         *将解码后的WIFIDATA重新序列化为标准JSON
+         *再通过现有的TCP发送给服务器
+         */
+
+        json_length = message_json_build_data(
+            json,
+            sizeof(json),
+            &data
+        );
+
+        if(json_length < 0)
+        {
+            fprintf(stderr,
+                "[WIFI] JSON build failed\n"
+            );
+            return;
+        }
+
+        gateway_app_enqueue_json(
+            upstream_queue,
+            json,
+            json_length
+        );
+    }
 }
 
 void gateway_app_print_stats(

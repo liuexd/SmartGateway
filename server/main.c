@@ -26,6 +26,7 @@
 #define CMD_MAX_RETRIES     2     /* 超时最大重试次数 */
 #define CMD_RETRY_TABLE     16    /* 单次超时检查的输出容量 */
 
+
 /* 节点注册表打印周期（秒） */
 #define REGISTRY_PRINT_INTERVAL 10
 
@@ -399,14 +400,23 @@ static void print_node_registry(const node_store_t *store)
  * 从stdin读取一行命令，下发到网关。
  *
  * 支持：
- *   led <value>  -> 下发LED控制命令（参数合法性由设备侧校验）
- *   nodes        -> 打印当前节点注册表
- *   help         -> 打印帮助
+ *   led <node> <value>   -> 下发LED控制命令到指定节点（M7-7C4-2 起）
+ *   nodes                -> 打印当前节点注册表
+ *   help                 -> 打印帮助
+ *
+ * 目标节点必须由用户显式指定，Server 不再猜默认节点。
+ * Server 只负责"按用户指定的 target 构造并发送 CMD"；
+ * 节点是否存在、是否离线、队列是否满，
+ * 由 Gateway 的 Device Manager 判断并回 NOT_FOUND / OFFLINE / QUEUE_FULL。
+ * （Server 的 node_store 只根据 DATA 推测在线状态，与 Gateway 的真实连接
+ *   状态语义不同，因此这里不做在线预判。）
  *
  * LED命令内部转换为通用键值对（LED=value），
  * 后续接入更多设备类型时，可扩展为任意 KEY=VALUE 参数。
  *
  * 命令序号由 command_manager 统一分配，并记录为等待应答状态。
+ * 目标节点也会一并交给 command_manager 保存，
+ * 这样超时重发时才能重建正确的路由目标。
  *
  * @param client_fd 网关连接socket（<0表示未连接）
  * @param manager   命令管理器
@@ -418,9 +428,21 @@ static void handle_stdin_command(
     node_store_t *store)
 {
     char command[CMD_BUFFER_SIZE];
+    char target_node[COMMAND_TARGET_NODE_SIZE];
     int led_value = -1;
     frame_kv_t fields[1];
     uint32_t sequence;
+
+    /*
+     * 用 %31s 把目标节点与 LED 值都读成字符串再自行校验，
+     * 而不是直接写 "led %31s %d"：
+     *   - 目标节点长度受 31 限制，不会写爆 target_node[32]；
+     *   - LED 值在这里用 strtol 解析，能拒绝 "1abc" 这种脏输入；
+     *   - 末尾的 %c 用来探测多余 token。
+     */
+    char led_text[32];
+    char tail;
+    int matched;
 
     if (fgets(command, sizeof(command), stdin) == NULL)
     {
@@ -432,7 +454,12 @@ static void handle_stdin_command(
 
     if (strcmp(command, "help") == 0)
     {
-        printf("Commands: led <value> | nodes | help\n");
+        printf(
+            "Commands:\n"
+            "  led <node> <value>\n"
+            "  nodes\n"
+            "  help\n"
+        );
         return;
     }
 
@@ -442,7 +469,67 @@ static void handle_stdin_command(
         return;
     }
 
-    if (sscanf(command, "led %d", &led_value) == 1)
+    memset(target_node, 0, sizeof(target_node));
+    memset(led_text, 0, sizeof(led_text));
+    tail = '\0';
+
+    /*
+     * 期望恰好 2 个转换：目标节点 + LED 值。
+     *
+     * 末尾用 %c（而不是 %1s）探测多余 token：
+     *   %1s 会跳过空白再读，没有内容时同样失败，
+     *   于是 "led N1 1" 和 "led N1 1 abc" 的返回值恰好相反。
+     *   %c 不跳过空白并且需要一个字符：
+     *     "led N1 1"      -> 无剩余字符 -> matched = 2  ✓
+     *     "led N1 1 abc"  -> 读到 'a'   -> matched = 3  ✗拒绝
+     */
+    matched = sscanf(
+        command,
+        "led %31s %31s %c",
+        target_node,
+        led_text,
+        &tail
+    );
+
+    if (matched != 2)
+    {
+        fprintf(
+            stderr,
+            "[Server] unknown command: %s "
+            "(try: led NODE01 1)\n",
+            command
+        );
+        return;
+    }
+
+    /*
+     * LED 值必须是完整数字。
+     */
+    {
+        char *end = NULL;
+        long value;
+
+        errno = 0;
+
+        value = strtol(led_text, &end, 10);
+
+        if (errno != 0 ||
+            end == led_text ||
+            *end != '\0' ||
+            value < 0 ||
+            value > 1)
+        {
+            fprintf(
+                stderr,
+                "[Server] invalid LED value: %s (expect 0 or 1)\n",
+                led_text
+            );
+            return;
+        }
+
+        led_value = (int)value;
+    }
+
     {
         frame_command_t cmd;
         char json[256];
@@ -465,9 +552,12 @@ static void handle_stdin_command(
 
         /*
          * 分配序号并记录为等待应答。
+         * 目标节点一并交给 command_manager 保存，
+         * 超时重发时才能重建正确的路由目标。
          */
         if (command_manager_send(
                 manager,
+                target_node,
                 CMD_SENDER,
                 fields,
                 1U,
@@ -482,6 +572,13 @@ static void handle_stdin_command(
         }
 
         memset(&cmd, 0, sizeof(cmd));
+
+        /*
+         * target_node 是命令的目标节点：
+         * 网关侧 device_manager 靠它路由到对应链路，
+         * 缺了它就会被判为非法目标而丢弃。
+         */
+        strcpy(cmd.target_node, target_node);
         strcpy(cmd.sender, CMD_SENDER);
         cmd.sequence = sequence;
         memcpy(cmd.fields, fields, sizeof(fields));
@@ -506,18 +603,13 @@ static void handle_stdin_command(
         }
 
         printf(
-            "[Server] CMD sent seq=%u: %s",
+            "[Server] CMD sent target=%s seq=%u: %s",
+            target_node,
             (unsigned int)sequence,
             json
         );
         return;
     }
-
-    fprintf(
-        stderr,
-        "[Server] unknown command: %s (try: led <0|1>)\n",
-        command
-    );
 }
 
 int main(int argc, char **argv)
@@ -578,7 +670,7 @@ int main(int argc, char **argv)
     }
     printf("TCP server listening on 127.0.0.1:%u\n",(unsigned int)port);
     printf("Press Ctrl+C to stop.\n");
-    printf("Commands: led <value> | nodes | help\n");
+    printf("Commands: led <node> <value> | nodes | help\n");
     while(g_running)
     {
         struct pollfd pollfd[3];
@@ -587,6 +679,7 @@ int main(int argc, char **argv)
         time_t now;
 
         uint32_t retry_sequences[CMD_RETRY_TABLE];
+        char retry_target_nodes[CMD_RETRY_TABLE][COMMAND_TARGET_NODE_SIZE];
         frame_kv_t retry_fields[CMD_RETRY_TABLE][FRAME_DATA_MAX_FIELDS];
         size_t retry_field_counts[CMD_RETRY_TABLE];
         uint32_t timeout_sequences[CMD_RETRY_TABLE];
@@ -614,6 +707,7 @@ int main(int argc, char **argv)
             CMD_TIMEOUT_SEC,
             CMD_MAX_RETRIES,
             retry_sequences,
+            retry_target_nodes,
             retry_fields,
             retry_field_counts,
             CMD_RETRY_TABLE,
@@ -641,6 +735,18 @@ int main(int argc, char **argv)
             }
 
             memset(&cmd, 0, sizeof(cmd));
+
+            /*
+             * 重发同样要带目标节点，
+             * 否则网关会因目标为空而丢弃这条命令。
+             */
+            snprintf(
+                cmd.target_node,
+                sizeof(cmd.target_node),
+                "%s",
+                retry_target_nodes[i]
+            );
+
             strcpy(cmd.sender, CMD_SENDER);
             cmd.sequence = retry_sequences[i];
             memcpy(cmd.fields, retry_fields[i], sizeof(retry_fields[i]));
@@ -664,7 +770,8 @@ int main(int argc, char **argv)
             }
 
             printf(
-                "[Server] CMD seq=%u retried: %s",
+                "[Server] CMD target=%s seq=%u retried: %s",
+                cmd.target_node,
                 (unsigned int)retry_sequences[i],
                 json
             );

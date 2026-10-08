@@ -12,6 +12,13 @@ build/
 *.core
 core
 
+# 历史遗留：曾被误提交到源码目录的可执行文件
+# （正确的产物都在 build/ 下，build/ 已被忽略）
+tools/make_node
+tools/make_nodes
+gateway/test_gateway
+server/main
+
 # 临时文件
 *.tmp
 *.swp

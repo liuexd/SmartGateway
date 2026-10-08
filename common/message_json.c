@@ -261,11 +261,14 @@ int message_json_build_command(
         out,
         out_size,
         "{\"node\":\"%s\","
+        "\"sender\":\"%s\","
         "\"seq\":%u,"
         "\"type\":\"CMD\","
         "\"fields\":{",
+        command->target_node,
         command->sender,
-        (unsigned int)command->sequence);
+        (unsigned int)command->sequence
+    );
 
     if (pos >= out_size)
     {
@@ -363,6 +366,9 @@ typedef struct
 {
     int found_node;
     char node_id[32];
+
+    int found_sender;
+    char sender[32];
 
     int found_seq;
     uint32_t sequence;
@@ -490,6 +496,7 @@ static int json_parse_object(
         const char *key_end;
         int key_length;
         int is_node;
+        int is_sender;
         int is_seq;
         int is_led;
         int is_error;
@@ -552,6 +559,8 @@ static int json_parse_object(
         key_length = (int)(key_end - key_start);
         is_node = (key_length == 4 &&
                    memcmp(key_start, "node", 4) == 0);
+        is_sender =(key_length == 6 &&
+                    memcmp(key_start,"sender",6) == 0);
         is_seq = (key_length == 3 &&
                   memcmp(key_start, "seq", 3) == 0);
         is_led = (key_length == 3 &&
@@ -809,6 +818,26 @@ static int json_parse_object(
                 out->node_id[value_length] = '\0';
                 out->found_node = 1;
             }
+            else if (is_sender)
+            {
+                if (value_length >=
+                    sizeof(out->sender))
+                {
+                    return -1;
+                }
+
+                memcpy(
+                    out->sender,
+                    value_start,
+                    value_length
+                );
+
+                out->sender[
+                    value_length
+                ] = '\0';
+
+                out->found_sender = 1;
+            }
             else if (is_type)
             {
                 if (value_length >= sizeof(out->type_value))
@@ -958,6 +987,51 @@ static int json_parse_object(
 }
 
 /*
+ * 只提取JSON中的 "type" 字段值，不做任何类型校验。
+ *
+ * 实现复用了 json_parse_object()：它本来就会把 type
+ * 解析进 type_value，这里只需把它取出来。
+ * 其余字段即使缺失也不影响本函数（不做必需字段校验）。
+ */
+int message_json_peek_type(
+    const char *line,
+    size_t line_length,
+    char *type_out,
+    size_t type_size)
+{
+    json_object_t obj;
+    size_t needed;
+
+    if (type_out == NULL || type_size == 0U)
+    {
+        return -1;
+    }
+
+    memset(&obj, 0, sizeof(obj));
+
+    if (json_parse_object(line, line_length, &obj) < 0)
+    {
+        return -1;
+    }
+
+    if (!obj.found_type)
+    {
+        return -1;
+    }
+
+    needed = strlen(obj.type_value) + 1U;
+
+    if (needed > type_size)
+    {
+        return -1;
+    }
+
+    memcpy(type_out, obj.type_value, needed);
+
+    return 0;
+}
+
+/*
  * 将JSON字符串转换为CMD帧解析结果。
  *
  * 支持两种输入格式：
@@ -1002,9 +1076,14 @@ int message_json_decode_command(
         return -1;
     }
 
-    /* 必需字段必须齐全 */
-    if (!obj.found_node || !obj.found_seq ||
-        !obj.found_type)
+    /*
+     * 必需字段必须齐全。
+     *
+     * CMD 要求 node(目标节点)/sender(发送方)/seq/type 四项俱全。
+     * 显式要求 sender，避免以后忘记这个字段究竟来自哪里。
+     */
+    if (!obj.found_node || !obj.found_sender ||
+        !obj.found_seq || !obj.found_type)
     {
         return -1;
     }
@@ -1015,12 +1094,23 @@ int message_json_decode_command(
         return -1;
     }
 
-    if (strlen(obj.node_id) >= sizeof(command->sender))
+    /*
+     * node 字段是命令的目标节点（用于 Device Manager 路由）；
+     * sender 字段是命令发送方（用于生成节点侧 CMD 帧）。
+     */
+    if (strlen(obj.node_id) >= sizeof(command->target_node))
     {
         return -1;
     }
 
-    strcpy(command->sender, obj.node_id);
+    if (strlen(obj.sender) >= sizeof(command->sender))
+    {
+        return -1;
+    }
+
+    strcpy(command->target_node, obj.node_id);
+    strcpy(command->sender, obj.sender);
+
     command->sequence = obj.sequence;
 
     /*

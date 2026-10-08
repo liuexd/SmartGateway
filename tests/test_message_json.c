@@ -254,6 +254,7 @@ static int test_build_command(void)
 
     memset(&command, 0, sizeof(command));
 
+    strcpy(command.target_node, "NODE01");
     strcpy(command.sender, "GATEWAY");
     command.sequence = 1;
 
@@ -276,7 +277,8 @@ static int test_build_command(void)
 
     if (strcmp(
             json,
-            "{\"node\":\"GATEWAY\",\"seq\":1,\"type\":\"CMD\","
+            "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\","
+            "\"seq\":1,\"type\":\"CMD\","
             "\"fields\":{\"LED\":\"1\",\"MOTOR\":\"50\"}}\n"
         ) != 0)
     {
@@ -304,12 +306,13 @@ static int test_build_command(void)
         );
 
         if (consumed != length - 1 ||
+            strcmp(decoded.target_node, "NODE01") != 0 ||
             strcmp(decoded.sender, "GATEWAY") != 0 ||
             decoded.sequence != 1 ||
             strcmp(frame_fields_find(decoded.fields, decoded.field_count, "LED"), "1") != 0 ||
             strcmp(frame_fields_find(decoded.fields, decoded.field_count, "MOTOR"), "50") != 0)
         {
-            printf("[FAIL] build_command round-trip mismatch\n");
+            printf("[FAIL] CMD routing fields mismatch\n");
             return -1;
         }
     }
@@ -348,7 +351,7 @@ static int test_decode_command(void)
     memset(&cmd, 0, sizeof(cmd));
 
     /* 新格式：fields 对象（多参数），带结尾换行 */
-    json = "{\"node\":\"GATEWAY\",\"seq\":1,\"type\":\"CMD\","
+    json = "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\",\"seq\":1,\"type\":\"CMD\","
            "\"fields\":{\"LED\":\"1\",\"MOTOR\":\"50\"}}\n";
     json_length = strlen(json);
 
@@ -361,13 +364,15 @@ static int test_decode_command(void)
         return -1;
     }
 
-    if (strcmp(cmd.sender, "GATEWAY") != 0 ||
+    if (strcmp(cmd.target_node, "NODE01") != 0 ||
+        strcmp(cmd.sender, "GATEWAY") != 0 ||
         cmd.sequence != 1 ||
         strcmp(frame_fields_find(cmd.fields, cmd.field_count, "LED"), "1") != 0 ||
         strcmp(frame_fields_find(cmd.fields, cmd.field_count, "MOTOR"), "50") != 0)
     {
         printf("[FAIL] decode_command fields mismatch "
-               "(sender=%s seq=%u fields=%zu)\n",
+               "(target=%s sender=%s seq=%u fields=%zu)\n",
+               cmd.target_node,
                cmd.sender,
                (unsigned int)cmd.sequence,
                cmd.field_count);
@@ -379,13 +384,15 @@ static int test_decode_command(void)
     /* 旧格式兼容：数字形式的led自动转 LED 字段 */
     memset(&cmd, 0, sizeof(cmd));
 
-    json = "{\"node\":\"GW01\",\"seq\":42,\"type\":\"CMD\",\"led\":1}\n";
+    json = "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\","
+           "\"seq\":42,\"type\":\"CMD\",\"led\":1}\n";
     json_length = strlen(json);
 
     consumed = message_json_decode_command(json, json_length, &cmd);
 
     if (consumed < 0 ||
-        strcmp(cmd.sender, "GW01") != 0 ||
+        strcmp(cmd.target_node, "NODE01") != 0 ||
+        strcmp(cmd.sender, "GATEWAY") != 0 ||
         cmd.sequence != 42 ||
         strcmp(frame_fields_find(cmd.fields, cmd.field_count, "LED"), "1") != 0)
     {
@@ -398,13 +405,15 @@ static int test_decode_command(void)
     /* 旧格式兼容：字符串形式的led */
     memset(&cmd, 0, sizeof(cmd));
 
-    json = "{\"node\":\"GW01\",\"seq\":42,\"type\":\"CMD\",\"led\":\"1\"}";
+    json = "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\","
+           "\"seq\":42,\"type\":\"CMD\",\"led\":\"1\"}";
     json_length = strlen(json);
 
     consumed = message_json_decode_command(json, json_length, &cmd);
 
     if (consumed < 0 ||
-        strcmp(cmd.sender, "GW01") != 0 ||
+        strcmp(cmd.target_node, "NODE01") != 0 ||
+        strcmp(cmd.sender, "GATEWAY") != 0 ||
         cmd.sequence != 42 ||
         strcmp(frame_fields_find(cmd.fields, cmd.field_count, "LED"), "1") != 0)
     {
@@ -417,14 +426,16 @@ static int test_decode_command(void)
     /* 字段顺序无关 + 无关字段被忽略 */
     memset(&cmd, 0, sizeof(cmd));
 
-    json = "{\"type\":\"CMD\",\"fields\":{\"LED\":\"0\"},\"node\":\"NODE01\","
+    json = "{\"type\":\"CMD\",\"fields\":{\"LED\":\"0\"},"
+           "\"sender\":\"GATEWAY\",\"node\":\"NODE01\","
            "\"seq\":7,\"temperature\":25.3}";
     json_length = strlen(json);
 
     consumed = message_json_decode_command(json, json_length, &cmd);
 
     if (consumed < 0 ||
-        strcmp(cmd.sender, "NODE01") != 0 ||
+        strcmp(cmd.target_node, "NODE01") != 0 ||
+        strcmp(cmd.sender, "GATEWAY") != 0 ||
         cmd.sequence != 7 ||
         strcmp(frame_fields_find(cmd.fields, cmd.field_count, "LED"), "0") != 0)
     {
@@ -434,11 +445,11 @@ static int test_decode_command(void)
 
     printf("[PASS] decode_command unordered fields test\n");
 
-    /* 错误输入：type不是CMD */
+    /* 错误输入：type不是CMD（其余字段齐全，确保是 type 校验拦住它）*/
     memset(&cmd, 0, sizeof(cmd));
 
-    json = "{\"node\":\"GATEWAY\",\"seq\":1,\"type\":\"DATA\","
-           "\"fields\":{\"LED\":\"1\"}}";
+    json = "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\",\"seq\":1,"
+           "\"type\":\"DATA\",\"fields\":{\"LED\":\"1\"}}";
 
     if (message_json_decode_command(json, strlen(json), &cmd) >= 0)
     {
@@ -448,10 +459,11 @@ static int test_decode_command(void)
 
     printf("[PASS] decode_command wrong-type test\n");
 
-    /* 错误输入：缺少必需字段 */
+    /* 错误输入：缺少必需字段（缺 type）*/
     memset(&cmd, 0, sizeof(cmd));
 
-    json = "{\"node\":\"GATEWAY\",\"seq\":1,\"fields\":{\"LED\":\"1\"}}";
+    json = "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\",\"seq\":1,"
+           "\"fields\":{\"LED\":\"1\"}}";
 
     if (message_json_decode_command(json, strlen(json), &cmd) >= 0)
     {
@@ -461,10 +473,29 @@ static int test_decode_command(void)
 
     printf("[PASS] decode_command missing-field test\n");
 
+    /*
+     * 错误输入：CMD 缺少 sender。
+     *
+     * C1 起 sender 与 node 是两个独立概念，
+     * CMD 必须显式给出 sender，不再自动默认 GATEWAY。
+     */
+    memset(&cmd, 0, sizeof(cmd));
+
+    json = "{\"node\":\"NODE01\",\"seq\":1,\"type\":\"CMD\","
+           "\"fields\":{\"LED\":\"1\"}}";
+
+    if (message_json_decode_command(json, strlen(json), &cmd) >= 0)
+    {
+        printf("[FAIL] decode_command should reject CMD without sender\n");
+        return -1;
+    }
+
+    printf("[PASS] decode_command missing-sender test\n");
+
     /* 错误输入：非法JSON */
     memset(&cmd, 0, sizeof(cmd));
 
-    json = "{\"node\":\"GATEWAY\",\"seq\":1,}";
+    json = "{\"node\":\"NODE01\",\"sender\":\"GATEWAY\",\"seq\":1,}";
 
     if (message_json_decode_command(json, strlen(json), &cmd) >= 0)
     {
@@ -635,6 +666,74 @@ static int test_decode_data(void)
     return 0;
 }
 
+static int test_command_target_node(void)
+{
+    const char *json;
+
+    frame_command_t command;
+
+    int consumed;
+
+    json =
+        "{\"node\":\"NODE02\","
+        "\"sender\":\"GATEWAY\","
+        "\"seq\":42,"
+        "\"type\":\"CMD\","
+        "\"fields\":{\"LED\":\"1\"}}\n";
+
+    memset(
+        &command,
+        0,
+        sizeof(command)
+    );
+
+    consumed =
+        message_json_decode_command(
+            json,
+            strlen(json),
+            &command
+        );
+
+    if (consumed < 0)
+    {
+        printf(
+            "[FAIL] command target decode\n"
+        );
+
+        return -1;
+    }
+
+    if (strcmp(
+            command.target_node,
+            "NODE02"
+        ) != 0)
+    {
+        printf(
+            "[FAIL] target node mismatch\n"
+        );
+
+        return -1;
+    }
+
+    if (strcmp(
+            command.sender,
+            "GATEWAY"
+        ) != 0)
+    {
+        printf(
+            "[FAIL] command sender mismatch\n"
+        );
+
+        return -1;
+    }
+
+    printf(
+        "[PASS] command target node\n"
+    );
+
+    return 0;
+}
+
 int main(void)
 {
     int failures = 0;
@@ -646,6 +745,7 @@ int main(void)
     failures += test_build_command();
     failures += test_null_params();
     failures += test_decode_command();
+    failures += test_command_target_node();
     failures += test_decode_data();
 
     if (failures != 0)
