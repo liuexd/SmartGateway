@@ -1,0 +1,25 @@
+# D01 Linux kernel excerpts (selected lines from user-reported dmesg)
+# Scope: selected startup lines, NOT a full raw kernel log.
+[    0.000000] Booting Linux on physical CPU 0x0
+[    0.000000] Linux version 4.9.88 (ubuntu@ubuntu-VMware-Virtual-Platform) (gcc version 6.2.1 20161016 (Linaro GCC 6.2-2016.11) ) #1 SMP PREEMPT Fri Jun 5 19:16:01 CST 2026
+[    0.000000] CPU: ARMv7 Processor [410fc075] revision 5 (ARMv7), cr=10c53c7d
+[    0.000000] OF: fdt:Machine model: Freescale i.MX6 ULL 14x14 EVK Board
+[    0.000000] Reserved memory: created CMA memory pool at 0x8c000000, size 320 MiB
+[    0.000000] On node 0 totalpages: 131072
+[    0.000000] Kernel command line: console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw
+[    0.000000] Memory: 172244K/524288K available (11264K kernel code, 1103K rwdata, 4040K rodata, 1024K init, 477K bss, 24364K reserved, 327680K cma-reserved, 0K highmem)
+[    0.228168] Brought up 1 CPUs
+[    0.229809] devtmpfs: initialized
+[    0.248032] OF: Duplicate name in lcdif@021c8000, renamed to "display#1"
+[    3.304942] mmc0: SDHCI controller on 2190000.usdhc [2190000.usdhc] using ADMA
+[    3.383082] mmc1: SDHCI controller on 2194000.usdhc [2194000.usdhc] using ADMA
+[    3.518813] mmc1: new DDR MMC card at address 0001
+[    3.535570] mmcblk1: mmc1:0001 S40004 3.64 GiB
+[    3.551060] mmcblk1boot0: mmc1:0001 S40004 partition 1 4.00 MiB
+[    3.568058] mmcblk1boot1: mmc1:0001 S40004 partition 2 4.00 MiB
+[    3.585218] mmcblk1rpmb: mmc1:0001 S40004 partition 3 4.00 MiB
+[    3.603362]  mmcblk1: p1 p2 p3
+[    4.058467] EXT4-fs (mmcblk1p2): couldn't mount as ext3 due to feature incompatibilities
+[    4.414808] EXT4-fs (mmcblk1p2): recovery complete
+[    4.421974] EXT4-fs (mmcblk1p2): mounted filesystem with ordered data mode. Opts: (null)
+[    4.874358] EXT4-fs (mmcblk1p2): re-mounted. Opts: data=ordered

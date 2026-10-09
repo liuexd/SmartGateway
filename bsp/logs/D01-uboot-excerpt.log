@@ -1,0 +1,39 @@
+# D01 U-Boot excerpts captured through integrated USB serial console
+# Source: observed terminal output supplied during 2026-10-09 BSP D01 investigation
+# Scope: reboot tail + U-Boot boot phase. NOT a full raw power-on serial capture.
+reboot: Restarting system
+
+U-Boot 2017.03-g8ba4c5bb19-dirty (Jun 10 2026 - 10:24:59 +0800)
+
+CPU:   Freescale i.MX6ULL rev1.1 696 MHz (running at 396 MHz)
+CPU:   Industrial temperature grade (-40C to 105C) at 47C
+Reset cause: WDOG
+Model: Freescale i.MX6 ULL 14x14 EVK Board
+Board: MX6ULL 14x14 EVK
+DRAM:  512 MiB
+MMC:   FSL_SDHC: 0, FSL_SDHC: 1
+Display: TFT7016 (1024x600)
+Video: 1024x600x24
+In:    serial
+Out:   serial
+Err:   serial
+Net:   eth1: ethernet@020b4000 [PRIME], eth0: ethernet@02188000
+Normal Boot
+Hit any key to stop autoboot:  0
+## Error: "findtee" not defined
+switch to partitions #0, OK
+mmc1(part 0) is current device
+switch to partitions #0, OK
+mmc1(part 0) is current device
+** Unrecognized filesystem type **
+8873376 bytes read in 448 ms (18.9 MiB/s)
+Booting from mmc ...
+38370 bytes read in 50 ms (749 KiB/s)
+Kernel image @ 0x80800000 [ 0x000000 - 0x8765a0 ]
+## Flattened Device Tree blob at 83000000
+   Booting using the fdt blob at 0x83000000
+   Using Device Tree in place at 83000000, end 8300c5e1
+Modify /soc/aips-bus@02200000/epdc@0228c000:status disabled
+ft_system_setup for mx6
+
+Starting kernel ...
