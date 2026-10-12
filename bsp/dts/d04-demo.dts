@@ -1,0 +1,18 @@
+/dts-v1/;
+
+/{
+    model = "SmartGateway D04 Offline Demo";
+
+    compatible = "smartgateway,offline-demo";
+
+    #address-cells = <1>;
+    #size-cells = <1>;
+
+    smartgateway_demo {
+        compatible = "smartgateway,bsp-demo";
+
+        status = "okay";
+
+        demo-message = "Hello from Device Tree";
+    };
+};
