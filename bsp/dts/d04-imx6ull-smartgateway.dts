@@ -5,13 +5,12 @@
  * Do not flash this test DTB to eMMC
  */
 
- #include "100ask_imx6ull-14x14.dts"
+#include "100ask_imx6ull-14x14.dts"
 
 / {
     smartgateway_demo: smartgateway-demo {
         compatible = "smartgateway,bsp-demo";
         status = "okay";
-
-        demo-message = "Hello from I.MX6ULL Device Tree";
+        demo-message = "Hello from i.MX6ULL Device Tree";
     };
 };
