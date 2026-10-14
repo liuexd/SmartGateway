@@ -10,6 +10,13 @@
 #include <linux/device.h>
 #include <linux/err.h>
 
+#include <linux/miscdevice.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/poll.h>
+#include <linux/wait.h>
+#include <linux/mutex.h>
+
 #define SGW_NAME "sgw-gpio-event"
 #define SGW_GPIO 115
 #define SGW_EVENT_CAPACITY 64
@@ -37,6 +44,10 @@ struct sgw_gpio_dev{
     u32 dropped;
 
     struct sgw_gpio_event last_event;
+
+    struct miscdevice miscdev;
+    wait_queue_head_t read_queue;
+    struct mutex read_lock;
 };
 
 /*
@@ -52,6 +63,7 @@ static irqreturn_t sgw_gpio_irq_handler(
     struct sgw_gpio_dev *data = dev_id;
     struct sgw_gpio_event event;
     unsigned long flags;
+    bool queued = false;
 
     event.timestamp_ns = ktime_get_ns();
     event.level = gpio_get_value(data->gpio);
@@ -70,14 +82,130 @@ static irqreturn_t sgw_gpio_irq_handler(
 
         data->count++;
         data->enqueued++;
+        queued = true;
     }else{
         data->dropped++;
     }
 
     spin_unlock_irqrestore(&data->queue_lock, flags);
+    if(queued)
+        wake_up_interruptible(&data->read_queue);
 
     return IRQ_HANDLED;
 }
+
+static int sgw_event_open(
+    struct inode *inode,
+    struct file *file
+)
+{
+    struct miscdevice *misc = file->private_data;
+
+    struct sgw_gpio_dev *data = container_of(misc, struct sgw_gpio_dev,miscdev);//成员指针，结构体，成员名字
+
+    file->private_data = data;
+    //成功返回0，告诉内核这个设备文件不支持lseek()
+    //由于设备/dev/sgw-gpio-event是一个事件流（环形缓冲区），数据是GPIO中断时产生的，只能一个按照顺序去读
+    return nonseekable_open(inode, file);
+}
+
+static ssize_t sgw_event_read(
+    struct file *file,
+    char __user *buf,
+    size_t len,
+    loff_t *ppos
+)
+{
+    struct sgw_gpio_dev *data = file->private_data;
+    struct sgw_gpio_event event;
+    unsigned long flags;
+    int ret;
+
+    (void)ppos;
+
+    if(len < sizeof(event))
+        return -EINVAL;
+
+    for(;;)
+    {
+        ret = mutex_lock_interruptible(&data->read_lock);
+        if(ret)
+            return ret;
+
+        spin_lock_irqsave(&data->queue_lock,flags);
+        if(data->count > 0)
+        {
+            event = data->events[data->tail];
+
+            spin_unlock_irqrestore(&data->queue_lock,flags);
+            break;
+        }
+        spin_unlock_irqrestore(&data->queue_lock,flags);
+        mutex_unlock(&data->read_lock);
+        
+        if(file->f_flags & O_NONBLOCK)
+            return -EAGAIN;
+        //第一个参数是等待队列头，第二个是唤醒条件
+        ret = wait_event_interruptible(
+            data->read_queue,
+            READ_ONCE(data->count)>0
+        );
+        if (ret)
+            return ret;
+    }
+
+    /*
+     * Do not hold a spinlock across copy_to_user()
+     * Keep read_lock held to serialize comsumer
+     */
+    if(copy_to_user(buf, &event, sizeof(event)))
+    {
+        mutex_unlock(&data->read_lock);
+        return -EFAULT;
+    }
+    spin_lock_irqsave(&data->queue_lock, flags);
+
+    data->tail = (data->tail+1)%SGW_EVENT_CAPACITY;
+    data->count--;
+
+    spin_unlock_irqrestore(&data->queue_lock,flags);
+    mutex_unlock(&data->read_lock);
+
+    return sizeof(event);
+}
+
+//wait: 内核提供的"等待队列表",(poll_table),用于挂载等待队列
+static unsigned int sgw_event_poll(
+    struct file *file,
+    poll_table *wait
+)
+{
+    struct sgw_gpio_dev *data = file->private_data;
+    unsigned long flags;
+    unsigned int mask = 0;
+
+    poll_wait(file, &data->read_queue, wait);
+
+    //这里使用自旋锁的原因是
+    //此时如果出现中断会导致这里的count出现变化
+    //所以这里选择先锁住在读取内容
+    spin_lock_irqsave(&data->queue_lock, flags);
+
+    if (data->count > 0)
+        mask = POLLIN | POLLRDNORM;
+    
+    spin_unlock_irqrestore(&data->queue_lock, flags);
+
+    return mask;
+}
+
+static const struct file_operations sgw_event_fops = {
+    .owner = THIS_MODULE,
+    .open = sgw_event_open,
+    .read = sgw_event_read,
+    .poll = sgw_event_poll,
+    .llseek = no_llseek,
+};
 
 /*
  * Read only diagnostic statistics
@@ -159,6 +287,9 @@ static int sgw_gpio_probe(struct platform_device *pdev)
 
     data->gpio = SGW_GPIO;
     spin_lock_init(&data->queue_lock);
+    init_waitqueue_head(&data->read_queue);
+    mutex_init(&data->read_lock);
+    
 
     platform_set_drvdata(pdev, data);
     /*
@@ -213,6 +344,24 @@ static int sgw_gpio_probe(struct platform_device *pdev)
         return ret;
     }
 
+    data->miscdev.minor = MISC_DYNAMIC_MINOR;
+    data->miscdev.name = "sgw_event0";
+    data->miscdev.fops = &sgw_event_fops;
+    data->miscdev.parent = &pdev->dev;
+
+    ret = misc_register(&data->miscdev);
+
+    if (ret) {
+        dev_err(&pdev->dev,
+                "misc_register failed: %d\n", ret);
+
+        device_remove_file(&pdev->dev, &dev_attr_stats);
+        return ret;
+    }
+
+    dev_info(&pdev->dev,
+         "misc device /dev/sgw_event0 ready\n");
+
     
     dev_info(&pdev->dev,
              "IRQ %d ready, queue capacity=%u\n",
@@ -231,7 +380,7 @@ static int sgw_gpio_remove(struct platform_device *pdev)
     u32 dropped;
 
     device_remove_file(&pdev->dev, &dev_attr_stats);
-
+    misc_deregister(&data->miscdev);
     /*
      * Stop and synchronize the IRQ before taking
      * the final statistics snapshot
