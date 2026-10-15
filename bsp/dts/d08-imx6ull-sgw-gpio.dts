@@ -1,0 +1,49 @@
+/*
+ * SmartGateway BSP D08: device-tree GPIO resource experiment
+ *
+ * Based on 100ASK i.MX6ULL 14x14 board DTS.
+ * This is an OFFLINE BUILD artifact, not a drop-in production DTB.
+ *
+ * D08-1 board observations (2026-10-15):
+ *   IOMUXC SW_MUX_CTL_PAD_CSI_VSYNC @ 0x020E01DC = 0x00000005
+ *   IOMUXC SW_PAD_CTL_PAD_CSI_VSYNC @ 0x020E0468 = 0x000070B0
+ *   Linux GPIO 115 = GPIO4_IO19 = CSI_VSYNC pad.
+ *
+ * Keep the currently observed pad-control value (0x70b0) for the
+ * initial experiment. Do not replace the boot DTB until the board
+ * recovery path and the updated OF-matched driver are verified.
+ */
+
+#include "100ask_imx6ull-14x14.dts"
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+    sgw_gpio_event: sgw-gpio-event {
+        compatible = "smartgateway,sgw-gpio-event";
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_sgw_button>;
+
+        /*
+         * Active-low physical input: low = pressed, high = released.
+         * GPIO descriptor APIs return logical values by default.
+         * The existing user-space event ABI reports raw LEVEL:
+         * 0 = PRESSED, 1 = RELEASED; preserve that ABI in D08-3.
+         */
+        button-gpios = <&gpio4 19 GPIO_ACTIVE_LOW>;
+        status = "okay";
+    };
+};
+
+/*
+ * Merge into the board's pre-existing iomuxc/imx6ul-evk function
+ * node rather than introducing an unrelated iomuxc child.
+ */
+&iomuxc {
+    imx6ul-evk {
+        pinctrl_sgw_button: sgwbuttongrp {
+            fsl,pins = <
+                MX6UL_PAD_CSI_VSYNC__GPIO4_IO19 0x70b0
+            >;
+        };
+    };
+};
