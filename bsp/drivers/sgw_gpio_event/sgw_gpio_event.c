@@ -3,6 +3,8 @@
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
+#include <linux/of.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -21,7 +23,6 @@
 #include <linux/jiffies.h>
 
 #define SGW_NAME "sgw-gpio-event"
-#define SGW_GPIO 115
 #define SGW_EVENT_CAPACITY 64
 #define SGW_DEBOUNCE_MS 20
 
@@ -32,7 +33,7 @@ struct sgw_gpio_event{
 };
 
 struct sgw_gpio_dev{
-    int gpio;
+    struct gpio_desc *gpiod;
     int irq;
 
     spinlock_t queue_lock;
@@ -75,7 +76,9 @@ static void sgw_gpio_debounce_work(struct work_struct *work)
     bool queued = false;
     int level;
 
-    level = gpio_get_value(data->gpio);
+    level = gpiod_get_raw_value_cansleep(data->gpiod);
+    if (level < 0)
+        return;
 
     event.timestamp_ns = ktime_get_ns();
     event.level = level;
@@ -345,7 +348,6 @@ static int sgw_gpio_probe(struct platform_device *pdev)
     if(!data)
         return -ENOMEM;
 
-    data->gpio = SGW_GPIO;
     spin_lock_init(&data->queue_lock);
     init_waitqueue_head(&data->read_queue);
     mutex_init(&data->read_lock);
@@ -354,41 +356,68 @@ static int sgw_gpio_probe(struct platform_device *pdev)
         sgw_gpio_debounce_work);
 
     platform_set_drvdata(pdev, data);
+
     /*
-     * Request GPIO4_IO19 as input
-     * Resource is managed by device core
-     *
-     */
-    ret = devm_gpio_request_one(
+    * Get GPIO resource from Device Tree:
+    *
+    * button-gpios = <&gpio4 19 GPIO_ACTIVE_LOW>;
+    *
+    * GPIOD_IN: configure GPIO as input.
+    */
+    data->gpiod = devm_gpiod_get(
         &pdev->dev,
-        SGW_GPIO,
-        GPIOF_IN,
-        "sgw-gpio-input"
+        "button",
+        GPIOD_IN
     );
 
-    if (ret < 0) {
-        dev_err(&pdev->dev,
-                "GPIO %d request failed: %d\n",
-                SGW_GPIO, ret);
+    if (IS_ERR(data->gpiod)) {
+        ret = PTR_ERR(data->gpiod);
+
+        if (ret != -EPROBE_DEFER)
+            dev_err(
+                &pdev->dev,
+                "failed to get button GPIO: %d\n",
+                ret
+            );
+
         return ret;
     }
 
-    data->stable_level = gpio_get_value(data->gpio);
+    /* Preserve raw physical LEVEL semantics. */
+    ret = gpiod_get_raw_value_cansleep(data->gpiod);
 
-    dev_info(&pdev->dev,
-         "initial stable level=%d debounce=%dms\n",
-         data->stable_level,
-         SGW_DEBOUNCE_MS);
+    if (ret < 0) {
+        dev_err(
+            &pdev->dev,
+            "failed to read initial GPIO level: %d\n",
+            ret
+        );
 
-    /*GPIO 编号转化为linux IRQ编号*/
-    data->irq =gpio_to_irq(data->gpio);
-    if(data->irq < 0)
-    {
-        dev_err(&pdev->dev,
-            "gpio_to_irq failed: %d\n",
-            data->irq);
-            return data->irq;
+        return ret;
     }
+
+    data->stable_level = ret;
+
+    dev_info(
+        &pdev->dev,
+        "initial stable level=%d debounce=%dms\n",
+        data->stable_level,
+        SGW_DEBOUNCE_MS
+    );
+
+    /* Convert GPIO descriptor to Linux IRQ number. */
+    data->irq = gpiod_to_irq(data->gpiod);
+
+    if (data->irq < 0) {
+        dev_err(
+            &pdev->dev,
+            "gpiod_to_irq failed: %d\n",
+            data->irq
+        );
+
+        return data->irq;
+    }
+
     /*注册上升沿和下降沿中断*/
     ret = devm_request_irq(
         &pdev->dev,
@@ -478,16 +507,26 @@ static int sgw_gpio_remove(struct platform_device *pdev)
      */
     return 0;
 }
+
+static const struct of_device_id sgw_of_match[] = {
+    {
+        .compatible = "smartgateway,sgw-gpio-event",
+    },
+    { }
+};
+
+MODULE_DEVICE_TABLE(of, sgw_of_match);
+
 static struct platform_driver sgw_driver = {
     .probe = sgw_gpio_probe,
     .remove = sgw_gpio_remove,
 
     .driver = {
         .name = SGW_NAME,
+        .of_match_table = sgw_of_match,
     },
 };
 
-static struct platform_device *sgw_device;
 
 static int __init sgw_init(void)
 {
@@ -500,27 +539,13 @@ static int __init sgw_init(void)
     if (ret)
         return ret;
 
-    sgw_device = platform_device_register_simple(
-        SGW_NAME,
-        PLATFORM_DEVID_NONE,
-        NULL,
-        0
-    );
-
-    if (IS_ERR(sgw_device)) {
-        ret = PTR_ERR(sgw_device);
-        platform_driver_unregister(&sgw_driver);
-        return ret;
-    }
-
-    pr_info("sgw_gpio_event: module loaded\n");
+    pr_info("sgw_gpio_event: platform driver registered\n");
 
     return 0;
 }
 
 static void __exit sgw_exit(void)
 {
-    platform_device_unregister(sgw_device);
     platform_driver_unregister(&sgw_driver);
 
     pr_info("sgw_gpio_event: module unloaded\n");
