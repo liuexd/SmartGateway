@@ -70,7 +70,8 @@ typedef enum
     FRAME_DEVICE_UNKNOWN = 0, /* 未识别/未上报 */
     FRAME_DEVICE_THSENSOR = 1, /* 温湿度传感器 */
     FRAME_DEVICE_RELAY = 2,    /* 继电器开关 */
-    FRAME_DEVICE_MOTOR = 3     /* 电机 */
+    FRAME_DEVICE_MOTOR = 3,     /* 电机 */
+    FRAME_DEVICE_GPIO_BUTTON = 4  /* GPIO 按键 */
 } frame_device_type_t;
 
 /*

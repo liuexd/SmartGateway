@@ -54,8 +54,7 @@ int gateway_loop_run(
     bluetooth_worker_context_t bluetooth_context;
     int bluetooth_thread_created = 0;
 
-    if (serial_device == NULL ||
-        context == NULL ||
+    if (context == NULL ||
         parser == NULL ||
         running == NULL)
     {
@@ -63,8 +62,16 @@ int gateway_loop_run(
     }
 
     printf("Gateway started\n");
-    printf("Serial device: %s\n", serial_device);
-    printf("Baud rate    : %d, 8N1, raw mode\n", baud_rate);
+
+    if (serial_device != NULL)
+    {
+        printf("Serial device: %s\n", serial_device);
+        printf("Baud rate    : %d, 8N1, raw mode\n", baud_rate);
+    }
+    else
+    {
+        printf("[BT] disabled (--no-serial)\n");
+    }
 
     /*
      * 外层循环负责串口断线重连。
@@ -146,48 +153,49 @@ int gateway_loop_run(
         server_thread_created = 1;
     }
 
-    bluetooth_context.serial_device = serial_device;
-    bluetooth_context.baud_rate = baud_rate;
-    bluetooth_context.gateway_context = context;
-    bluetooth_context.parser = parser;
-    bluetooth_context.running = running;
-    bluetooth_context.upstream_queue = &upstream_queue;
-    bluetooth_context.device_manager = &device_manager;
-
+    if (serial_device != NULL)
     {
-        int pthread_result;
-        pthread_result = pthread_create(
-            &bluetooth_thread,
-            NULL,
-            bluetooth_worker,
-            &bluetooth_context
-        );
-
-        if(pthread_result != 0)
+        bluetooth_context.serial_device = serial_device;
+        bluetooth_context.baud_rate = baud_rate;
+        bluetooth_context.gateway_context = context;
+        bluetooth_context.parser = parser;
+        bluetooth_context.running = running;
+        bluetooth_context.upstream_queue = &upstream_queue;
+        bluetooth_context.device_manager = &device_manager;
         {
-            fprintf(
-                stderr,
-                "[BT] pthread_create failed: %s\n",
-                strerror(pthread_result)
+            int pthread_result;
+            pthread_result = pthread_create(
+                &bluetooth_thread,
+                NULL,
+                bluetooth_worker,
+                &bluetooth_context
             );
-            message_queue_shutdown(&upstream_queue);
 
-            if(server_thread_created)
+            if(pthread_result != 0)
             {
-                pthread_join(server_thread,NULL);
+                fprintf(
+                    stderr,
+                    "[BT] pthread_create failed: %s\n",
+                    strerror(pthread_result)
+                );
+                message_queue_shutdown(&upstream_queue);
+
+                if(server_thread_created)
+                {
+                    pthread_join(server_thread,NULL);
+                }
+                message_queue_destroy(&upstream_queue);
+
+                wifi_worker_group_destroy(&wifi_workers);
+
+                wifi_server_close(wifi_listen_fd);
+
+                return -1;
             }
-            message_queue_destroy(&upstream_queue);
 
-            wifi_worker_group_destroy(&wifi_workers);
-
-            wifi_server_close(wifi_listen_fd);
-
-            return -1;
+            bluetooth_thread_created = 1;
         }
-
-        bluetooth_thread_created = 1;
     }
-
     while (*running)
     {
         /*

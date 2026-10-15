@@ -133,6 +133,7 @@ int gateway_app_parse_args(
 )
 {
     int i;
+    int no_serial = 0;
 
     if (serial_device == NULL ||
         baud_rate == NULL ||
@@ -155,6 +156,10 @@ int gateway_app_parse_args(
             }
 
             *serial_device = argv[++i];
+        }
+        else if (strcmp(argv[i], "--no-serial") == 0)
+        {
+            no_serial = 1;
         }
         else if (strcmp(argv[i], "--baud") == 0)
         {
@@ -199,6 +204,16 @@ int gateway_app_parse_args(
             return 1;
         }
     }
+
+    if ((no_serial && *serial_device != NULL) ||
+        (!no_serial && *serial_device == NULL))
+    {
+        fprintf(stderr,
+            "Specify exactly one of --serial or --no-serial\n");
+        return 1;
+    }
+
+return 0;
 
     return 0;
 }

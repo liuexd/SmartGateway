@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
     {
         fprintf(
             stdout,
-            "Usage: %s --serial <device> [--baud <rate>] "
+            "Usage: %s (--serial <device> | --no-serial) [--baud <rate>] "
             "--server <server_ip> --port <server_port>\n",
             argv[0]
         );
@@ -92,23 +92,6 @@ int main(int argc, char *argv[])
             stdout,
             "Example: %s --serial /tmp/ttyGW --baud 9600 "
             "--server 127.0.0.1 --port 9000\n",
-            argv[0]
-        );
-
-        return 1;
-    }
-
-    /*
-     * 设备路径必须从命令行提供，不能写死。
-     */
-    if (serial_device == NULL)
-    {
-        fprintf(stderr, "--serial is required\n");
-
-        fprintf(
-            stdout,
-            "Usage: %s --serial <device> [--baud <rate>] "
-            "--server <server_ip> --port <server_port>\n",
             argv[0]
         );
 

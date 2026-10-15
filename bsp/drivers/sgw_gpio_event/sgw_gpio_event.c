@@ -17,9 +17,13 @@
 #include <linux/wait.h>
 #include <linux/mutex.h>
 
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
+
 #define SGW_NAME "sgw-gpio-event"
 #define SGW_GPIO 115
 #define SGW_EVENT_CAPACITY 64
+#define SGW_DEBOUNCE_MS 20
 
 struct sgw_gpio_event{
     u64 timestamp_ns;
@@ -48,51 +52,107 @@ struct sgw_gpio_dev{
     struct miscdevice miscdev;
     wait_queue_head_t read_queue;
     struct mutex read_lock;
+
+    struct delayed_work debounce_work;
+    int stable_level;
 };
+
+
+/*
+ * Runs in workqueue context, not hard IRQ context.
+ * Confirm GPIO state after a 20 ms quiet period.
+ */
+static void sgw_gpio_debounce_work(struct work_struct *work)
+{
+    struct sgw_gpio_dev *data =
+        container_of(
+            to_delayed_work(work),
+            struct sgw_gpio_dev,
+            debounce_work);
+
+    struct sgw_gpio_event event;
+    unsigned long flags;
+    bool queued = false;
+    int level;
+
+    level = gpio_get_value(data->gpio);
+
+    event.timestamp_ns = ktime_get_ns();
+    event.level = level;
+
+    spin_lock_irqsave(&data->queue_lock, flags);
+
+    /*
+     * No actual stable state transition:
+     * do not generate a duplicate event.
+     */
+    if (level != data->stable_level) {
+
+        data->stable_level = level;
+
+        event.sequence =
+            data->enqueued + data->dropped + 1;
+
+        data->last_event = event;
+
+        if (data->count < SGW_EVENT_CAPACITY) {
+
+            data->events[data->head] = event;
+
+            data->head =
+                (data->head + 1) % SGW_EVENT_CAPACITY;
+
+            data->count++;
+            data->enqueued++;
+
+            queued = true;
+
+        } else {
+            data->dropped++;
+        }
+    }
+
+    spin_unlock_irqrestore(&data->queue_lock, flags);
+
+    if (queued)
+        wake_up_interruptible(&data->read_queue);
+}
+
 
 /*
  * IRQ Handler:
  * Capture the event and insert it into the ring buffer
- * 
+ *
  * The handler must no sleep
  */
+
 static irqreturn_t sgw_gpio_irq_handler(
-    int irq, void *dev_id
-)
+    int irq, void *dev_id)
 {
     struct sgw_gpio_dev *data = dev_id;
-    struct sgw_gpio_event event;
     unsigned long flags;
-    bool queued = false;
 
-    event.timestamp_ns = ktime_get_ns();
-    event.level = gpio_get_value(data->gpio);
+    (void)irq;
 
-    spin_lock_irqsave(&data->queue_lock,flags);
+    /* Count every raw hardware interrupt. */
+    spin_lock_irqsave(&data->queue_lock, flags);
 
     data->irq_total++;
 
-    event.sequence = data->irq_total;
-    data->last_event =event;
-
-    if(data->count < SGW_EVENT_CAPACITY){
-        data->events[data->head] = event;
-
-        data->head = (data->head + 1) % SGW_EVENT_CAPACITY;
-
-        data->count++;
-        data->enqueued++;
-        queued = true;
-    }else{
-        data->dropped++;
-    }
-
     spin_unlock_irqrestore(&data->queue_lock, flags);
-    if(queued)
-        wake_up_interruptible(&data->read_queue);
+
+    /*
+     * Restart the debounce interval on each edge.
+     * Do not sleep inside IRQ Handler.
+     */
+    mod_delayed_work(
+        system_wq,
+        &data->debounce_work,
+        msecs_to_jiffies(SGW_DEBOUNCE_MS));
 
     return IRQ_HANDLED;
 }
+
 
 static int sgw_event_open(
     struct inode *inode,
@@ -289,7 +349,9 @@ static int sgw_gpio_probe(struct platform_device *pdev)
     spin_lock_init(&data->queue_lock);
     init_waitqueue_head(&data->read_queue);
     mutex_init(&data->read_lock);
-    
+    INIT_DELAYED_WORK(
+        &data->debounce_work,
+        sgw_gpio_debounce_work);
 
     platform_set_drvdata(pdev, data);
     /*
@@ -310,6 +372,13 @@ static int sgw_gpio_probe(struct platform_device *pdev)
                 SGW_GPIO, ret);
         return ret;
     }
+
+    data->stable_level = gpio_get_value(data->gpio);
+
+    dev_info(&pdev->dev,
+         "initial stable level=%d debounce=%dms\n",
+         data->stable_level,
+         SGW_DEBOUNCE_MS);
 
     /*GPIO 编号转化为linux IRQ编号*/
     data->irq =gpio_to_irq(data->gpio);
@@ -341,6 +410,8 @@ static int sgw_gpio_probe(struct platform_device *pdev)
     if(ret){
         dev_err(&pdev->dev,
             "create stats failed: %d\n", ret);
+        devm_free_irq(&pdev->dev, data->irq, data);
+        cancel_delayed_work_sync(&data->debounce_work);
         return ret;
     }
 
@@ -356,6 +427,8 @@ static int sgw_gpio_probe(struct platform_device *pdev)
                 "misc_register failed: %d\n", ret);
 
         device_remove_file(&pdev->dev, &dev_attr_stats);
+        devm_free_irq(&pdev->dev, data->irq, data);
+        cancel_delayed_work_sync(&data->debounce_work);
         return ret;
     }
 
@@ -379,13 +452,15 @@ static int sgw_gpio_remove(struct platform_device *pdev)
     u32 irq_total;
     u32 dropped;
 
-    device_remove_file(&pdev->dev, &dev_attr_stats);
     misc_deregister(&data->miscdev);
-    /*
-     * Stop and synchronize the IRQ before taking
-     * the final statistics snapshot
-     */
+
+    device_remove_file(&pdev->dev, &dev_attr_stats);
+
+    /* Stop new IRQ callbacks first. */
     devm_free_irq(&pdev->dev, data->irq, data);
+
+    /* Wait for pending/running debounce work. */
+    cancel_delayed_work_sync(&data->debounce_work);
 
     spin_lock_irqsave(&data->queue_lock, flags);
 
