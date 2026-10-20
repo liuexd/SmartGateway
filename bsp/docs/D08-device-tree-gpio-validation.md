@@ -10,7 +10,7 @@
 >
 > 驱动源码：[`bsp/drivers/sgw_gpio_event/sgw_gpio_event.c`](../drivers/sgw_gpio_event/sgw_gpio_event.c)
 >
-> **验收结论**：D08 离线 DTB 构建、U-Boot 临时加载实验 DTB、Linux OF Platform Device/Driver 匹配、GPIO Descriptor 获取、pinctrl 引脚复用、IRQ 与环形事件队列，以及三次真实按键到 NODE03 Server 的 6 条 EDGE 事件均有终端日志支持并通过。**没有覆盖原厂 DTB，尚未执行普通重启后的原厂启动回滚复验；不宣称量化消抖、异常路径/持有 FD 卸载、长期可靠性或持久化部署已通过。**
+> **验收结论**：D08 离线 DTB 构建、U-Boot 临时加载实验 DTB、Linux OF Platform Device/Driver 匹配、GPIO Descriptor 获取、pinctrl 引脚复用、IRQ 与环形事件队列，以及三次真实按键到 NODE03 Server 的 6 条 EDGE 事件均有终端日志支持并通过。**没有覆盖原厂 DTB，已完成普通重启后的原有设备树节点缺失、DTB 哈希和根分区核对；zImage 在重启后尚未重新计算哈希。不宣称量化消抖、异常路径/持有 FD 卸载、长期可靠性或持久化部署已通过。**
 
 ## 1. 平台、资源与改造范围
 
@@ -178,18 +178,18 @@ Server `NodeStore` 六条日志均显示 `node=NODE03`、`dev=GPIO_BUTTON`，`EV
 | 单次按下/释放事件入队 | PASS | enqueued=2、depth=2、dropped=0 |
 | NODE03 心跳与 TCP 通信 | PASS | Server 端 NODE03 ONLINE |
 | 三次按键端到端事件对照 | PASS（本次样本） | EVT_SEQ 7–12 连续，统计增量 +6 |
-| 普通重启后恢复原厂 DTB 的实机复验 | **PENDING** | 尚未提供该轮重启后的输出 |
+| 普通重启后恢复原有设备树环境 | **PASS（限定范围）** | Linux 正常进入 Shell；运行时 D08 节点不存在、原 DTB SHA-256 不变、root 为 mmcblk1p2；重启后 zImage SHA-256 尚未补验 |
 | D08 驱动失败路径、并发/卸载竞态全面审查 | **NOT VERIFIED** | 功能测试不能取代静态审查与错误注入 |
 | 消抖 20ms 定量精度与 perf/GDB 性能分析 | **NOT VERIFIED** | 后续阶段单独进行 |
 | D08 DTB 永久安装/模块自动加载 | **NOT ATTEMPTED** | 采取临时启动，不改默认启动配置 |
 
-## 8. 恢复原厂启动的操作与回滚验收（待执行）
+## 8. 恢复原厂启动的操作与回滚验收（PASS：限定范围）
 
 **目的**：确认本次 D08 仅为临时 DTB 启动、没有损坏既有启动路径；保留 D08 实验文件和源码，不要求覆盖、删除文件或重刷 eMMC。
 
 1. 保存本次测试输出；在实验 Linux 中执行 `sync`，再执行 `reboot`。
 2. 保持 U-Boot 原有环境不变，不使用 `saveenv`、`mmc write`、`mmc erase`，**不修改** `/boot/100ask_imx6ull-14x14.dtb` 或 `/boot/zImage`；让系统按原先的 `bootcmd` 自动启动（先前记录 `fdt_file=100ask_imx6ull-14x14.dtb`）。
-3. 进入 Linux 后只读检查：
+3. 已按正常启动流程重新进入 Linux，执行只读检查：
 
 ```sh
 cat /proc/cmdline
@@ -198,10 +198,22 @@ sha256sum /boot/100ask_imx6ull-14x14.dtb
 sha256sum /boot/zImage
 ```
 
-4. 检查原厂 DTB 哈希应仍为 `daf7317e99a440fc34622c8f2bbf1a5a003248a926d9436700c840e67256813f`；zImage 与上文基线比较。没有新节点加上校验不变可支持“恢复原有启动路径”，但并非逐字节核查 RAM 中 FDT 的完整证据。
-5. 如以后需要再测试 D08，只需通过 UART 手动从独立路径加载实验 DTB 到 RAM；**不要把实验版改名覆盖原版，也不要把测试用 `bootcmd` 永久保存**。
+4. 开发者本次实际输出如下：
 
-此前已验证的原厂 U-Boot 环境仅说明默认 `fdt_file` 指向原厂 DTB；本节 **PENDING**，在提供重启后的真实输出前不能写成 PASS。
+```text
+[root@100ask:~]# ls /proc/device-tree/sgw-gpio-event
+ls: cannot access '/proc/device-tree/sgw-gpio-event': No such file or directory
+[root@100ask:~]# cat /proc/cmdline
+console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw
+[root@100ask:~]# sha256sum /boot/100ask_imx6ull-14x14.dtb
+daf7317e99a440fc34622c8f2bbf1a5a003248a926d9436700c840e67256813f  /boot/100ask_imx6ull-14x14.dtb
+```
+
+检查原厂 DTB 哈希应仍为 `daf7317e99a440fc34622c8f2bbf1a5a003248a926d9436700c840e67256813f`；zImage 与上文基线比较。没有新节点加上校验不变可支持“恢复原有启动路径”，但并非逐字节核查 RAM 中 FDT 的完整证据。
+5. 以上日志支持：重启后的系统运行时不包含 D08 节点，原 DTB 未发生字节变化，启动参数与原基线一致；**没有提供重启后的 zImage SHA-256，也没有通过 U-Boot 启动日志逐字节比对 RAM 中的 FDT**。这是一项限定范围内的回滚 PASS，不是完整的镜像恢复能力或掉电容错测试。
+6. 如以后需要再测试 D08，只需通过 UART 手动从独立路径加载实验 DTB 到 RAM；**不要把实验版改名覆盖原版，也不要把测试用 `bootcmd` 永久保存**。
+
+此前已验证的 U-Boot 默认 `fdt_file=100ask_imx6ull-14x14.dtb`；结合重启后 Linux 运行时节点缺失和原厂 DTB 哈希不变，本节记录为 **PASS（限定范围）**。重启后 zImage 哈希复核仍未完成。
 
 ## 9. 开发与 Git 归档注意事项
 
