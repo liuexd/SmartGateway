@@ -27,6 +27,16 @@ MODULE_PARM_DESC(
     "Inject a failure after AP3216C mode initialization"
 );
 
+/* D13: ALS read fault injection */
+static int inject_als_failure_stage;
+
+module_param(inject_als_failure_stage, int, 0444);
+
+MODULE_PARM_DESC(
+    inject_als_failure_stage,
+    "0=off, 1=low byte -EIO, 2=high byte -ETIMEDOUT"
+);
+
 struct sgw_ap3216_data {
     struct i2c_client *client;
     struct mutex lock;
@@ -57,20 +67,28 @@ static ssize_t als_raw_show(
 
     mutex_lock(&data->lock);
 
-    low = i2c_smbus_read_byte_data(
-        data->client,
-        SGW_AP3216_REG_ALS_LOW
-    );
+    if (inject_als_failure_stage == 1) {
+        low = -EIO;
+    } else {
+        low = i2c_smbus_read_byte_data(
+            data->client,
+            SGW_AP3216_REG_ALS_LOW
+        );
+    }
 
     if (low < 0) {
         raw = low;
         goto out_unlock;
     }
 
-    high = i2c_smbus_read_byte_data(
-        data->client,
-        SGW_AP3216_REG_ALS_HIGH
-    );
+    if (inject_als_failure_stage == 2) {
+        high = -ETIMEDOUT;
+    } else {
+        high = i2c_smbus_read_byte_data(
+            data->client,
+            SGW_AP3216_REG_ALS_HIGH
+        );
+    }
 
     if (high < 0) {
         raw = high;
