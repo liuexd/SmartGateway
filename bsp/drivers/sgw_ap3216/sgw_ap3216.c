@@ -43,8 +43,11 @@ struct sgw_ap3216_data {
 
     u8 old_mode;
     bool mode_changed;
-};
 
+    /* D14: ALS read statistics */
+    u64 read_success;
+    u64 read_errors;
+};
 /*
  * 用户读取 als_raw 时，由 sysfs 框架调用。
  * Linux 4.9 中 show() 可以使用 scnprintf() 输出数据。
@@ -77,6 +80,14 @@ static ssize_t als_raw_show(
     }
 
     if (low < 0) {
+        dev_err_ratelimited(
+            &data->client->dev,
+            "ALS low byte read failed: %d%s\n",
+            low,
+            inject_als_failure_stage == 1 ?
+                " [injected]" : ""
+        );
+
         raw = low;
         goto out_unlock;
     }
@@ -91,17 +102,31 @@ static ssize_t als_raw_show(
     }
 
     if (high < 0) {
+        dev_err_ratelimited(
+            &data->client->dev,
+            "ALS high byte read failed: %d%s\n",
+            high,
+            inject_als_failure_stage == 2 ?
+                " [injected]" : ""
+        );
+
         raw = high;
         goto out_unlock;
     }
 
     raw = (high << 8) | low;
 
+    /* 两个字节读取成功，记录一次成功 */
+    data->read_success++;
+
     mutex_unlock(&data->lock);
 
     return scnprintf(buf, PAGE_SIZE, "%d\n", raw);
 
 out_unlock:
+    /* 只有读取失败才会跳转到这里 */
+    data->read_errors++;
+
     mutex_unlock(&data->lock);
     return raw;
 }
@@ -109,8 +134,47 @@ out_unlock:
 /* 创建只读 sysfs 属性 als_raw */
 static DEVICE_ATTR_RO(als_raw);
 
+/*
+ * D14: expose ALS read statistics through sysfs.
+ */
+static ssize_t stats_show(
+    struct device *dev,
+    struct device_attribute *attr,
+    char *buf)
+{
+    struct sgw_ap3216_data *data;
+    u64 success;
+    u64 errors;
+
+    (void)attr;
+
+    data = dev_get_drvdata(dev);
+    if (!data)
+        return -ENODEV;
+
+    mutex_lock(&data->lock);
+
+    success = data->read_success;
+    errors = data->read_errors;
+
+    mutex_unlock(&data->lock);
+
+    return scnprintf(
+        buf,
+        PAGE_SIZE,
+        "read_success=%llu\n"
+        "read_errors=%llu\n",
+        (unsigned long long)success,
+        (unsigned long long)errors
+    );
+}
+
+/* Create read-only stats sysfs attribute */
+static DEVICE_ATTR_RO(stats);
+
 static struct attribute *sgw_ap3216_attrs[] = {
     &dev_attr_als_raw.attr,
+    &dev_attr_stats.attr,
     NULL,
 };
 
