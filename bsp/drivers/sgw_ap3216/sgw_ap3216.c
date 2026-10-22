@@ -17,6 +17,16 @@
 
 #define SGW_AP3216_MODE_ALL 0x03
 
+/* D12: controlled probe failure injection */
+static bool inject_probe_failure;
+
+module_param(inject_probe_failure, bool, 0444);
+
+MODULE_PARM_DESC(
+    inject_probe_failure,
+    "Inject a failure after AP3216C mode initialization"
+);
+
 struct sgw_ap3216_data {
     struct i2c_client *client;
     struct mutex lock;
@@ -157,6 +167,18 @@ static int sgw_ap3216_probe(
             goto err_restore_mode;
         }
     }
+
+    /* D12: simulate a failure before sysfs registration */
+    if (inject_probe_failure) {
+        dev_warn(&client->dev,
+                "fault injection: old=0x%02x, changed=%d\n",
+                data->old_mode,
+                data->mode_changed);
+
+        ret = -EIO;
+        goto err_restore_mode;
+    }
+
 
     /* 4. 创建用户态读取接口 */
     ret = sysfs_create_group(
