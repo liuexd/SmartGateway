@@ -1,0 +1,13 @@
+diff --git a/arch/arm/boot/dts/100ask_imx6ull-14x14.dts b/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
+index 0eeaac77d0ce..1fa6e05f7f13 100644
+--- a/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
++++ b/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
+@@ -252,2 +252,8 @@
+     status = "okay";
++
++    ap3216@1e {
++        compatible = "smartgateway,ap3216";
++        reg = <0x1e>;
++        status = "okay";
++    };
+ };
