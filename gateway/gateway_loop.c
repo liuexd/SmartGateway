@@ -312,10 +312,6 @@ int gateway_loop_run(
             }
         }
 
-
-        /*
-         * 处理TCP数据：服务器下发的命令JSON。已经由server_link负责接收任务
-         */
     }
 
     /*

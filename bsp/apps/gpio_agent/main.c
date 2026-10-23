@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <poll.h>
 
 #ifndef GPIO_DEVICE
 #define GPIO_DEVICE          "/dev/sgw_event0"
