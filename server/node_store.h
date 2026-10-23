@@ -27,6 +27,13 @@
  */
 typedef struct node_store node_store_t;
 
+typedef enum
+{
+    NODE_SENSOR_UNKNOWN = 0,
+    NODE_SENSOR_OK,
+    NODE_SENSOR_ERROR
+} node_sensor_status_t;
+
 /*
  * 创建节点存储。
  *
@@ -135,6 +142,39 @@ void node_store_foreach(
     const node_store_t *store,
     node_store_visit_cb_t callback,
     void *user_data
+);
+
+
+/*
+ * 查询节点最近一次上报的传感器状态。
+ *
+ * 返回 0：查询成功
+ * 返回 -1：节点不存在或参数非法
+ */
+int node_store_query_sensor_status(
+    const node_store_t *store,
+    const char *node_id,
+    node_sensor_status_t *status_out
+);
+
+/*
+ * 查询当前有效的测量字段。
+ *
+ * 返回 NULL 的情况：
+ *   1. 节点不存在
+ *   2. 没有成功测量记录
+ *   3. 最近传感器状态为 ERROR/UNKNOWN
+ *   4. 最后一次成功测量已经过期
+ *   5. 字段不存在
+ *
+ * 返回值指向 NodeStore 内部存储。
+ * 不能由调用者 free，且在后续更新或销毁后不可继续使用。
+ */
+const char *node_store_query_valid_field(
+    const node_store_t *store,
+    const char *node_id,
+    const char *key,
+    time_t max_age_sec
 );
 
 #endif

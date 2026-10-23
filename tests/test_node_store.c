@@ -561,6 +561,114 @@ static int test_foreach(void)
     return 0;
 }
 
+
+static int test_heartbeat_preserves_sample(void)
+{
+    node_store_t *store;
+    frame_data_t data;
+    frame_data_t out;
+    node_sensor_status_t status;
+    const char *raw;
+    int online;
+
+    store = node_store_create(4);
+    if (store == NULL)
+        return -1;
+
+    /* 先模拟一次成功采集 */
+    data = make_data_dev("NODE04", 5, "5");
+
+    snprintf(data.fields[1].key,
+             sizeof(data.fields[1].key),
+             "LIGHT_RAW");
+
+    snprintf(data.fields[1].value,
+             sizeof(data.fields[1].value),
+             "66");
+
+    snprintf(data.fields[2].key,
+             sizeof(data.fields[2].key),
+             "KIND");
+
+    snprintf(data.fields[2].value,
+             sizeof(data.fields[2].value),
+             "SAMPLE");
+
+    data.field_count = 3;
+
+    if (node_store_update(store, &data) != 0)
+        goto fail;
+
+    raw = node_store_query_valid_field(
+        store, "NODE04", "LIGHT_RAW", 30
+    );
+
+    if (raw == NULL || strcmp(raw, "66") != 0)
+        goto fail;
+
+    /* 然后模拟传感器异常心跳 */
+    data = make_data_dev("NODE04", 6, "5");
+
+    snprintf(data.fields[1].key,
+             sizeof(data.fields[1].key),
+             "KIND");
+
+    snprintf(data.fields[1].value,
+             sizeof(data.fields[1].value),
+             "HEARTBEAT");
+
+    snprintf(data.fields[2].key,
+             sizeof(data.fields[2].key),
+             "SENSOR");
+
+    snprintf(data.fields[2].value,
+             sizeof(data.fields[2].value),
+             "ERROR");
+
+    data.field_count = 3;
+
+    if (node_store_update(store, &data) != 0)
+        goto fail;
+
+    /* 节点依然在线 */
+    if (node_store_is_online(
+            store, "NODE04", 30, &online) != 0 ||
+        online != 1)
+        goto fail;
+
+    /* 传感器状态应该是 ERROR */
+    if (node_store_query_sensor_status(
+            store, "NODE04", &status) != 0 ||
+        status != NODE_SENSOR_ERROR)
+        goto fail;
+
+    /* 当前有效测量必须返回 NULL */
+    if (node_store_query_valid_field(
+            store, "NODE04", "LIGHT_RAW", 30) != NULL)
+        goto fail;
+
+    /* 但是历史成功测量应当还存在 */
+    if (node_store_query(
+            store, "NODE04", &out) != 0)
+        goto fail;
+
+    raw = frame_data_find_field(&out, "LIGHT_RAW");
+
+    if (raw == NULL || strcmp(raw, "66") != 0)
+        goto fail;
+
+    node_store_destroy(store);
+
+    printf("[PASS] heartbeat preserves sample\n");
+    return 0;
+
+fail:
+    node_store_destroy(store);
+    printf("[FAIL] heartbeat preserves sample\n");
+    return -1;
+}
+
+
 int main(void)
 {
     int failures = 0;
@@ -574,6 +682,7 @@ int main(void)
     failures += test_null_params();
     failures += test_device_type_and_online();
     failures += test_foreach();
+    failures += (test_heartbeat_preserves_sample() != 0);
 
     if (failures != 0)
     {

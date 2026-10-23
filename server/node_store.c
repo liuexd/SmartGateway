@@ -29,11 +29,21 @@
  * last_update ：最近一次更新时间（用于满时淘汰最旧节点）
  * data        ：节点数据（含 node_id）
  */
+
 typedef struct node_entry
 {
     int used;
+
     time_t last_update;
+
+    time_t last_sample_time;
+
+    int has_sample;
+
+    node_sensor_status_t sensor_status;
+
     frame_data_t data;
+
 } node_entry_t;
 
 /*
@@ -160,6 +170,64 @@ static const node_entry_t *node_store_find_const(
     return NULL;
 }
 
+
+static void node_entry_apply_message(
+    node_entry_t *entry,
+    const frame_data_t *data,
+    time_t now)
+{
+    const char *kind;
+
+    kind = frame_data_find_field(data, "KIND");
+
+    /* 任何消息均可刷新节点在线时间 */
+    entry->last_update = now;
+
+    if (kind != NULL &&
+        strcmp(kind, "HEARTBEAT") == 0)
+    {
+        const char *sensor;
+
+        sensor = frame_data_find_field(
+            data, "SENSOR"
+        );
+
+        if (sensor != NULL) {
+            if (strcmp(sensor, "OK") == 0) {
+                entry->sensor_status = NODE_SENSOR_OK;
+            }
+            else if (strcmp(sensor, "ERROR") == 0) {
+                entry->sensor_status = NODE_SENSOR_ERROR;
+            }
+            else {
+                entry->sensor_status =
+                    NODE_SENSOR_UNKNOWN;
+            }
+        }
+
+        /*
+         * 首条消息就是心跳：
+         * 暂存节点身份，但不视为测量。
+         */
+        if (!entry->has_sample)
+            entry->data = *data;
+
+        return;
+    }
+
+    /*
+     * 非心跳业务数据：
+     * 沿用原有的最新数据覆盖语义。
+     *
+     * 对 NODE04，此处对应 KIND=SAMPLE。
+     * 对 NODE03，可以对应 KIND=EDGE。
+     */
+    entry->data = *data;
+    entry->has_sample = 1;
+    entry->last_sample_time = now;
+    entry->sensor_status = NODE_SENSOR_OK;
+}
+
 int node_store_update(
     node_store_t *store,
     const frame_data_t *data)
@@ -180,9 +248,12 @@ int node_store_update(
 
     if (entry != NULL)
     {
-        /* 已存在：覆盖数据，刷新时间戳 */
-        entry->data = *data;
-        entry->last_update = now;
+        node_entry_apply_message(
+            entry,
+            data,
+            now
+        );
+
         return 0;
     }
 
@@ -211,9 +282,16 @@ int node_store_update(
     }
 
     memset(entry, 0, sizeof(*entry));
+
     entry->used = 1;
-    entry->data = *data;
-    entry->last_update = now;
+
+    entry->sensor_status = NODE_SENSOR_UNKNOWN;
+
+    node_entry_apply_message(
+        entry,
+        data,
+        now
+    );
 
     return 0;
 }
@@ -337,4 +415,78 @@ void node_store_foreach(
             break;
         }
     }
+}
+
+
+int node_store_query_sensor_status(
+    const node_store_t *store,
+    const char *node_id,
+    node_sensor_status_t *status_out)
+{
+    const node_entry_t *entry;
+
+    if (store == NULL ||
+        node_id == NULL ||
+        node_id[0] == '\0' ||
+        status_out == NULL)
+    {
+        return -1;
+    }
+
+    entry = node_store_find_const(store, node_id);
+
+    if (entry == NULL)
+        return -1;
+
+    *status_out = entry->sensor_status;
+
+    return 0;
+}
+
+const char *node_store_query_valid_field(
+    const node_store_t *store,
+    const char *node_id,
+    const char *key,
+    time_t max_age_sec)
+{
+    const node_entry_t *entry;
+    time_t now;
+
+    if (store == NULL ||
+        node_id == NULL ||
+        node_id[0] == '\0' ||
+        key == NULL ||
+        key[0] == '\0' ||
+        max_age_sec <= 0)
+    {
+        return NULL;
+    }
+
+    entry = node_store_find_const(store, node_id);
+
+    if (entry == NULL)
+        return NULL;
+
+    /* 从未收到有效测量 */
+    if (!entry->has_sample)
+        return NULL;
+
+    /* 最近一次传感器状态异常 */
+    if (entry->sensor_status != NODE_SENSOR_OK)
+        return NULL;
+
+    now = node_store_now();
+
+    if (now == 0 ||
+        now < entry->last_sample_time)
+        return NULL;
+
+    /* 最后一次测量已过期 */
+    if (now - entry->last_sample_time >= max_age_sec)
+        return NULL;
+
+    return frame_data_find_field(
+        &entry->data,
+        key
+    );
 }

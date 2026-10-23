@@ -335,44 +335,74 @@ static int send_all(
     return 0;
 }
 
+
 /*
- * 节点注册表遍历回调。
+ * 打印节点注册表的一条记录。
  *
- * 为每个已注册节点打印一行：node_id、设备类型、在线状态、最近上报时间。
+ * 基础状态：
+ *   NODE ID、设备类型、ONLINE/OFFLINE
+ *
+ * 对 AP3216C：
+ *   增加 SENSOR 状态和有效 LIGHT_RAW
  */
 static int print_registry_entry(
     const frame_data_t *data,
     time_t last_update,
     void *user_data)
 {
-    frame_device_type_t dev_type;
-    int online;
     const node_store_t *store;
+    frame_device_type_t dev_type;
     struct tm tm_buf;
     char time_text[32];
-
-    (void)user_data;
+    int online = 0;
 
     store = (const node_store_t *)user_data;
 
-    dev_type = frame_device_type_from_text(
-        frame_data_find_field(data, FRAME_KV_DEV));
+    if (store == NULL || data == NULL)
+        return -1;
 
-    if (node_store_is_online(store, data->node_id,
-                             NODE_ONLINE_TIMEOUT_SEC, &online) != 0)
+    dev_type = frame_device_type_from_text(
+        frame_data_find_field(data, FRAME_KV_DEV)
+    );
+
+    /*
+     * 判断节点是否在线。
+     * 任何有效上报，包括心跳，
+     * 都可以刷新在线时间。
+     */
+    if (node_store_is_online(
+            store,
+            data->node_id,
+            NODE_ONLINE_TIMEOUT_SEC,
+            &online) != 0)
     {
         online = 0;
     }
 
+    /*
+     * 格式化最近一次消息的接收时间。
+     */
     if (localtime_r(&last_update, &tm_buf) != NULL)
     {
-        strftime(time_text, sizeof(time_text), "%H:%M:%S", &tm_buf);
+        strftime(
+            time_text,
+            sizeof(time_text),
+            "%H:%M:%S",
+            &tm_buf
+        );
     }
     else
     {
-        strcpy(time_text, "????");
+        snprintf(
+            time_text,
+            sizeof(time_text),
+            "UNKNOWN"
+        );
     }
 
+    /*
+     * 所有节点均显示基本信息。
+     */
     printf(
         "  %-8s %-10s %s  last=%s\n",
         data->node_id,
@@ -381,8 +411,73 @@ static int print_registry_entry(
         time_text
     );
 
+    /*
+     * AP3216C 特有的运行状态显示。
+     */
+    if (dev_type == FRAME_DEVICE_AP3216C)
+    {
+        node_sensor_status_t sensor_status;
+        const char *status_text = "UNKNOWN";
+        const char *light_raw = NULL;
+
+        sensor_status = NODE_SENSOR_UNKNOWN;
+
+        /*
+         * 查询最近一次传感器状态。
+         */
+        if (node_store_query_sensor_status(
+                store,
+                data->node_id,
+                &sensor_status) == 0)
+        {
+            switch (sensor_status)
+            {
+                case NODE_SENSOR_OK:
+                    status_text = "OK";
+                    break;
+
+                case NODE_SENSOR_ERROR:
+                    status_text = "ERROR";
+                    break;
+
+                case NODE_SENSOR_UNKNOWN:
+                default:
+                    status_text = "UNKNOWN";
+                    break;
+            }
+        }
+
+        /*
+         * 只有节点在线且传感器状态正常，
+         * 才进一步查询有效测量值。
+         *
+         * 有效期使用 30 秒作为当前测试值。
+         */
+        if (online &&
+            sensor_status == NODE_SENSOR_OK)
+        {
+            light_raw = node_store_query_valid_field(
+                store,
+                data->node_id,
+                "LIGHT_RAW",
+                30
+            );
+        }
+
+        /*
+         * 查询不到当前有效数据时打印 N/A，
+         * 不伪造 LIGHT_RAW=0。
+         */
+        printf(
+            "           SENSOR=%s LIGHT_RAW=%s\n",
+            status_text,
+            light_raw != NULL ? light_raw : "N/A"
+        );
+    }
+
     return 0;
 }
+
 
 /*
  * 打印当前节点注册表。
