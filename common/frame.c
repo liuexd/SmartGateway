@@ -31,6 +31,10 @@ frame_device_type_t frame_device_type_from_text(
     {
         return FRAME_DEVICE_GPIO_BUTTON;
     }
+    if (strcmp(text, "5") == 0)
+    {
+        return FRAME_DEVICE_AP3216C;
+    }
 
     return FRAME_DEVICE_UNKNOWN;
 }
@@ -51,6 +55,9 @@ const char *frame_device_type_name(
 
         case FRAME_DEVICE_GPIO_BUTTON:
             return "GPIO_BUTTON";
+
+        case FRAME_DEVICE_AP3216C:
+            return "AP3216C";
 
         case FRAME_DEVICE_UNKNOWN:
         default:

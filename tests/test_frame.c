@@ -178,6 +178,13 @@ static int test_device_type_dict(void)
         return -1;
     }
 
+    if (frame_device_type_from_text("5") !=
+        FRAME_DEVICE_AP3216C)
+    {
+        printf("[FAIL] dev 5 should be AP3216C\n");
+        return -1;
+    }
+
     if (frame_device_type_from_text("99") != FRAME_DEVICE_UNKNOWN ||
         frame_device_type_from_text(NULL) != FRAME_DEVICE_UNKNOWN ||
         frame_device_type_from_text("") != FRAME_DEVICE_UNKNOWN)
@@ -192,6 +199,14 @@ static int test_device_type_dict(void)
         strcmp(frame_device_type_name(FRAME_DEVICE_UNKNOWN), "UNKNOWN") != 0)
     {
         printf("[FAIL] device type name mismatch\n");
+        return -1;
+    }
+
+    if (strcmp(
+            frame_device_type_name(FRAME_DEVICE_AP3216C),
+            "AP3216C") != 0)
+    {
+        printf("[FAIL] AP3216C device type name mismatch\n");
         return -1;
     }
 

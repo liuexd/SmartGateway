@@ -422,6 +422,23 @@ static int test_device_type_and_online(void)
     data = make_data("NODE03", 1, 253, 601);
     node_store_update(store, &data);
 
+    data = make_data_dev("NODE04", 1, "5");
+
+    if (node_store_update(store, &data) != 0)
+    {
+        node_store_destroy(store);
+        return -1;
+    }
+
+    if (node_store_query_device_type(
+            store, "NODE04", &dev_type) != 0 ||
+        dev_type != FRAME_DEVICE_AP3216C)
+    {
+        printf("[FAIL] NODE04 should be AP3216C\n");
+        node_store_destroy(store);
+        return -1;
+    }
+
     if (node_store_query_device_type(store, "NODE01", &dev_type) != 0 ||
         dev_type != FRAME_DEVICE_THSENSOR)
     {
