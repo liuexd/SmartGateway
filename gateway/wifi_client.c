@@ -138,7 +138,7 @@ static int wifi_client_send_all(
         {
             continue;
         }
-        //MSG_NOSIGNAL可以避免发送时TCP连接断开所导致的程序终止问题
+        /* 对端断开时避免 SIGPIPE 终止进程。 */
         sent = send(fd, bytes + total, length - total, MSG_NOSIGNAL);
 
         if(sent > 0)

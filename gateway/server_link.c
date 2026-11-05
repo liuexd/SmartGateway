@@ -24,7 +24,7 @@
  */
 #define SERVER_LINK_POLL_TIMEOUT_MS 100
 
-//北向断开服务器
+/* 关闭北向连接、清除半包并安排重试。 */
 static void server_link_close_and_schedule_retry(
     gateway_context_t *context,
     size_t *tcp_length
@@ -46,18 +46,14 @@ static void server_link_close_and_schedule_retry(
 
     now = time(NULL);
 
-    if(now !=(time_t)-1)//检查是否失败
+    if(now !=(time_t)-1)
     {
         context->next_tcp_retry = now + 1;
     }
 }
 
 /*
- * 重连失败后的短等待。
- *
- * 原来是一次 100ms 的 nanosleep，期间完全不看退出标志；
- * 现在拆成 10ms 一片，每片都检查 running，
- * 使 SIGTERM 后的线程回收不受该等待拖累。
+ * 将重连等待分成 10ms 小段，每段检查退出标志。
  */
 static void server_link_wait_retry_interval(const volatile int *running)
 {
@@ -228,12 +224,7 @@ void *server_link_worker(void *arg)
                     strerror(errno)
                 );
 
-                /*
-                * 注意：
-                * pending_message 不清除。
-                *
-                * reconnect成功以后首先重新发送这一条。
-                */
+                /* 保留 pending_message，重连后先重发这一条。 */
                 server_link_close_and_schedule_retry(context,&tcp_length);
 
                 continue;
@@ -244,10 +235,7 @@ void *server_link_worker(void *arg)
             printf("[SERVER WORKER] sent, bytes=%u\n",
                 (unsigned int)pending_message.length);
 
-            /*
-             *只有发送成功才清空 pending，
-             *否则重连后重发同一条。
-             */
+            /* 发送成功后才能取下一条消息。 */
             have_pending_message = 0;
             sent_message = 1;
         }

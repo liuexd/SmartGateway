@@ -43,3 +43,13 @@ board-level acceptance. The real i.MX6ULL, Bluetooth and WiFi hardware chain
 still requires verification. No claim is made that the simulated northbound
 peer exercised the server's command manager; that implementation was covered
 by its existing unit tests and the separate TCP integration test.
+
+## Follow-up review
+
+The follow-up corrects the misplaced route-failure NACK comment, normalizes
+queue and main-loop presentation, fixes the Bluetooth shutdown log spelling,
+and removes or clarifies several worker comments. On the same Ubuntu VM, the
+updated source passed the build, `make test`, `make tests-bin`, `make test-tcp`,
+and the simulated end-to-end checks listed above. The code was also compared
+as C tokens against `37523d5`: apart from the corrected log string, executable
+and declaration tokens match. Physical board validation is still outstanding.

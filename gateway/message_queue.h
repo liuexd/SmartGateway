@@ -1,118 +1,58 @@
-/* 模块 message_queue：固定容量线程安全上行队列；生产者与 Server Link 消费者共享。 */
+/* 模块 message_queue：固定容量的线程安全上行队列。 */
 #ifndef MESSAGE_QUEUE_H
 #define MESSAGE_QUEUE_H
 
-
 #include <stddef.h>
 #include <pthread.h>
-/*
- * message_queue.h
- * 固定容量的有界环形队列，汇集设备 worker 的上行消息。
- */
 
 #define MESSAGE_QUEUE_CAPACITY 32
-
 #define GATEWAY_MESSAGE_MAX_SIZE 256
-
-/*
- *队列接口返回值
- */
 
 #define MESSAGE_QUEUE_OK 0
 #define MESSAGE_QUEUE_SHUTDOWN 1
 #define MESSAGE_QUEUE_EMPTY 2
 #define MESSAGE_QUEUE_ERROR -1
 
-
-/*
- *Gateway内部上行信息
- */
+/* 上行消息按值复制；length 是 data 中有效字节数。 */
 typedef struct
 {
     unsigned char data[GATEWAY_MESSAGE_MAX_SIZE];
     size_t length;
-
 } gateway_message_t;
 
-/*
- *有界环形消息队列
- */
-
+/* mutex 保护 items、head、tail、count 和 shutting_down。 */
 typedef struct
 {
     gateway_message_t items[MESSAGE_QUEUE_CAPACITY];
-
-    size_t head;  /* 下一次读取的位置 */
-    size_t tail;  /* 下一次写入的位置 */
-    size_t count; /* 当前消息数；以上字段和 shutting_down 均受 mutex 保护 */
-
+    size_t head;  /* 下一个读取位置 */
+    size_t tail;  /* 下一个写入位置 */
+    size_t count; /* 当前消息数 */
     pthread_mutex_t mutex;
-
-    /*
-     *队列非空：
-     *唤醒等待的pop的消费者
-     */
-
-    pthread_cond_t not_empty;
-
-     /*
-     *队列非满：
-     *唤醒等待的push的生产者
-     */
-    pthread_cond_t not_full;
-
-    int shutting_down;
-    
-
+    pthread_cond_t not_empty; /* 消费者等待消息 */
+    pthread_cond_t not_full;  /* 生产者等待空位 */
+    int shutting_down;        /* 非零时不再接受新消息 */
 } message_queue_t;
-/*
- *初始化队列
- */
+
+/* 初始化 queue；成功返回 OK，参数无效或同步对象初始化失败返回 ERROR。 */
 int message_queue_init(message_queue_t *queue);
-/**
- * 向队列中复制消息；满时等待空位或 shutdown。
- * @param queue 队列指针
- * @param message 消息指针
- * @return 返回值
- */
+
+/* 复制 message 到 queue；满时等待空位或 shutdown。
+ * 返回 OK、SHUTDOWN 或 ERROR（参数无效或消息过大）。 */
 int message_queue_push(message_queue_t *queue, const gateway_message_t *message);
 
-/**
- * 从队列中弹出消息；空时等待消息或 shutdown。
- * @param queue 队列指针
- * @param message 消息指针
- * @return 返回值
- */
+/* 将队首消息复制到 message；空时等待消息或 shutdown。
+ * 返回 OK、SHUTDOWN（关闭且已空）或 ERROR（参数无效）。 */
 int message_queue_pop(message_queue_t *queue, gateway_message_t *message);
 
-/*
- * 非阻塞取消息。
- *
- * 有消息：
- *     MESSAGE_QUEUE_OK
- *
- * 队列为空：
- *     MESSAGE_QUEUE_EMPTY
- *
- * shutdown 且已经没有消息：
- *     MESSAGE_QUEUE_SHUTDOWN
- */
-int message_queue_try_pop(
-    message_queue_t *queue,
-    gateway_message_t *message
-);
+/* 不等待消息：返回 OK、EMPTY、SHUTDOWN（关闭且已空）或 ERROR。
+ * 与 pop 一样，此操作仍须获取队列 mutex。 */
+int message_queue_try_pop(message_queue_t *queue, gateway_message_t *message);
 
-/**
- * 禁止新消息并广播两个条件变量，唤醒等待空位或消息的线程。
- * 已入队消息仍可取出；此操作不销毁队列。
- * @param queue 队列指针
- */
+/* 禁止新消息并唤醒生产者和消费者；已入队消息仍可取出。
+ * 此操作不销毁同步对象。queue 可为 NULL。 */
 void message_queue_shutdown(message_queue_t *queue);
 
-/**
- * 销毁同步对象；调用前必须等待所有生产者和消费者退出。
- * @param queue 队列指针
- */
+/* 所有生产者和消费者退出后销毁同步对象；queue 可为 NULL。 */
 void message_queue_destroy(message_queue_t *queue);
 
-#endif 
+#endif

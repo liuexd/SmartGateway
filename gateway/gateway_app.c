@@ -831,34 +831,6 @@ void gateway_app_on_frame(
     }
 }
 
-/*
- * 路由失败时，由网关代理目标节点回一条 NACK。
- *
- * 使用场景：
- *   命令已经无法送达节点（目标不存在 / 已离线 / 该节点命令队列满），
- *   如果什么都不做，Server 只能干等到 CMD_TIMEOUT_SEC 才判定超时，
- *   期间还会盲目重发若干次。
- *
- *   网关比 Server 更清楚南向链路的真实状态，
- *   所以这里主动回一条 NACK，让 Server 的 command_manager
- *   立刻把该命令标记为 NACKED，而不是白等一轮超时。
- *
- * 关键点：
- *   nack.node_id 必须填**原命令的目标节点**，不能填发送方 GATEWAY。
- *   Server 侧 command_manager_on_nack() 会校验 seq + node_id
- *   是否与在途命令匹配，填错会被当成伪造应答而拒绝。
- *
- * 线程说明：
- *   本函数只会在 Server Link Thread 中执行（gateway_app_on_tcp_line 的
- *   调用者），而 tcp_fd 的拥有者正是该线程，
- *   因此这里直接同步写 tcp_fd 是安全的，不构成跨线程写冲突。
- *
- * @param context 网关上下文（提供 tcp_fd）
- * @param command 原命令（提供 target_node 与 sequence）
- * @param error   失败原因，如 "route_offline"
- *
- * @return 0已回复；-1参数非法或发送失败
- */
 /* WiFi 上行 JSON 处理。 */
 void gateway_app_on_wifi_line(
     const char *line,
@@ -887,13 +859,7 @@ void gateway_app_on_wifi_line(
     }
 
     /*
-     * WiFi 节点和蓝牙节点一样会回 DATA / ACK / NACK 三类，
-     * 必须按 type 分派。
-     *
-     * 之前这里直接调 message_json_decode_data()，
-     * 而它硬校验 type=="DATA"，
-     * 导致 WiFi 的 ACK/NACK 全部解析失败被丢弃，
-     * Server 侧命令永远等不到应答、只能反复超时重发。
+     * 按 type 分派 DATA、ACK 和 NACK；各自的解码器会校验消息类型。
      */
     if (message_json_peek_type(
             line,
@@ -1118,6 +1084,34 @@ void gateway_app_on_wifi_line(
 
 
 /* Server 下行命令与路由失败处理。 */
+/*
+ * 路由失败时，由网关代理目标节点回一条 NACK。
+ *
+ * 使用场景：
+ *   命令已经无法送达节点（目标不存在 / 已离线 / 该节点命令队列满），
+ *   如果什么都不做，Server 只能干等到 CMD_TIMEOUT_SEC 才判定超时，
+ *   期间还会盲目重发若干次。
+ *
+ *   网关比 Server 更清楚南向链路的真实状态，
+ *   所以这里主动回一条 NACK，让 Server 的 command_manager
+ *   立刻把该命令标记为 NACKED，而不是白等一轮超时。
+ *
+ * 关键点：
+ *   nack.node_id 必须填**原命令的目标节点**，不能填发送方 GATEWAY。
+ *   Server 侧 command_manager_on_nack() 会校验 seq + node_id
+ *   是否与在途命令匹配，填错会被当成伪造应答而拒绝。
+ *
+ * 线程说明：
+ *   本函数只会在 Server Link Thread 中执行（gateway_app_on_tcp_line 的
+ *   调用者），而 tcp_fd 的拥有者正是该线程，
+ *   因此这里直接同步写 tcp_fd 是安全的，不构成跨线程写冲突。
+ *
+ * @param context 网关上下文（提供 tcp_fd）
+ * @param command 原命令（提供 target_node 与 sequence）
+ * @param error   失败原因，如 "route_offline"
+ *
+ * @return 0已回复；-1参数非法或发送失败
+ */
 static int gateway_app_send_route_failure_nack(
     gateway_context_t *context,
     const frame_command_t *command,

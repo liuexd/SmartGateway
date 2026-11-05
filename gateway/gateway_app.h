@@ -14,8 +14,7 @@
  * 设备上行回调上下文。
  *
  * Bluetooth Worker / WiFi Worker 都通过它访问：
- * 1. 原有 Gateway 运行状态；
- * 2. M7-6 上行消息队列。
+ * Gateway 运行状态、上行消息队列以及设备注册表。
  */
 typedef struct
 {
@@ -31,7 +30,7 @@ typedef struct
 
     char bound_node_id[DEVICE_NODE_ID_SIZE];
 
-}gateway_app_upstream_context_t;
+} gateway_app_upstream_context_t;
 
 /*
  * 下行（Server -> 网关）回调上下文。
@@ -45,7 +44,7 @@ typedef struct
 
     device_manager_t *device_manager;
 
-}gateway_app_downlink_context_t;
+} gateway_app_downlink_context_t;
 
 
 /*
@@ -165,7 +164,7 @@ void gateway_app_on_tcp_line(
  * line/length 指向完整行；user_data 为 gateway_app_upstream_context_t *。
  */
 void gateway_app_on_wifi_line(
-    const char*line,
+    const char *line,
     size_t length,
     void *user_data
 );
