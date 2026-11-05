@@ -15,10 +15,7 @@
  *
  * 成功返回时 socket 处于阻塞模式，与历史行为一致。
  */
-int tcp_client_connect(
-    const char *server_ip,
-    uint16_t port
-);
+int tcp_client_connect(const char *server_ip, uint16_t port);
 
 /*
  * 可中断、可指定超时的连接。
@@ -31,12 +28,10 @@ int tcp_client_connect(
  * 失败时所有路径都已关闭 socket，errno 保留真实原因
  * （ETIMEDOUT / EINTR / ECONNREFUSED / ENETUNREACH 等）。
  */
-int tcp_client_connect_stoppable(
-    const char *server_ip,
-    uint16_t port,
-    int timeout_ms,
-    const volatile int *running
-);
+int tcp_client_connect_stoppable(const char *server_ip,
+                                 uint16_t port,
+                                 int timeout_ms,
+                                 const volatile int *running);
 
 /*
  * 保证把length字节全部发送出去。
@@ -50,11 +45,7 @@ int tcp_client_connect_stoppable(
  *
  * 成功返回0，失败返回-1。
  */
-int tcp_client_send_all(
-    int socket_fd,
-    const void *data,
-    size_t length
-);
+int tcp_client_send_all(int socket_fd, const void *data, size_t length);
 
 /*
  * 把已连接 socket 置为非阻塞。

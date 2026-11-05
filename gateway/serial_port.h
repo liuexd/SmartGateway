@@ -8,16 +8,16 @@
 /*
  * serial_port_wait_readable()的返回值。
  */
-#define SERIAL_WAIT_ERROR     (-1)
-#define SERIAL_WAIT_HANGUP    (-2)
-#define SERIAL_WAIT_TIMEOUT   0
-#define SERIAL_WAIT_READABLE  1
+#define SERIAL_WAIT_ERROR (-1)
+#define SERIAL_WAIT_HANGUP (-2)
+#define SERIAL_WAIT_TIMEOUT 0
+#define SERIAL_WAIT_READABLE 1
 
 /*
  * serial_port_read()返回该值，表示当前暂时没有数据，
  * 并不代表串口发生错误。
  */
-#define SERIAL_READ_WOULD_BLOCK ((ssize_t)-2)
+#define SERIAL_READ_WOULD_BLOCK ((ssize_t) - 2)
 
 /**
  * @brief 打开并配置串口。
@@ -35,10 +35,7 @@
  *
  * @return 成功返回文件描述符，失败返回-1。
  */
-int serial_port_open(
-    const char *device,
-    int baud_rate
-);
+int serial_port_open(const char *device, int baud_rate);
 
 /**
  * @brief 使用poll等待串口可读或断开。
@@ -51,10 +48,7 @@ int serial_port_open(
  *         SERIAL_WAIT_HANGUP：设备断开
  *         SERIAL_WAIT_ERROR：错误
  */
-int serial_port_wait_readable(
-    int fd,
-    int timeout_ms
-);
+int serial_port_wait_readable(int fd, int timeout_ms);
 
 /**
  * @brief 从串口读取数据。
@@ -64,11 +58,7 @@ int serial_port_wait_readable(
  *         SERIAL_READ_WOULD_BLOCK：暂时没有数据
  *         -1：读取错误
  */
-ssize_t serial_port_read(
-    int fd,
-    void *buffer,
-    size_t size
-);
+ssize_t serial_port_read(int fd, void *buffer, size_t size);
 
 /**
  * @brief 保证把全部数据写入串口。
@@ -77,12 +67,7 @@ ssize_t serial_port_read(
  *
  * @return 成功返回0，失败返回-1。
  */
-int serial_port_write_all(
-    int fd,
-    const void *buffer,
-    size_t length,
-    int timeout_ms
-);
+int serial_port_write_all(int fd, const void *buffer, size_t length, int timeout_ms);
 
 /**
  * @brief 关闭串口。

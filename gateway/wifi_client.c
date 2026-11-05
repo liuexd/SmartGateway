@@ -35,25 +35,23 @@
  * 串口侧 serial_port_open() 已经是 O_NONBLOCK，
  * 这里保持两侧行为对称。
  */
-static int wifi_client_set_nonblocking(
-    int fd
-)
+static int wifi_client_set_nonblocking(int fd)
 {
     int flags;
 
-    if(fd < 0)
+    if (fd < 0)
     {
         return -1;
     }
 
     flags = fcntl(fd, F_GETFL, 0);
 
-    if(flags < 0)
+    if (flags < 0)
     {
         return -1;
     }
 
-    if(fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
     {
         return -1;
     }
@@ -69,17 +67,12 @@ static int wifi_client_set_nonblocking(
  *
  * @return 0成功；-1失败（errno 已设置，超时为 ETIMEDOUT）
  */
-static int wifi_client_send_all(
-    int fd,
-    const void *data,
-    size_t length
-)
+static int wifi_client_send_all(int fd, const void *data, size_t length)
 {
     const uint8_t *bytes;
     size_t total = 0;
 
-    if(fd < 0 ||
-        (data == NULL && length > 0U))
+    if (fd < 0 || (data == NULL && length > 0U))
     {
         errno = EINVAL;
         return -1;
@@ -93,7 +86,7 @@ static int wifi_client_send_all(
      * 注意 errno 只在 send() 返回负值时才有效，
      * 不能写成 sent > 0 && errno == EINTR。
      */
-    while(total < length)
+    while (total < length)
     {
         struct pollfd pfd;
         int poll_result;
@@ -109,45 +102,40 @@ static int wifi_client_send_all(
          */
         do
         {
-            poll_result = poll(
-                &pfd,
-                1,
-                WIFI_CLIENT_SEND_TIMEOUT_MS
-            );
-        }
-        while(poll_result < 0 && errno == EINTR);
+            poll_result = poll(&pfd, 1, WIFI_CLIENT_SEND_TIMEOUT_MS);
+        } while (poll_result < 0 && errno == EINTR);
 
-        if(poll_result < 0)
+        if (poll_result < 0)
         {
             return -1;
         }
 
-        if(poll_result == 0)
+        if (poll_result == 0)
         {
             errno = ETIMEDOUT;
             return -1;
         }
 
-        if((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
         {
             errno = EPIPE;
             return -1;
         }
 
-        if((pfd.revents & POLLOUT) == 0)
+        if ((pfd.revents & POLLOUT) == 0)
         {
             continue;
         }
         /* 对端断开时避免 SIGPIPE 终止进程。 */
         sent = send(fd, bytes + total, length - total, MSG_NOSIGNAL);
 
-        if(sent > 0)
+        if (sent > 0)
         {
             total += (size_t)sent;
             continue;
         }
 
-        if(sent < 0 && errno == EINTR)
+        if (sent < 0 && errno == EINTR)
         {
             continue;
         }
@@ -156,13 +144,12 @@ static int wifi_client_send_all(
          * 非阻塞 socket 缓冲区暂时满：
          * 回到 poll 继续等，由它负责超时。
          */
-        if(sent < 0 &&
-            (errno == EAGAIN || errno == EWOULDBLOCK))
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         {
             continue;
         }
 
-        if(sent == 0)
+        if (sent == 0)
         {
             errno = EPIPE;
         }
@@ -173,11 +160,9 @@ static int wifi_client_send_all(
     return 0;
 }
 
-static int wifi_client_try_send_command(
-    device_manager_t *device_manager,
-    gateway_app_upstream_context_t *upstream_context,
-    int client_fd
-)
+static int wifi_client_try_send_command(device_manager_t *device_manager,
+                                        gateway_app_upstream_context_t *upstream_context,
+                                        int client_fd)
 {
     frame_command_t command;
 
@@ -186,166 +171,143 @@ static int wifi_client_try_send_command(
     int result;
     int json_length;
 
-    if(device_manager == NULL ||
-        upstream_context == NULL ||
-        client_fd < 0)
+    if (device_manager == NULL || upstream_context == NULL || client_fd < 0)
     {
         return -1;
     }
 
     /*
-     *这个连接还没有通过第一条合法DATA
-     *确认node_id，Device Manager里没有它的条目，
-     *此时没有命令可发。
+     * 这个连接还没有通过第一条合法DATA
+     * 确认node_id，Device Manager里没有它的条目，
+     * 此时没有命令可发。
      *
-     *注意是 bound_node_id[0]，不是 bound_node_id：
-     *数组名不能和字符比较。
+     * 注意是 bound_node_id[0]，不是 bound_node_id：
+     * 数组名不能和字符比较。
      */
-    if(upstream_context->bound_node_id[0] == '\0')
+    if (upstream_context->bound_node_id[0] == '\0')
     {
         return 0;
     }
 
     result = device_manager_try_dequeue_command(
-        device_manager,
-        upstream_context->bound_node_id,
-        client_fd,
-        pthread_self(),
-        &command
-    );
+        device_manager, upstream_context->bound_node_id, client_fd, pthread_self(), &command);
 
     /*
-     *队列为空：正常情况，回去收节点数据。
+     * 队列为空：正常情况，回去收节点数据。
      *
-     *这里绝不能报错：没有命令是常态，
-     *每100ms都会走到这里。
+     * 这里绝不能报错：没有命令是常态，
+     * 每100ms都会走到这里。
      */
-    if(result == DEVICE_MANAGER_QUEUE_EMPTY)
+    if (result == DEVICE_MANAGER_QUEUE_EMPTY)
     {
         return 0;
     }
 
     /*
-     *本worker已不再是这个node连接的拥有者
-     *（例：节点重连，新worker已接管）。
-     *返回-1让外层循环退出，避免旧worker继续乱写。
+     * 本worker已不再是这个node连接的拥有者
+     * （例：节点重连，新worker已接管）。
+     * 返回-1让外层循环退出，避免旧worker继续乱写。
      */
-    if(result == DEVICE_MANAGER_CONFLICT)
+    if (result == DEVICE_MANAGER_CONFLICT)
     {
         fprintf(stderr,
-            "[WIFI CMD] connection ownership conflict, node=%s fd=%d\n",
-            upstream_context->bound_node_id,
-            client_fd
-        );
+                "[WIFI CMD] connection ownership conflict, node=%s fd=%d\n",
+                upstream_context->bound_node_id,
+                client_fd);
 
         return -1;
     }
 
-    if(result != DEVICE_MANAGER_OK)
+    if (result != DEVICE_MANAGER_OK)
     {
         fprintf(stderr,
-            "[WIFI CMD] dequeue failed, node=%s result=%d\n",
-            upstream_context->bound_node_id,
-            result
-        );
+                "[WIFI CMD] dequeue failed, node=%s result=%d\n",
+                upstream_context->bound_node_id,
+                result);
 
         return 0;
     }
 
-    json_length = message_json_build_command(
-        json,
-        sizeof(json),
-        &command
-    );
+    json_length = message_json_build_command(json, sizeof(json), &command);
 
     if (json_length < 0)
     {
-        fprintf(
-            stderr,
-            "[WIFI CMD] JSON build failed, node=%s seq=%06u\n",
-            upstream_context->bound_node_id,
-            (unsigned int)command.sequence
-        );
+        fprintf(stderr,
+                "[WIFI CMD] JSON build failed, node=%s seq=%06u\n",
+                upstream_context->bound_node_id,
+                (unsigned int)command.sequence);
 
-        gateway_app_enqueue_nack(
-            upstream_context->upstream_queue,
-            upstream_context->bound_node_id,
-            command.sequence,
-            "cmd_encode_failed"
-        );
+        gateway_app_enqueue_nack(upstream_context->upstream_queue,
+                                 upstream_context->bound_node_id,
+                                 command.sequence,
+                                 "cmd_encode_failed");
 
         return 0;
     }
 
-    if(wifi_client_send_all(client_fd,json,(size_t)json_length)!= 0)
+    if (wifi_client_send_all(client_fd, json, (size_t)json_length) != 0)
     {
-        fprintf(
-            stderr,
-            "[WIFI CMD] send failed, node=%s fd=%d: %s\n",
-            upstream_context->bound_node_id,
-            client_fd,
-            strerror(errno)
-        );
+        fprintf(stderr,
+                "[WIFI CMD] send failed, node=%s fd=%d: %s\n",
+                upstream_context->bound_node_id,
+                client_fd,
+                strerror(errno));
 
-        gateway_app_enqueue_nack(
-            upstream_context->upstream_queue,
-            upstream_context->bound_node_id,
-            command.sequence,
-            "transport_send_failed"
-        );
+        gateway_app_enqueue_nack(upstream_context->upstream_queue,
+                                 upstream_context->bound_node_id,
+                                 command.sequence,
+                                 "transport_send_failed");
 
         return -1;
     }
 
-    printf(
-        "[WIFI CMD] sent node=%s seq=%06u bytes=%d\n",
-        upstream_context->bound_node_id,
-        (unsigned int)command.sequence,
-        json_length
-    );
+    printf("[WIFI CMD] sent node=%s seq=%06u bytes=%d\n",
+           upstream_context->bound_node_id,
+           (unsigned int)command.sequence,
+           json_length);
 
     return 1;
 }
 
 void *wifi_client_worker(void *arg)
 {
-    wifi_client_context_t *client;
+    wifi_client_context_t *client_context;
 
     int client_fd;
-    gateway_context_t  *gateway_context;
+    gateway_context_t *gateway_context;
     const volatile int *running;
-    wifi_worker_group_t  *worker_group;
+    wifi_worker_group_t *worker_group;
     message_queue_t *upstream_queue;
     gateway_app_upstream_context_t upstream_context;
     device_manager_t *device_manager;
 
-    uint8_t  read_chunk[WIFI_CLIENT_READ_BUFFER_SIZE];
+    uint8_t read_chunk[WIFI_CLIENT_READ_BUFFER_SIZE];
     char rx_buffer[WIFI_CLIENT_BUFFER_SIZE];
     size_t rx_length = 0;
 
-    if(arg == NULL)
+    if (arg == NULL)
     {
         return NULL;
     }
 
-    client = (wifi_client_context_t *)arg;
+    client_context = (wifi_client_context_t *)arg;
 
     /*
-     *先把长期需要的数据复制出来
+     * 先把长期需要的数据复制出来
      */
-    client_fd = client->client_fd;
-    gateway_context = client->gateway_context;
-    running = client->running;
-    worker_group = client->wifi_worker_group;
-    upstream_queue = client ->upstream_queue;
-    device_manager = client ->device_manager;
+    client_fd = client_context->client_fd;
+    gateway_context = client_context->gateway_context;
+    running = client_context->running;
+    worker_group = client_context->wifi_worker_group;
+    upstream_queue = client_context->upstream_queue;
+    device_manager = client_context->device_manager;
 
     /*
      * 启动参数结构体已经没有用了。
      * 由 worker 负责释放。
      */
 
-    free(client);
+    free(client_context);
 
     upstream_context.gateway_context = gateway_context;
     upstream_context.upstream_queue = upstream_queue;
@@ -361,14 +323,12 @@ void *wifi_client_worker(void *arg)
      *
      * 失败则该连接不可靠，直接退出让上层回收。
      */
-    if(wifi_client_set_nonblocking(client_fd) != 0)
+    if (wifi_client_set_nonblocking(client_fd) != 0)
     {
-        fprintf(
-            stderr,
-            "[WIFI WORKER] cannot set nonblocking, fd=%d: %s\n",
-            client_fd,
-            strerror(errno)
-        );
+        fprintf(stderr,
+                "[WIFI WORKER] cannot set nonblocking, fd=%d: %s\n",
+                client_fd,
+                strerror(errno));
 
         close(client_fd);
 
@@ -380,7 +340,7 @@ void *wifi_client_worker(void *arg)
     printf("[WIFI WORKER] started, fd=%d\n", client_fd);
 
     /*
-     *核心程序
+     * 核心程序
      */
     struct pollfd pfd;
 
@@ -397,109 +357,80 @@ void *wifi_client_worker(void *arg)
         {
             int command_result;
 
-            command_result = wifi_client_try_send_command(
-                device_manager,
-                &upstream_context,
-                client_fd
-            );
-            if(command_result < 0)
+            command_result =
+                wifi_client_try_send_command(device_manager, &upstream_context, client_fd);
+            if (command_result < 0)
             {
                 break;
             }
         }
 
-        poll_result = poll(&pfd,1,100);
+        poll_result = poll(&pfd, 1, 100);
 
-        if(poll_result < 0)
+        if (poll_result < 0)
         {
-            if(errno == EINTR)
+            if (errno == EINTR)
             {
                 continue;
             }
 
-            fprintf(
-                stderr,
-                "[WIFI WORKER] poll failed, fd=%d: %s\n",
-                client_fd,
-                strerror(errno)
-            );
+            fprintf(stderr, "[WIFI WORKER] poll failed, fd=%d: %s\n", client_fd, strerror(errno));
 
             break;
         }
 
         /*
-         *1秒没有数据
-         *回到while顶部检查running
+         * 1秒没有数据
+         * 回到while顶部检查running
          */
-        if(poll_result == 0)
+        if (poll_result == 0)
         {
             continue;
         }
 
-        if((pfd.revents & POLLIN) != 0)
+        if ((pfd.revents & POLLIN) != 0)
         {
             ssize_t received;
 
-            received = recv(
-                client_fd,
-                read_chunk,
-                sizeof(read_chunk),
-                0
-            );
+            received = recv(client_fd, read_chunk, sizeof(read_chunk), 0);
 
-            if(received > 0)
+            if (received > 0)
             {
                 size_t received_size;
 
-                received_size = (size_t) received;
+                received_size = (size_t)received;
 
-                if(rx_length + received_size > sizeof(rx_buffer))
+                if (rx_length + received_size > sizeof(rx_buffer))
                 {
-                    fprintf(stderr,
-                    "[WIFI WORKER] receive buffer overflow, fd = %d\n",client_fd);
+                    fprintf(stderr, "[WIFI WORKER] receive buffer overflow, fd = %d\n", client_fd);
 
-
-                rx_length = 0;
-                continue;
+                    rx_length = 0;
+                    continue;
                 }
 
-                memcpy(
-                    rx_buffer + rx_length,
-                    read_chunk,
-                    received_size
-                );
+                memcpy(rx_buffer + rx_length, read_chunk, received_size);
 
                 rx_length += received_size;
 
-                /*
-                *TCP没有消息边界
-                *继续复用现有的JSON Lines解析器
-                */
-
-                /* 每个连接维护自己的缓冲区，解析器保留拆分的不完整行。 */
-                line_parser_feed(
-                    rx_buffer,
-                    &rx_length,
-                    sizeof(rx_buffer),
-                    gateway_app_on_wifi_line,
-                    &upstream_context
-                );
+                /* TCP 没有消息边界；解析器保留当前连接的未完成行。 */
+                line_parser_feed(rx_buffer,
+                                 &rx_length,
+                                 sizeof(rx_buffer),
+                                 gateway_app_on_wifi_line,
+                                 &upstream_context);
 
                 continue;
             }
-            else if(received == 0)
+            else if (received == 0)
             {
                 /*
-                 *对端正常关闭连接，不是错误。
+                 * 对端正常关闭连接，不是错误。
                  */
-                printf(
-                    "[WIFI WORKER] node disconnected, fd=%d\n",
-                    client_fd
-                );
+                printf("[WIFI WORKER] node disconnected, fd=%d\n", client_fd);
 
                 break;
             }
-            else if(errno == EAGAIN || errno == EWOULDBLOCK)
+            else if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
                 /*
                  * 非阻塞 socket 上 poll 报可读但数据已被取走，
@@ -507,24 +438,17 @@ void *wifi_client_worker(void *arg)
                  */
                 continue;
             }
-            else if(errno != EINTR)
+            else if (errno != EINTR)
             {
                 fprintf(
-                    stderr,
-                    "[WIFI WORKER] recv failed, fd=%d: %s\n",
-                    client_fd,
-                    strerror(errno)
-                );
+                    stderr, "[WIFI WORKER] recv failed, fd=%d: %s\n", client_fd, strerror(errno));
 
                 break;
             }
         }
-        if((pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
+        if ((pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
         {
-            printf(
-                "[WIFI WORKER] connection closed, fd=%d\n",
-                client_fd
-            );
+            printf("[WIFI WORKER] connection closed, fd=%d\n", client_fd);
 
             break;
         }
@@ -536,97 +460,78 @@ void *wifi_client_worker(void *arg)
     */
     if (upstream_context.bound_node_id[0] != '\0')
     {
-        frame_command_t pending_commands[
-            DEVICE_COMMAND_QUEUE_CAPACITY
-        ];
+        frame_command_t pending_commands[DEVICE_COMMAND_QUEUE_CAPACITY];
 
         size_t pending_count;
         size_t i;
 
         int disconnect_result;
 
-
         pending_count = 0U;
 
-
         disconnect_result =
-            device_manager_disconnect_collect_commands(
-                device_manager,
-                upstream_context.bound_node_id,
-                client_fd,
-                pthread_self(),
-                pending_commands,
-                DEVICE_COMMAND_QUEUE_CAPACITY,
-                &pending_count
-            );
+            device_manager_disconnect_collect_commands(device_manager,
+                                                       upstream_context.bound_node_id,
+                                                       client_fd,
+                                                       pthread_self(),
+                                                       pending_commands,
+                                                       DEVICE_COMMAND_QUEUE_CAPACITY,
+                                                       &pending_count);
 
-
-        if (disconnect_result ==
-            DEVICE_MANAGER_OK)
+        if (disconnect_result == DEVICE_MANAGER_OK)
         {
-            for (i = 0U;
-                i < pending_count;
-                i++)
+            for (i = 0U; i < pending_count; i++)
             {
-                gateway_app_enqueue_nack(
-                    upstream_context.upstream_queue,
-                    pending_commands[i].target_node,
-                    pending_commands[i].sequence,
-                    "transport_disconnected"
-                );
+                gateway_app_enqueue_nack(upstream_context.upstream_queue,
+                                         pending_commands[i].target_node,
+                                         pending_commands[i].sequence,
+                                         "transport_disconnected");
             }
-
 
             if (pending_count > 0U)
             {
-                printf(
-                    "[WIFI CMD] failed %zu pending command(s), "
-                    "node=%s\n",
-                    pending_count,
-                    upstream_context.bound_node_id
-                );
+                printf("[WIFI CMD] failed %zu pending command(s), "
+                       "node=%s\n",
+                       pending_count,
+                       upstream_context.bound_node_id);
             }
         }
-        else if (
-            disconnect_result ==
-            DEVICE_MANAGER_CONFLICT)
+        else if (disconnect_result == DEVICE_MANAGER_CONFLICT)
         {
-            printf(
-                "[WIFI] stale disconnect ignored, node=%s fd=%d\n",
-                upstream_context.bound_node_id,
-                client_fd
-            );
+            printf("[WIFI] stale disconnect ignored, node=%s fd=%d\n",
+                   upstream_context.bound_node_id,
+                   client_fd);
         }
     }
 
     /*
-     *client_fd 的所有权属于本worker
+     * client_fd 的所有权属于本worker
      */
 
+    close(client_fd);
 
-     close(client_fd);
+    printf("[WIFI WORKER] stopped, fd=%d\n", client_fd);
 
-     printf("[WIFI WORKER] stopped, fd=%d\n", client_fd);
+    wifi_worker_group_remove(worker_group);
 
-     wifi_worker_group_remove(worker_group);
-
-     return NULL;
+    return NULL;
 }
 
 /* Group 计数 detached worker，wait 在共享资源销毁前等待计数归零。 */
 int wifi_worker_group_init(wifi_worker_group_t *group)
 {
-    if(group == NULL)
+    if (group == NULL)
     {
         return -1;
     }
 
     group->active_workers = 0;
-    if(pthread_mutex_init(&group->mutex,NULL)!=0){
+    if (pthread_mutex_init(&group->mutex, NULL) != 0)
+    {
         return -1;
     }
 
-    if(pthread_cond_init(&group->all_stopped,NULL)!=0)
+    if (pthread_cond_init(&group->all_stopped, NULL) != 0)
     {
         pthread_mutex_destroy(&group->mutex);
         return -1;
@@ -644,17 +549,15 @@ void wifi_worker_group_add(wifi_worker_group_t *group)
     pthread_mutex_unlock(&group->mutex);
 }
 
-void wifi_worker_group_remove(
-    wifi_worker_group_t *group
-)
+void wifi_worker_group_remove(wifi_worker_group_t *group)
 {
     pthread_mutex_lock(&group->mutex);
 
-    if(group->active_workers>0)
+    if (group->active_workers > 0)
     {
         group->active_workers--;
     }
-    if(group->active_workers==0)
+    if (group->active_workers == 0)
     {
         pthread_cond_broadcast(&group->all_stopped);
     }
@@ -662,26 +565,19 @@ void wifi_worker_group_remove(
     pthread_mutex_unlock(&group->mutex);
 }
 
-void wifi_worker_group_wait(
-    wifi_worker_group_t *group
-)
+void wifi_worker_group_wait(wifi_worker_group_t *group)
 {
     pthread_mutex_lock(&group->mutex);
 
-    while(group->active_workers >0)
+    while (group->active_workers > 0)
     {
-        pthread_cond_wait(
-            &group->all_stopped,
-            &group->mutex
-        );
+        pthread_cond_wait(&group->all_stopped, &group->mutex);
     }
 
     pthread_mutex_unlock(&group->mutex);
 }
 
-void wifi_worker_group_destroy(
-    wifi_worker_group_t *group
-)
+void wifi_worker_group_destroy(wifi_worker_group_t *group)
 {
     pthread_cond_destroy(&group->all_stopped);
 

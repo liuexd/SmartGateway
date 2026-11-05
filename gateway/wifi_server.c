@@ -15,16 +15,16 @@ int wifi_server_open(uint16_t port)
     int reuse = 1;
     struct sockaddr_in address;
 
-    //创建ipv4 TCP socket
+    /* 创建 IPv4 TCP socket。 */
 
-    listen_fd = socket(AF_INET,SOCK_STREAM,0);
+    listen_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-    if(listen_fd < 0)
+    if (listen_fd < 0)
     {
         return -1;
     }
 
-    if(setsockopt(listen_fd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse)) < 0)
+    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
     {
         close(listen_fd);
         return -1;
@@ -36,31 +36,30 @@ int wifi_server_open(uint16_t port)
     address.sin_port = htons(port);
     address.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    //绑定端口
-    if(bind(listen_fd,(struct sockaddr*)&address,sizeof(address)) < 0)
+    /* 将 socket 绑定到监听端口。 */
+    if (bind(listen_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
     {
         close(listen_fd);
         return -1;
     }
 
-    //进入监听模式
-    if(listen(listen_fd,8) < 0)
+    /* 开始监听连接。 */
+    if (listen(listen_fd, 8) < 0)
     {
         close(listen_fd);
         return -1;
     }
 
     return listen_fd;
-
 }
 
 int wifi_server_accept(int listen_fd)
 {
     int client_fd;
 
-    client_fd = accept(listen_fd,NULL,NULL);
+    client_fd = accept(listen_fd, NULL, NULL);
 
-    if(client_fd < 0)
+    if (client_fd < 0)
     {
         return -1;
     }
@@ -70,7 +69,7 @@ int wifi_server_accept(int listen_fd)
 
 void wifi_server_close(int fd)
 {
-    if(fd >= 0)
+    if (fd >= 0)
     {
         close(fd);
     }

@@ -1,17 +1,15 @@
 /* 模块 bluetooth_worker：独占串口并处理蓝牙帧、命令发送和串口重连。 */
-#ifndef  BLUETOOTH_WORKER_H
-#define  BLUETOOTH_WORKER_H
+#ifndef BLUETOOTH_WORKER_H
+#define BLUETOOTH_WORKER_H
 
 #include "gateway_app.h"
 #include "frame_parser.h"
 #include "device_manager.h"
 
 /*
- *Bluetooth Worker 启动参数
- *M7-5 初期仍复用现有的gateway_context，后续改成message queue和frame_parser。
- *后续只迁移串口I/O的执行位置，不改变协议逻辑
+ * 主循环创建并持有此上下文，直到 Bluetooth Worker join 完成。
+ * Worker 独占串口；parser、队列和设备表在整个线程生命周期内有效。
  */
-
 typedef struct
 {
     const char *serial_device;
@@ -28,6 +26,7 @@ typedef struct
 
 } bluetooth_worker_context_t;
 
+/* pthread 入口；arg 指向 bluetooth_worker_context_t，退出时返回 NULL。 */
 void *bluetooth_worker(void *arg);
 
 #endif

@@ -46,7 +46,6 @@ typedef struct
 
 } gateway_app_downlink_context_t;
 
-
 /*
  * =====================================================================
  * 网关应用层
@@ -68,11 +67,9 @@ typedef struct
  * @param server_ip 服务器地址，例如 "127.0.0.1"
  * @param server_port 服务器端口
  */
-void gateway_app_init(
-    gateway_context_t *context,
-    const char *server_ip,
-    unsigned short server_port
-);
+void gateway_app_init(gateway_context_t *context,
+                      const char *server_ip,
+                      unsigned short server_port);
 
 /*
  * 解析命令行参数。
@@ -92,12 +89,7 @@ void gateway_app_init(
  * @return 0成功；1参数错误/打印帮助后退出
  */
 int gateway_app_parse_args(
-    int argc,
-    char *argv[],
-    const char **serial_device,
-    int *baud_rate,
-    gateway_context_t *context
-);
+    int argc, char *argv[], const char **serial_device, int *baud_rate, gateway_context_t *context);
 
 /*
  * 尝试连接TCP服务器（带重试节流）。
@@ -112,10 +104,7 @@ int gateway_app_parse_args(
  * @param context 网关上下文
  * @param running Gateway 全局运行标志，可为 NULL
  */
-void gateway_app_try_tcp_connect(
-    gateway_context_t *context,
-    const volatile int *running
-);
+void gateway_app_try_tcp_connect(gateway_context_t *context, const volatile int *running);
 
 /*
  * Bluetooth Worker 的帧解析回调：解码 DATA、ACK 或 NACK，绑定或刷新
@@ -124,10 +113,7 @@ void gateway_app_try_tcp_connect(
  * frame 是已通过 CRC 校验的帧；user_data 为该 worker 持有的
  * gateway_app_upstream_context_t *，其共享队列和设备表须保持有效。
  */
-void gateway_app_on_frame(
-    const parsed_frame_t *frame,
-    void *user_data
-);
+void gateway_app_on_frame(const parsed_frame_t *frame, void *user_data);
 
 /*
  * 处理从TCP服务器收到的一行JSON（控制命令）。
@@ -152,22 +138,14 @@ void gateway_app_on_frame(
  * @param length    JSON长度
  * @param user_data 必须是 gateway_app_downlink_context_t*
  */
-void gateway_app_on_tcp_line(
-    const char *line,
-    size_t length,
-    void *user_data
-);
+void gateway_app_on_tcp_line(const char *line, size_t length, void *user_data);
 
 /*
  * WiFi Worker 的行解析回调：处理节点的 DATA、ACK、NACK JSON，
  * 刷新设备并将消息加入上行队列，队列满时可能阻塞。
  * line/length 指向完整行；user_data 为 gateway_app_upstream_context_t *。
  */
-void gateway_app_on_wifi_line(
-    const char *line,
-    size_t length,
-    void *user_data
-);
+void gateway_app_on_wifi_line(const char *line, size_t length, void *user_data);
 
 /*
  * 打印退出时的统计信息。
@@ -175,10 +153,7 @@ void gateway_app_on_wifi_line(
  * @param context 网关上下文
  * @param parser  帧解析器（用于读取parser.stats）
  */
-void gateway_app_print_stats(
-    const gateway_context_t *context,
-    const frame_parser_t *parser
-);
+void gateway_app_print_stats(const gateway_context_t *context, const frame_parser_t *parser);
 
 /*
  * 关闭TCP连接（如果存在）。
@@ -189,11 +164,9 @@ void gateway_app_close(gateway_context_t *context);
 
 /* 设备 Worker 将 node_id、sequence 和 error 封装为上行 NACK；
  * upstream_queue 须保持有效，队列满时可能阻塞；无返回值。 */
-void gateway_app_enqueue_nack(
-    message_queue_t *upstream_queue,
-    const char *node_id,
-    uint32_t sequence,
-    const char *error
-);
+void gateway_app_enqueue_nack(message_queue_t *upstream_queue,
+                              const char *node_id,
+                              uint32_t sequence,
+                              const char *error);
 
 #endif

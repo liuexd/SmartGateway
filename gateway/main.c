@@ -57,11 +57,9 @@ static int install_signal_handlers(void)
 
 int main(int argc, char *argv[])
 {
-    if (argc == 2 &&
-        strcmp(argv[1], "--version") == 0)
+    if (argc == 2 && strcmp(argv[1], "--version") == 0)
     {
-        printf("smart_gateway %s\n",
-               SMART_GATEWAY_VERSION);
+        printf("smart_gateway %s\n", SMART_GATEWAY_VERSION);
         return 0;
     }
 
@@ -75,38 +73,24 @@ int main(int argc, char *argv[])
     /*
      * 应用层默认配置。
      */
-    gateway_app_init(
-        &context,
-        "127.0.0.1",
-        9000
-    );
+    gateway_app_init(&context, "127.0.0.1", 9000);
 
     /*
      * 解析命令行参数。
      */
-    result = gateway_app_parse_args(
-        argc,
-        argv,
-        &serial_device,
-        &baud_rate,
-        &context
-    );
+    result = gateway_app_parse_args(argc, argv, &serial_device, &baud_rate, &context);
 
     if (result != 0)
     {
-        fprintf(
-            stdout,
-            "Usage: %s (--serial <device> | --no-serial) [--baud <rate>] "
-            "--server <server_ip> --port <server_port>\n",
-            argv[0]
-        );
+        fprintf(stdout,
+                "Usage: %s (--serial <device> | --no-serial) [--baud <rate>] "
+                "--server <server_ip> --port <server_port>\n",
+                argv[0]);
 
-        fprintf(
-            stdout,
-            "Example: %s --serial /tmp/ttyGW --baud 9600 "
-            "--server 127.0.0.1 --port 9000\n",
-            argv[0]
-        );
+        fprintf(stdout,
+                "Example: %s --serial /tmp/ttyGW --baud 9600 "
+                "--server 127.0.0.1 --port 9000\n",
+                argv[0]);
 
         return 1;
     }
@@ -122,13 +106,7 @@ int main(int argc, char *argv[])
     /*
      * 启动网关循环：监听 WiFi，管理 Server Link 和可选的蓝牙 worker。
      */
-    gateway_loop_run(
-        serial_device,
-        baud_rate,
-        &context,
-        &parser,
-        &g_running
-    );
+    gateway_loop_run(serial_device, baud_rate, &context, &parser, &g_running);
 
     /*
      * 主循环完成线程回收后打印统计，最后关闭剩余应用资源。

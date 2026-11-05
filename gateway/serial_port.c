@@ -21,32 +21,32 @@ static speed_t baud_rate_to_speed(int baud_rate)
 {
     switch (baud_rate)
     {
-        case 1200:
-            return B1200;
+    case 1200:
+        return B1200;
 
-        case 2400:
-            return B2400;
+    case 2400:
+        return B2400;
 
-        case 4800:
-            return B4800;
+    case 4800:
+        return B4800;
 
-        case 9600:
-            return B9600;
+    case 9600:
+        return B9600;
 
-        case 19200:
-            return B19200;
+    case 19200:
+        return B19200;
 
-        case 38400:
-            return B38400;
+    case 38400:
+        return B38400;
 
-        case 57600:
-            return B57600;
+    case 57600:
+        return B57600;
 
-        case 115200:
-            return B115200;
+    case 115200:
+        return B115200;
 
-        default:
-            return (speed_t)0;
+    default:
+        return (speed_t)0;
     }
 }
 
@@ -63,10 +63,7 @@ static void close_preserve_errno(int fd)
     errno = saved_errno;
 }
 
-int serial_port_open(
-    const char *device,
-    int baud_rate
-)
+int serial_port_open(const char *device, int baud_rate)
 {
     struct termios options;
     speed_t speed;
@@ -171,7 +168,7 @@ int serial_port_open(
     /*
      * 关闭软件流控。
      */
-    options.c_iflag &= (tcflag_t)~(IXON | IXOFF | IXANY);
+    options.c_iflag &= (tcflag_t) ~(IXON | IXOFF | IXANY);
 
     /*
      * 因为fd处于非阻塞状态，
@@ -183,8 +180,7 @@ int serial_port_open(
     /*
      * 配置输入与输出波特率。
      */
-    if (cfsetispeed(&options, speed) != 0 ||
-        cfsetospeed(&options, speed) != 0)
+    if (cfsetispeed(&options, speed) != 0 || cfsetospeed(&options, speed) != 0)
     {
         close_preserve_errno(fd);
         return -1;
@@ -211,10 +207,7 @@ int serial_port_open(
     return fd;
 }
 
-int serial_port_wait_readable(
-    int fd,
-    int timeout_ms
-)
+int serial_port_wait_readable(int fd, int timeout_ms)
 {
     struct pollfd pfd;
     int result;
@@ -295,11 +288,7 @@ int serial_port_wait_readable(
     return SERIAL_WAIT_TIMEOUT;
 }
 
-ssize_t serial_port_read(
-    int fd,
-    void *buffer,
-    size_t size
-)
+ssize_t serial_port_read(int fd, void *buffer, size_t size)
 {
     ssize_t result;
 
@@ -315,15 +304,13 @@ ssize_t serial_port_read(
     do
     {
         result = read(fd, buffer, size);
-    }
-    while (result < 0 && errno == EINTR);
+    } while (result < 0 && errno == EINTR);
 
     /*
      * 非阻塞串口目前暂时没有数据。
      * 这不属于真正的I/O错误。
      */
-    if (result < 0 &&
-        (errno == EAGAIN || errno == EWOULDBLOCK))
+    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
     {
         return SERIAL_READ_WOULD_BLOCK;
     }
@@ -331,19 +318,12 @@ ssize_t serial_port_read(
     return result;
 }
 
-int serial_port_write_all(
-    int fd,
-    const void *buffer,
-    size_t length,
-    int timeout_ms
-)
+int serial_port_write_all(int fd, const void *buffer, size_t length, int timeout_ms)
 {
     const uint8_t *bytes;
     size_t total_written = 0;
 
-    if (fd < 0 ||
-        (buffer == NULL && length > 0U) ||
-        timeout_ms < -1)
+    if (fd < 0 || (buffer == NULL && length > 0U) || timeout_ms < -1)
     {
         errno = EINVAL;
         return -1;
@@ -370,13 +350,8 @@ int serial_port_write_all(
          */
         do
         {
-            poll_result = poll(
-                &pfd,
-                1,
-                timeout_ms
-            );
-        }
-        while (poll_result < 0 && errno == EINTR);
+            poll_result = poll(&pfd, 1, timeout_ms);
+        } while (poll_result < 0 && errno == EINTR);
 
         if (poll_result < 0)
         {
@@ -389,8 +364,7 @@ int serial_port_write_all(
             return -1;
         }
 
-        if ((pfd.revents &
-             (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
         {
             errno = EIO;
             return -1;
@@ -401,11 +375,7 @@ int serial_port_write_all(
             continue;
         }
 
-        write_result = write(
-            fd,
-            bytes + total_written,
-            length - total_written
-        );
+        write_result = write(fd, bytes + total_written, length - total_written);
 
         if (write_result > 0)
         {
@@ -418,9 +388,7 @@ int serial_port_write_all(
             continue;
         }
 
-        if (write_result < 0 &&
-            (errno == EAGAIN ||
-             errno == EWOULDBLOCK))
+        if (write_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         {
             continue;
         }

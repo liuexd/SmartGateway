@@ -30,12 +30,9 @@ typedef struct
 
 } server_link_context_t;
 
-
 /*
  * Server Link pthread入口。
  */
-void *server_link_worker(
-    void *arg
-);
+void *server_link_worker(void *arg);
 
 #endif

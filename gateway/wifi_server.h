@@ -28,6 +28,4 @@ int wifi_server_accept(int listen_fd);
 
 void wifi_server_close(int fd);
 
-
-
 #endif // WIFI_SERVER_H

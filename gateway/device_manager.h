@@ -43,19 +43,18 @@
  * EXISTS    ：注册时该 node_id 已存在（重复注册）
  * FULL      ：注册表已满，无法再接纳新设备
  */
-#define DEVICE_MANAGER_QUEUE_EMPTY    1
-#define DEVICE_MANAGER_OK          0
-#define DEVICE_MANAGER_ERROR      -1
-#define DEVICE_MANAGER_NOT_FOUND  -2
-#define DEVICE_MANAGER_EXISTS     -3
-#define DEVICE_MANAGER_FULL       -4
-#define DEVICE_MANAGER_CONFLICT   -5
-#define DEVICE_MANAGER_OFFLINE       -6
-#define DEVICE_MANAGER_QUEUE_FULL    -7
+#define DEVICE_MANAGER_QUEUE_EMPTY 1
+#define DEVICE_MANAGER_OK 0
+#define DEVICE_MANAGER_ERROR -1
+#define DEVICE_MANAGER_NOT_FOUND -2
+#define DEVICE_MANAGER_EXISTS -3
+#define DEVICE_MANAGER_FULL -4
+#define DEVICE_MANAGER_CONFLICT -5
+#define DEVICE_MANAGER_OFFLINE -6
+#define DEVICE_MANAGER_QUEUE_FULL -7
 #define DEVICE_MANAGER_BUFFER_TOO_SMALL -8
 
 #define DEVICE_COMMAND_QUEUE_CAPACITY 8
-
 
 /*
  * 设备接入网关所用的物理链路类型。
@@ -65,11 +64,10 @@
  */
 typedef enum
 {
-    DEVICE_TRANSPORT_BLUETOOTH = 0,   /* 串口链路（多个节点共用串口） */
-    DEVICE_TRANSPORT_WIFI             /* WiFi 链路（每节点独占一条 TCP 连接） */
+    DEVICE_TRANSPORT_BLUETOOTH = 0, /* 串口链路（多个节点共用串口） */
+    DEVICE_TRANSPORT_WIFI           /* WiFi 链路（每节点独占一条 TCP 连接） */
 
 } device_transport_t;
-
 
 /*
  * 单个已注册设备（节点）的登记信息。
@@ -112,7 +110,7 @@ typedef struct
      *
      * 注意：WiFi worker 以 detached 方式运行，无法 join。
      * 需要其停止时应依靠 running 标志或关闭 fd 让其自行退出，
-     * 这里保存 tid 主要用于识别与诊断。
+     * fd 和 thread_id 一起用于校验连接所有权，防止旧 Worker 操作新连接。
      */
     pthread_t thread_id;
 
@@ -125,25 +123,22 @@ typedef struct
     time_t last_seen;
 
     /*
-     *当前设备自己的下行命令队列
+     * 当前设备自己的下行命令队列
      *
-     *Server Link Thread: 
+     * Server Link Thread:
      *     enqueue
      *
      * 对应设备Worker：
      *     dequeue
      */
 
-    frame_command_t command_queue[
-        DEVICE_COMMAND_QUEUE_CAPACITY
-     ];
+    frame_command_t command_queue[DEVICE_COMMAND_QUEUE_CAPACITY];
 
     size_t command_head;
     size_t command_tail;
-    size_t command_count; 
+    size_t command_count;
 
 } device_t;
-
 
 /*
  * 设备注册表。
@@ -174,7 +169,6 @@ typedef struct
 
 } device_manager_t;
 
-
 /*
  * 初始化 Device Manager。
  *
@@ -185,10 +179,7 @@ typedef struct
  *
  * @return DEVICE_MANAGER_OK；参数为 NULL 或 mutex 初始化失败时返回 ERROR
  */
-int device_manager_init(
-    device_manager_t *manager
-);
-
+int device_manager_init(device_manager_t *manager);
 
 /*
  * 注册一个新设备。
@@ -208,14 +199,11 @@ int device_manager_init(
  *
  * @return OK / EXISTS（重复注册）/ FULL（注册表已满）/ ERROR（参数非法）
  */
-int device_manager_register(
-    device_manager_t *manager,
-    const char *node_id,
-    device_transport_t transport,
-    int fd,
-    pthread_t thread_id
-);
-
+int device_manager_register(device_manager_t *manager,
+                            const char *node_id,
+                            device_transport_t transport,
+                            int fd,
+                            pthread_t thread_id);
 
 /*
  * 注销一个设备。
@@ -227,11 +215,7 @@ int device_manager_register(
  *
  * @return OK / NOT_FOUND（该节点未注册）/ ERROR（参数非法）
  */
-int device_manager_unregister(
-    device_manager_t *manager,
-    const char *node_id
-);
-
+int device_manager_unregister(device_manager_t *manager, const char *node_id);
 
 /*
  * 查找设备。
@@ -250,12 +234,7 @@ int device_manager_unregister(
  *
  * @return OK / NOT_FOUND / ERROR（参数非法）
  */
-int device_manager_find(
-    device_manager_t *manager,
-    const char *node_id,
-    device_t *out_device
-);
-
+int device_manager_find(device_manager_t *manager, const char *node_id, device_t *out_device);
 
 /*
  * 修改设备在线状态和当前 fd。
@@ -271,13 +250,7 @@ int device_manager_find(
  *
  * @return OK / NOT_FOUND / ERROR（参数非法）
  */
-int device_manager_set_online(
-    device_manager_t *manager,
-    const char *node_id,
-    int online,
-    int fd
-);
-
+int device_manager_set_online(device_manager_t *manager, const char *node_id, int online, int fd);
 
 /*
  * 更新设备最后活动时间。
@@ -293,11 +266,7 @@ int device_manager_set_online(
  *
  * @return OK / NOT_FOUND / ERROR（参数非法）
  */
-int device_manager_update_last_seen(
-    device_manager_t *manager,
-    const char *node_id
-);
-
+int device_manager_update_last_seen(device_manager_t *manager, const char *node_id);
 
 /*
  * 销毁 Device Manager。
@@ -310,9 +279,7 @@ int device_manager_update_last_seen(
  *
  * @param manager 管理器
  */
-void device_manager_destroy(
-    device_manager_t *manager
-);
+void device_manager_destroy(device_manager_t *manager);
 
 /*
  * 将一个物理连接绑定到 node_id。
@@ -323,14 +290,11 @@ void device_manager_destroy(
  * node_id 已存在且 transport 一致：
  *     认为是设备重连，更新 fd/thread_id/online。
  */
-int device_manager_bind_connection(
-    device_manager_t *manager,
-    const char *node_id,
-    device_transport_t transport,
-    int fd,
-    pthread_t thread_id
-);
-
+int device_manager_bind_connection(device_manager_t *manager,
+                                   const char *node_id,
+                                   device_transport_t transport,
+                                   int fd,
+                                   pthread_t thread_id);
 
 /*
  * 当前连接断开。
@@ -341,24 +305,19 @@ int device_manager_bind_connection(
  *
  * 防止旧 Worker 误伤新的重连。
  */
-int device_manager_disconnect(
-    device_manager_t *manager,
-    const char *node_id,
-    int fd,
-    pthread_t thread_id
-);
+int device_manager_disconnect(device_manager_t *manager,
+                              const char *node_id,
+                              int fd,
+                              pthread_t thread_id);
 
 /*
  * 向指定在线节点投递一条命令。
  *
  * 只做内存复制，不做任何socket/serial I/O。
  */
-int device_manager_enqueue_command(
-    device_manager_t *manager,
-    const char *node_id,
-    const frame_command_t *command
-);
-
+int device_manager_enqueue_command(device_manager_t *manager,
+                                   const char *node_id,
+                                   const frame_command_t *command);
 
 /*
  * 当前设备Worker尝试取得一条自己的命令。
@@ -366,35 +325,29 @@ int device_manager_enqueue_command(
  * fd + thread_id 用于确认调用者仍然是
  * Device Manager 当前记录的连接拥有者。
  */
-int device_manager_try_dequeue_command(
-    device_manager_t *manager,
-    const char *node_id,
-    int fd,
-    pthread_t thread_id,
-    frame_command_t *out_command
-);
+int device_manager_try_dequeue_command(device_manager_t *manager,
+                                       const char *node_id,
+                                       int fd,
+                                       pthread_t thread_id,
+                                       frame_command_t *out_command);
 
 /* 匹配当前连接后收集并移除待处理命令；容量不足时返回相应错误。 */
-int device_manager_disconnect_collect_commands(
-    device_manager_t *manager,
-    const char *node_id,
-    int fd,
-    pthread_t thread_id,
-    frame_command_t *out_commands,
-    size_t command_capacity,
-    size_t *out_count
-);
+int device_manager_disconnect_collect_commands(device_manager_t *manager,
+                                               const char *node_id,
+                                               int fd,
+                                               pthread_t thread_id,
+                                               frame_command_t *out_commands,
+                                               size_t command_capacity,
+                                               size_t *out_count);
 
 /* 绑定或接管连接，并向调用者返回旧连接的待处理命令。 */
-int device_manager_bind_connection_collect_commands(
-    device_manager_t *manager,
-    const char *node_id,
-    device_transport_t transport,
-    int fd,
-    pthread_t thread_id,
-    frame_command_t *out_commands,
-    size_t command_capacity,
-    size_t *out_count
-);
+int device_manager_bind_connection_collect_commands(device_manager_t *manager,
+                                                    const char *node_id,
+                                                    device_transport_t transport,
+                                                    int fd,
+                                                    pthread_t thread_id,
+                                                    frame_command_t *out_commands,
+                                                    size_t command_capacity,
+                                                    size_t *out_count);
 
 #endif

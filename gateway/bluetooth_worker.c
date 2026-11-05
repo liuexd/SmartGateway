@@ -14,11 +14,9 @@
 
 #define BLUETOOTH_READ_BUFFER_SIZE 256
 
-static int bluetooth_worker_try_send_command(
-    device_manager_t *device_manager,
-    gateway_app_upstream_context_t *upstream_context,
-    int serial_fd
-)
+static int bluetooth_worker_try_send_command(device_manager_t *device_manager,
+                                             gateway_app_upstream_context_t *upstream_context,
+                                             int serial_fd)
 {
     frame_command_t command;
 
@@ -27,9 +25,7 @@ static int bluetooth_worker_try_send_command(
     int result;
     int frame_length;
 
-    if(device_manager == NULL ||
-        upstream_context == NULL ||
-        serial_fd < 0 )
+    if (device_manager == NULL || upstream_context == NULL || serial_fd < 0)
     {
         return -1;
     }
@@ -42,101 +38,74 @@ static int bluetooth_worker_try_send_command(
      * 注意不要在这里报错：绑定之前每秒都会走到这里，
      * 报错会变成刷屏。
      */
-    if(upstream_context->bound_node_id[0] == '\0')
+    if (upstream_context->bound_node_id[0] == '\0')
     {
         return 0;
     }
 
     result = device_manager_try_dequeue_command(
-        device_manager,
-        upstream_context->bound_node_id,
-        serial_fd,
-        pthread_self(),
-        &command
-    );
+        device_manager, upstream_context->bound_node_id, serial_fd, pthread_self(), &command);
 
-    if(result == DEVICE_MANAGER_QUEUE_EMPTY)
+    if (result == DEVICE_MANAGER_QUEUE_EMPTY)
     {
         return 0;
     }
     /*
      * 当前Worker已经不是这个设备连接的拥有者。
      */
-    if (result ==
-        DEVICE_MANAGER_CONFLICT)
+    if (result == DEVICE_MANAGER_CONFLICT)
     {
-        fprintf(
-            stderr,
-            "[BT CMD] connection ownership conflict, node=%s fd=%d\n",
-            upstream_context->bound_node_id,
-            serial_fd
-        );
+        fprintf(stderr,
+                "[BT CMD] connection ownership conflict, node=%s fd=%d\n",
+                upstream_context->bound_node_id,
+                serial_fd);
 
         return -1;
     }
 
-
-    if (result !=
-        DEVICE_MANAGER_OK)
+    if (result != DEVICE_MANAGER_OK)
     {
-        fprintf(
-            stderr,
-            "[BT CMD] dequeue failed, node=%s result=%d\n",
-            upstream_context->bound_node_id,
-            result
-        );
+        fprintf(stderr,
+                "[BT CMD] dequeue failed, node=%s result=%d\n",
+                upstream_context->bound_node_id,
+                result);
 
         return 0;
     }
 
-    frame_length = frame_build_command_kv(
-        frame,
-        sizeof(frame),
-        command.sender,
-        command.sequence,
-        command.fields,
-        command.field_count
-    );
+    frame_length = frame_build_command_kv(frame,
+                                          sizeof(frame),
+                                          command.sender,
+                                          command.sequence,
+                                          command.fields,
+                                          command.field_count);
 
     if (frame_length < 0)
     {
-        fprintf(
-            stderr,
-            "[BT CMD] frame build failed, node=%s seq=%06u\n",
-            upstream_context->bound_node_id,
-            (unsigned int)command.sequence
-        );
+        fprintf(stderr,
+                "[BT CMD] frame build failed, node=%s seq=%06u\n",
+                upstream_context->bound_node_id,
+                (unsigned int)command.sequence);
 
-        gateway_app_enqueue_nack(
-            upstream_context->upstream_queue,
-            upstream_context->bound_node_id,
-            command.sequence,
-            "cmd_encode_failed"
-        );
+        gateway_app_enqueue_nack(upstream_context->upstream_queue,
+                                 upstream_context->bound_node_id,
+                                 command.sequence,
+                                 "cmd_encode_failed");
         return 0;
     }
 
-    if(serial_port_write_all(
-        serial_fd,
-        frame,
-        (size_t)frame_length,
-        1000
-        )!=0)
+    if (serial_port_write_all(serial_fd, frame, (size_t)frame_length, 1000) != 0)
     {
-        fprintf(
-            stderr,
-            "[BT CMD] serial write failed, node=%s fd=%d: %s\n",
-            upstream_context->bound_node_id,
-            serial_fd,
-            strerror(errno)
-        );
+        fprintf(stderr,
+                "[BT CMD] serial write failed, node=%s fd=%d: %s\n",
+                upstream_context->bound_node_id,
+                serial_fd,
+                strerror(errno));
 
-    gateway_app_enqueue_nack(
-        upstream_context->upstream_queue,
-        upstream_context->bound_node_id,
-        command.sequence,
-        "transport_send_failed"
-    );
+        gateway_app_enqueue_nack(upstream_context->upstream_queue,
+                                 upstream_context->bound_node_id,
+                                 command.sequence,
+                                 "transport_send_failed");
         /*
          * 写失败通常意味着当前串口连接已经有问题。
          * 返回-1，让外层连接循环执行断线处理。
@@ -144,16 +113,13 @@ static int bluetooth_worker_try_send_command(
         return -1;
     }
 
-    printf(
-        "[BT CMD] sent node=%s seq=%06u bytes=%d\n",
-        upstream_context->bound_node_id,
-        (unsigned int)command.sequence,
-        frame_length
-    );
+    printf("[BT CMD] sent node=%s seq=%06u bytes=%d\n",
+           upstream_context->bound_node_id,
+           (unsigned int)command.sequence,
+           frame_length);
 
     return 1;
 }
-
 
 void *bluetooth_worker(void *arg)
 {
@@ -171,36 +137,28 @@ void *bluetooth_worker(void *arg)
 
     uint8_t read_buffer[BLUETOOTH_READ_BUFFER_SIZE];
 
-    if(arg == NULL)
+    if (arg == NULL)
     {
         return NULL;
     }
 
-    worker = (bluetooth_worker_context_t *) arg;
+    worker = (bluetooth_worker_context_t *)arg;
 
     serial_device = worker->serial_device;
     baud_rate = worker->baud_rate;
     context = worker->gateway_context;
-    parser =worker->parser;
+    parser = worker->parser;
     running = worker->running;
     upstream_queue = worker->upstream_queue;
     device_manager = worker->device_manager;
 
-    if(serial_device == NULL ||
-        context == NULL ||
-        parser == NULL ||
-        upstream_queue == NULL ||
-        device_manager == NULL ||
-        running == NULL
-    )
+    if (serial_device == NULL || context == NULL || parser == NULL || upstream_queue == NULL ||
+        device_manager == NULL || running == NULL)
     {
         return NULL;
     }
 
-    printf("[BT WORKER] started: device=%s baud=%d\n",
-        worker->serial_device,
-        worker->baud_rate
-    );
+    printf("[BT WORKER] started: device=%s baud=%d\n", worker->serial_device, worker->baud_rate);
 
     upstream_context.gateway_context = context;
     upstream_context.upstream_queue = upstream_queue;
@@ -209,24 +167,19 @@ void *bluetooth_worker(void *arg)
     upstream_context.device_fd = -1;
     upstream_context.bound_node_id[0] = '\0';
 
-    while(*running)
+    while (*running)
     {
-        int  serial_fd;
+        int serial_fd;
         int disconnected = 0;
 
-        serial_fd = serial_port_open(
-            serial_device,
-            baud_rate
-        );
+        serial_fd = serial_port_open(serial_device, baud_rate);
 
-        if(serial_fd < 0)
+        if (serial_fd < 0)
         {
-            fprintf(
-                stderr,
-                "[BT WORKER] cannot open %s: %s;retry in 1 second\n",
-                serial_device,
-                strerror(errno)
-            );
+            fprintf(stderr,
+                    "[BT WORKER] cannot open %s: %s;retry in 1 second\n",
+                    serial_device,
+                    strerror(errno));
 
             sleep(1);
             continue;
@@ -237,223 +190,174 @@ void *bluetooth_worker(void *arg)
         context->serial_connections++;
 
         /*
-         *重连以后丢弃上一次残留的半帧。
+         * 重连以后丢弃上一次残留的半帧。
          */
         frame_parser_reset(parser);
 
-        /*
-         *目前仍然保存在gateway_context中，
-         *供原有下行CMD路径使用
-         */
+        /* 记录当前串口描述符；此 Worker 负责关闭连接。 */
 
         context->serial_fd = serial_fd;
 
         printf("[BT WORKER] serial connected: %s, connection=%lu\n",
-            serial_device,
-            context->serial_connections
-        );
+               serial_device,
+               context->serial_connections);
 
         /*
-         *内层循环
-         *负责这个serial_fd的正常接收
+         * 内层循环
+         * 负责这个serial_fd的正常接收
          */
-        while(*running && !disconnected)
+        while (*running && !disconnected)
         {
             struct pollfd pfd;
             int poll_result;
 
             pfd.fd = serial_fd;
             pfd.revents = 0;
-            pfd .events = POLLIN;
+            pfd.events = POLLIN;
 
             {
                 int command_result;
 
-                command_result = bluetooth_worker_try_send_command(
-                    device_manager,
-                    &upstream_context,
-                    serial_fd
-                );
+                command_result =
+                    bluetooth_worker_try_send_command(device_manager, &upstream_context, serial_fd);
 
-                if(command_result < 0)
+                if (command_result < 0)
                 {
                     disconnected = 1;
                     continue;
                 }
             }
-            poll_result = poll(&pfd,
-                1,100
-            );
+            poll_result = poll(&pfd, 1, 100);
 
-            if(poll_result < 0)
+            if (poll_result < 0)
             {
-                if(errno == EINTR)
+                if (errno == EINTR)
                 {
                     continue;
                 }
-                fprintf(stderr,
-                    "[BT WORKER] poll failed: %s\n",
-                    strerror(errno)
-                );
+                fprintf(stderr, "[BT WORKER] poll failed: %s\n", strerror(errno));
 
                 disconnected = 1;
                 continue;
             }
 
             /*
-             *超时不是错误
-             *回到while顶部检查running。
+             * 超时不是错误
+             * 回到while顶部检查running。
              */
 
-             if(poll_result == 0)
-             {
+            if (poll_result == 0)
+            {
                 continue;
-             }
+            }
 
-             if((pfd.revents & POLLIN)!=0)
-             {
+            if ((pfd.revents & POLLIN) != 0)
+            {
                 ssize_t read_length;
 
-                read_length = serial_port_read(
-                    serial_fd,
-                    read_buffer,
-                    sizeof(read_buffer)
-                );
+                read_length = serial_port_read(serial_fd, read_buffer, sizeof(read_buffer));
 
-                if(read_length >0)
+                if (read_length > 0)
                 {
                     /* 每个完整帧回调应用层，首次上报时绑定设备身份。 */
-                    frame_parser_feed(
-                        parser,
-                        read_buffer,
-                        (size_t)read_length,
-                        gateway_app_on_frame,
-                        &upstream_context
-                    );
+                    frame_parser_feed(parser,
+                                      read_buffer,
+                                      (size_t)read_length,
+                                      gateway_app_on_frame,
+                                      &upstream_context);
                 }
-                else if(
-                    read_length == SERIAL_READ_WOULD_BLOCK
-                )
+                else if (read_length == SERIAL_READ_WOULD_BLOCK)
                 {
                     continue;
                 }
-                else if(read_length == 0)
+                else if (read_length == 0)
                 {
-                    fprintf(
-                        stderr,
-                        "[BT WORKER] serial device reached EOF\n "
-                    );
+                    fprintf(stderr, "[BT WORKER] serial device reached EOF\n ");
 
                     disconnected = 1;
                 }
 
-                else{
-                    fprintf(stderr,
-                        "[BT WORKER] read failed: %s\n",
-                        strerror(errno)
-                    );
+                else
+                {
+                    fprintf(stderr, "[BT WORKER] read failed: %s\n", strerror(errno));
 
                     disconnected = 1;
                 }
             }
 
-            if((pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
+            if ((pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
             {
-                fprintf(
-                    stderr,
-                    "[BT WORKER] serial device disconnected\n"
-                );
+                fprintf(stderr, "[BT WORKER] serial device disconnected\n");
 
                 disconnected = 1;
             }
         }
 
-    if (upstream_context.bound_node_id[0] != '\0')
-    {
-        frame_command_t pending_commands[
-            DEVICE_COMMAND_QUEUE_CAPACITY
-        ];
-
-        size_t pending_count;
-        size_t i;
-
-        int disconnect_result;
-
-
-        pending_count = 0U;
-
-
-        disconnect_result =
-            device_manager_disconnect_collect_commands(
-                device_manager,
-                upstream_context.bound_node_id,
-                serial_fd,
-                pthread_self(),
-                pending_commands,
-                DEVICE_COMMAND_QUEUE_CAPACITY,
-                &pending_count
-            );
-
-
-        if (disconnect_result ==
-            DEVICE_MANAGER_OK)
+        if (upstream_context.bound_node_id[0] != '\0')
         {
-            /*
+            frame_command_t pending_commands[DEVICE_COMMAND_QUEUE_CAPACITY];
+
+            size_t pending_count;
+            size_t i;
+
+            int disconnect_result;
+
+            pending_count = 0U;
+
+            disconnect_result =
+                device_manager_disconnect_collect_commands(device_manager,
+                                                           upstream_context.bound_node_id,
+                                                           serial_fd,
+                                                           pthread_self(),
+                                                           pending_commands,
+                                                           DEVICE_COMMAND_QUEUE_CAPACITY,
+                                                           &pending_count);
+
+            if (disconnect_result == DEVICE_MANAGER_OK)
+            {
+                /*
             * 当前连接剩余的命令都已经不可能
             * 通过这个连接发送。
             *
             * 逐条通知Server。
             */
-            for (i = 0U;
-                i < pending_count;
-                i++)
-            {
-                gateway_app_enqueue_nack(
-                    upstream_context.upstream_queue,
-                    pending_commands[i].target_node,
-                    pending_commands[i].sequence,
-                    "transport_disconnected"
-                );
-            }
+                for (i = 0U; i < pending_count; i++)
+                {
+                    gateway_app_enqueue_nack(upstream_context.upstream_queue,
+                                             pending_commands[i].target_node,
+                                             pending_commands[i].sequence,
+                                             "transport_disconnected");
+                }
 
-
-            if (pending_count > 0U)
-            {
-                printf(
-                    "[BT CMD] failed %zu pending command(s), "
-                    "node=%s\n",
-                    pending_count,
-                    upstream_context.bound_node_id
-                );
+                if (pending_count > 0U)
+                {
+                    printf("[BT CMD] failed %zu pending command(s), "
+                           "node=%s\n",
+                           pending_count,
+                           upstream_context.bound_node_id);
+                }
             }
-        }
-        else if (
-            disconnect_result ==
-            DEVICE_MANAGER_CONFLICT)
-        {
-            /*
+            else if (disconnect_result == DEVICE_MANAGER_CONFLICT)
+            {
+                /*
             * 说明新连接已经接管。
             *
             * 旧Worker不能碰新连接queue，
             * 也不能为新queue里的命令生成NACK。
             */
-            printf(
-                "[BT] stale disconnect ignored, node=%s fd=%d\n",
-                upstream_context.bound_node_id,
-                serial_fd
-            );
+                printf("[BT] stale disconnect ignored, node=%s fd=%d\n",
+                       upstream_context.bound_node_id,
+                       serial_fd);
             }
-    }
+        }
 
         context->serial_fd = -1;
 
-        serial_port_close(
-            serial_fd
-        );
+        serial_port_close(serial_fd);
 
         /*
-         *下一次serial_port_open()
-         *对应的新的物理连接生命周期。
+         * 下一次serial_port_open()
+         * 对应的新的物理连接生命周期。
          *
          * 必须重新等待第条合法帧确认身份
          */
@@ -461,17 +365,15 @@ void *bluetooth_worker(void *arg)
 
         upstream_context.device_fd = -1;
         /*
-         *Ctrl+C时不需要重连
+         * Ctrl+C时不需要重连
          */
 
-         if(*running)
-         {
-            fprintf(stderr,
-                "[BT WORKER] retry connect in 1 second\n"
-            );
+        if (*running)
+        {
+            fprintf(stderr, "[BT WORKER] retry connect in 1 second\n");
 
             sleep(1);
-         }
+        }
     }
 
     context->serial_fd = -1;

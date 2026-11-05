@@ -144,8 +144,8 @@ int message_queue_try_pop(message_queue_t *queue, gateway_message_t *message)
         }
 
         /*
-         *所有分支都必须解锁后再返回，
-         *否则调用方下次进入会死锁。
+         * 所有分支都必须解锁后再返回，
+         * 否则调用方下次进入会死锁。
          */
         pthread_mutex_unlock(&queue->mutex);
 

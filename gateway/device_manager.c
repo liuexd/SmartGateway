@@ -3,19 +3,16 @@
 
 #include "string.h"
 
-//这里的_lock代表着使用这个函数之前必须得上锁
-static int device_manager_find_index_locked(
-    const device_manager_t *manager,
-    const char *node_id
-)
+/* 调用本辅助函数前必须持有 manager->mutex。 */
+static int device_manager_find_index_locked(const device_manager_t *manager, const char *node_id)
 {
     size_t i;
 
-    for(i = 0; i < manager->count; i++)
+    for (i = 0; i < manager->count; i++)
     {
-        if(strcmp(manager->devices[i].node_id,node_id) == 0)
+        if (strcmp(manager->devices[i].node_id, node_id) == 0)
         {
-            return (int) i;
+            return (int)i;
         }
     }
 
@@ -24,14 +21,14 @@ static int device_manager_find_index_locked(
 
 int device_manager_init(device_manager_t *manager)
 {
-    if(manager == NULL)
+    if (manager == NULL)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
-    memset(manager,0,sizeof(*manager));
+    memset(manager, 0, sizeof(*manager));
 
-    if(pthread_mutex_init(&manager->mutex,NULL)!=0)
+    if (pthread_mutex_init(&manager->mutex, NULL) != 0)
     {
         return DEVICE_MANAGER_ERROR;
     }
@@ -41,7 +38,7 @@ int device_manager_init(device_manager_t *manager)
 
 void device_manager_destroy(device_manager_t *manager)
 {
-    if(manager == NULL)
+    if (manager == NULL)
     {
         return;
     }
@@ -50,27 +47,20 @@ void device_manager_destroy(device_manager_t *manager)
 }
 
 /* 复制快照后释放锁，调用者不会持有可能被并发修改的内部指针。 */
-int device_manager_find(
-    device_manager_t *manager,
-    const char *node_id,
-    device_t *out_device
-)
+int device_manager_find(device_manager_t *manager, const char *node_id, device_t *out_device)
 {
     int index;
 
-    if (manager == NULL ||
-        node_id == NULL ||
-        node_id[0] == '\0' ||
-        out_device == NULL)
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0' || out_device == NULL)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    index = device_manager_find_index_locked(manager,node_id);
+    index = device_manager_find_index_locked(manager, node_id);
 
-    if(index < 0)
+    if (index < 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_NOT_FOUND;
@@ -83,53 +73,49 @@ int device_manager_find(
     return DEVICE_MANAGER_OK;
 }
 
-int device_manager_register(
-    device_manager_t *manager,
-    const char *node_id,
-    device_transport_t transport,
-    int fd,
-    pthread_t thread_id
-)
+int device_manager_register(device_manager_t *manager,
+                            const char *node_id,
+                            device_transport_t transport,
+                            int fd,
+                            pthread_t thread_id)
 {
     size_t node_id_length;
     int index;
     device_t *device;
     time_t now;
 
-    if(manager == NULL ||
-    node_id == NULL ||
-    node_id[0] == '\0')
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0')
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     node_id_length = strlen(node_id);
 
-    //不允许静默截断node_id
-    if(node_id_length >= DEVICE_NODE_ID_SIZE)
+    /* 节点身份不得静默截断。 */
+    if (node_id_length >= DEVICE_NODE_ID_SIZE)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     now = time(NULL);
 
-    if(now == (time_t) -1)
+    if (now == (time_t)-1)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    //同一个node_id不能重复注册
-    index = device_manager_find_index_locked(manager,node_id);
+    /* 同一 node_id 只能注册一次。 */
+    index = device_manager_find_index_locked(manager, node_id);
 
-    if(index >= 0)
+    if (index >= 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_EXISTS;
     }
 
-    if(manager->count == DEVICE_MANAGER_MAX_DEVICES)
+    if (manager->count == DEVICE_MANAGER_MAX_DEVICES)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_FULL;
@@ -137,20 +123,19 @@ int device_manager_register(
 
     device = &manager->devices[manager->count];
 
-    memset(device,0,sizeof(*device));
-    //
-    memcpy(device->node_id,node_id,node_id_length + 1U);
+    memset(device, 0, sizeof(*device));
+    memcpy(device->node_id, node_id, node_id_length + 1U);
 
     device->transport = transport;
 
     device->fd = fd;
 
     /*
-     *fd有效时认为当前在线。
-     *这样也允许以后用fd=-1
-     *预注册一个离线设备
+     * fd有效时认为当前在线。
+     * 这样也允许以后用fd=-1
+     * 预注册一个离线设备
      */
-    device->online = (fd>0) ? 1 : 0;
+    device->online = (fd > 0) ? 1 : 0;
 
     device->thread_id = thread_id;
 
@@ -163,81 +148,68 @@ int device_manager_register(
     return DEVICE_MANAGER_OK;
 }
 
-int device_manager_unregister(
-    device_manager_t *manager,
-    const char *node_id
-)
+int device_manager_unregister(device_manager_t *manager, const char *node_id)
 {
     int index;
     size_t i;
 
-    if(manager == NULL ||
-        node_id == NULL ||
-        node_id[0] == '\0')
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0')
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    index = device_manager_find_index_locked(manager,node_id);
-    if(index < 0)
+    index = device_manager_find_index_locked(manager, node_id);
+    if (index < 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_NOT_FOUND;
     }
 
     /*
-     *删除数组中间元素以后
-     *把后面的设备向前移动一格
+     * 删除数组中间元素以后
+     * 把后面的设备向前移动一格
      */
-    for(i=(size_t)index; i+1U<manager->count;i++)
+    for (i = (size_t)index; i + 1U < manager->count; i++)
     {
-        manager->devices[i] = manager->devices[i+1U];
+        manager->devices[i] = manager->devices[i + 1U];
     }
     manager->count--;
 
     /*
-     *清理最后一个已经无效位置
+     * 清理最后一个已经无效位置
      */
-    memset(&manager->devices[manager->count],0,sizeof(manager->devices[0]));
+    memset(&manager->devices[manager->count], 0, sizeof(manager->devices[0]));
 
     pthread_mutex_unlock(&manager->mutex);
 
     return DEVICE_MANAGER_OK;
 }
 
-int device_manager_set_online(
-    device_manager_t *manager,
-    const char *node_id,
-    int online,
-    int fd
-)
+int device_manager_set_online(device_manager_t *manager, const char *node_id, int online, int fd)
 {
     int index;
 
-    if(manager == NULL||
-        node_id == NULL ||
-        node_id[0] == '\0' ||
-        (online != 0 && online != 1))
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0' || (online != 0 && online != 1))
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     /*
-     *设备声明为在线时
-     *必须存在有效fd
+     * 设备声明为在线时
+     * 必须存在有效fd
      */
-    if(online && fd < 0)
+    if (online && fd < 0)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    index = device_manager_find_index_locked(manager,node_id);
+    index = device_manager_find_index_locked(manager, node_id);
 
-    if(index < 0 )
+    if (index < 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_NOT_FOUND;
@@ -246,43 +218,38 @@ int device_manager_set_online(
     manager->devices[index].online = online;
 
     /*
-     *offline时统一保存-1
-     *避免留下已经失效的fd
+     * offline时统一保存-1
+     * 避免留下已经失效的fd
      */
 
-     manager->devices[index].fd = online ? fd : -1;
+    manager->devices[index].fd = online ? fd : -1;
 
-     pthread_mutex_unlock(&manager->mutex);
+    pthread_mutex_unlock(&manager->mutex);
 
-     return DEVICE_MANAGER_OK;
+    return DEVICE_MANAGER_OK;
 }
 
-int device_manager_update_last_seen(
-    device_manager_t *manager,
-    const char *node_id
-)
+int device_manager_update_last_seen(device_manager_t *manager, const char *node_id)
 {
     int index;
     time_t now;
 
-    if(manager == NULL ||
-        node_id == NULL ||
-        node_id[0] == '\0')
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0')
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     now = time(NULL);
-    if(now == (time_t)-1)
+    if (now == (time_t)-1)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    index = device_manager_find_index_locked(manager,node_id);
+    index = device_manager_find_index_locked(manager, node_id);
 
-    if(index < 0)
+    if (index < 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_NOT_FOUND;
@@ -295,63 +262,38 @@ int device_manager_update_last_seen(
     return DEVICE_MANAGER_OK;
 }
 
-int device_manager_bind_connection(
-    device_manager_t *manager,
-    const char *node_id,
-    device_transport_t transport,
-    int fd,
-    pthread_t thread_id
-)
+int device_manager_bind_connection(device_manager_t *manager,
+                                   const char *node_id,
+                                   device_transport_t transport,
+                                   int fd,
+                                   pthread_t thread_id)
 {
     size_t ignored_count;
 
-
-    return
-        device_manager_bind_connection_collect_commands(
-            manager,
-            node_id,
-            transport,
-            fd,
-            thread_id,
-            NULL,
-            0U,
-            &ignored_count
-        );
+    return device_manager_bind_connection_collect_commands(
+        manager, node_id, transport, fd, thread_id, NULL, 0U, &ignored_count);
 }
 
-int device_manager_disconnect(
-    device_manager_t *manager,
-    const char *node_id,
-    int fd,
-    pthread_t thread_id
-)
+int device_manager_disconnect(device_manager_t *manager,
+                              const char *node_id,
+                              int fd,
+                              pthread_t thread_id)
 {
     size_t ignored_count;
 
-
-    return
-        device_manager_disconnect_collect_commands(
-            manager,
-            node_id,
-            fd,
-            thread_id,
-            NULL,
-            0U,
-            &ignored_count
-        );
+    return device_manager_disconnect_collect_commands(
+        manager, node_id, fd, thread_id, NULL, 0U, &ignored_count);
 }
 
 /* 持锁核对 fd 和线程身份，旧 worker 不能断开已接管的新连接；
  * 收集剩余命令供调用方处理，并完成断开状态转换。 */
-int device_manager_disconnect_collect_commands(
-    device_manager_t *manager,
-    const char *node_id,
-    int fd,
-    pthread_t thread_id,
-    frame_command_t *out_commands,
-    size_t command_capacity,
-    size_t *out_count
-)
+int device_manager_disconnect_collect_commands(device_manager_t *manager,
+                                               const char *node_id,
+                                               int fd,
+                                               pthread_t thread_id,
+                                               frame_command_t *out_commands,
+                                               size_t command_capacity,
+                                               size_t *out_count)
 {
     int index;
 
@@ -360,43 +302,25 @@ int device_manager_disconnect_collect_commands(
     size_t pending_count;
     size_t i;
 
-    if (manager == NULL ||
-        node_id == NULL ||
-        node_id[0] == '\0' ||
-        fd < 0 ||
-        out_count == NULL)
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0' || fd < 0 || out_count == NULL)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
-
-    if (out_commands == NULL &&
-        command_capacity != 0U)
+    if (out_commands == NULL && command_capacity != 0U)
     {
         return DEVICE_MANAGER_ERROR;
     }
-
 
     *out_count = 0U;
 
+    pthread_mutex_lock(&manager->mutex);
 
-    pthread_mutex_lock(
-        &manager->mutex
-    );
-
-
-    index =
-        device_manager_find_index_locked(
-            manager,
-            node_id
-        );
-
+    index = device_manager_find_index_locked(manager, node_id);
 
     if (index < 0)
     {
-        pthread_mutex_unlock(
-            &manager->mutex
-        );
+        pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_NOT_FOUND;
     }
@@ -420,9 +344,7 @@ int device_manager_disconnect_collect_commands(
      *
      * 防止旧Worker退出时误伤已经重连的新Worker。
      */
-    if(device->fd != fd ||
-        !pthread_equal(device->thread_id,
-            thread_id))
+    if (device->fd != fd || !pthread_equal(device->thread_id, thread_id))
     {
         pthread_mutex_unlock(&manager->mutex);
 
@@ -435,49 +357,44 @@ int device_manager_disconnect_collect_commands(
      * 此时什么都不改：
      * 不offline、不清queue。
      */
-    if(out_commands != NULL &&
-        command_capacity < pending_count)
+    if (out_commands != NULL && command_capacity < pending_count)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_BUFFER_TOO_SMALL;
     }
 
     /*
-     *按FIFO顺序复制尚未发送的命令
+     * 按FIFO顺序复制尚未发送的命令
      */
-    if(out_commands != NULL)
+    if (out_commands != NULL)
     {
-        for(i=0U; i<pending_count; i++)
+        for (i = 0U; i < pending_count; i++)
         {
             size_t queue_index;
 
-            queue_index = (device->command_head + i) %
-            DEVICE_COMMAND_QUEUE_CAPACITY;
+            queue_index = (device->command_head + i) % DEVICE_COMMAND_QUEUE_CAPACITY;
 
             out_commands[i] = device->command_queue[queue_index];
         }
     }
 
     /*
-     *当前连接正式离线
+     * 当前连接正式离线
      */
     device->online = 0;
     device->fd = -1;
 
     /*
-     *queue里的命令已经交给caller
-     *Device Manager不再持有它们
+     * 清空当前连接的命令队列；调用方提供输出数组时已复制待处理命令。
      */
 
     device->command_head = 0U;
-    device ->command_tail = 0U;
+    device->command_tail = 0U;
     device->command_count = 0U;
 
     *out_count = pending_count;
 
-    pthread_mutex_unlock(
-        &manager->mutex
-    );
+    pthread_mutex_unlock(&manager->mutex);
 
     return DEVICE_MANAGER_OK;
 }
@@ -488,35 +405,29 @@ int device_manager_disconnect_collect_commands(
  * 只做内存复制，不做任何socket/serial I/O。
  */
 /* 只复制命令到设备队列，链路 I/O 由拥有连接的 worker 执行。 */
-int device_manager_enqueue_command(
-    device_manager_t *manager,
-    const char *node_id,
-    const frame_command_t *command
-)
+int device_manager_enqueue_command(device_manager_t *manager,
+                                   const char *node_id,
+                                   const frame_command_t *command)
 {
-    int  index;
+    int index;
     device_t *device;
 
-    if(manager == NULL ||
-       node_id == NULL ||
-       node_id[0] == '\0' ||
-       command == NULL)
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0' || command == NULL)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
-    //路由目标必须和命令本身记录的目标一致
-    if(command->target_node[0] == '\0' ||
-        strcmp(command->target_node,node_id) != 0)
+    /* 路由目标必须与命令记录的目标一致。 */
+    if (command->target_node[0] == '\0' || strcmp(command->target_node, node_id) != 0)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    index = device_manager_find_index_locked(manager,node_id);
+    index = device_manager_find_index_locked(manager, node_id);
 
-    if(index < 0)
+    if (index < 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_NOT_FOUND;
@@ -524,14 +435,13 @@ int device_manager_enqueue_command(
 
     device = &manager->devices[index];
 
-    if(!device->online ||
-        device->fd < 0)
+    if (!device->online || device->fd < 0)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_OFFLINE;
     }
 
-    if(device->command_count >= DEVICE_COMMAND_QUEUE_CAPACITY)
+    if (device->command_count >= DEVICE_COMMAND_QUEUE_CAPACITY)
     {
         pthread_mutex_unlock(&manager->mutex);
 
@@ -539,11 +449,11 @@ int device_manager_enqueue_command(
     }
 
     /*
-     *拷贝到tail位置
+     * 拷贝到tail位置
      */
     device->command_queue[device->command_tail] = *command;
 
-    device->command_tail = (device->command_tail + 1U)%DEVICE_COMMAND_QUEUE_CAPACITY;
+    device->command_tail = (device->command_tail + 1U) % DEVICE_COMMAND_QUEUE_CAPACITY;
 
     device->command_count++;
 
@@ -552,48 +462,33 @@ int device_manager_enqueue_command(
     return DEVICE_MANAGER_OK;
 }
 
-
 /*
  * 当前设备Worker尝试取得一条自己的命令。
  *
  * fd + thread_id 用于确认调用者仍然是
  * Device Manager 当前记录的连接拥有者。
  */
-int device_manager_try_dequeue_command(
-    device_manager_t *manager,
-    const char *node_id,
-    int fd,
-    pthread_t thread_id,
-    frame_command_t *out_command
-)
+int device_manager_try_dequeue_command(device_manager_t *manager,
+                                       const char *node_id,
+                                       int fd,
+                                       pthread_t thread_id,
+                                       frame_command_t *out_command)
 {
     int index;
     device_t *device;
 
-    if (manager == NULL ||
-        node_id == NULL ||
-        node_id[0] == '\0' ||
-        fd < 0 ||
-        out_command == NULL)
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0' || fd < 0 || out_command == NULL)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
-    pthread_mutex_lock(
-        &manager->mutex
-    );
+    pthread_mutex_lock(&manager->mutex);
 
-    index =
-        device_manager_find_index_locked(
-            manager,
-            node_id
-        );
+    index = device_manager_find_index_locked(manager, node_id);
 
     if (index < 0)
     {
-        pthread_mutex_unlock(
-            &manager->mutex
-        );
+        pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_NOT_FOUND;
     }
@@ -601,22 +496,19 @@ int device_manager_try_dequeue_command(
     device = &manager->devices[index];
 
     /*
-     *必须仍然是当前连接
+     * 必须仍然是当前连接
      *
      * 防止Worker读取新连接的命令
      */
 
-     if(!device->online ||
-        device->fd <0 ||
-        pthread_equal(device->thread_id,
-        thread_id) == 0)
+    if (!device->online || device->fd < 0 || pthread_equal(device->thread_id, thread_id) == 0)
     {
         pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_CONFLICT;
     }
 
-    if(device->command_count == 0U)
+    if (device->command_count == 0U)
     {
         pthread_mutex_unlock(&manager->mutex);
         return DEVICE_MANAGER_QUEUE_EMPTY;
@@ -624,9 +516,9 @@ int device_manager_try_dequeue_command(
 
     *out_command = device->command_queue[device->command_head];
 
-    device->command_head = (device->command_head + 1U)%DEVICE_COMMAND_QUEUE_CAPACITY;
+    device->command_head = (device->command_head + 1U) % DEVICE_COMMAND_QUEUE_CAPACITY;
 
-    device->command_count --;
+    device->command_count--;
 
     pthread_mutex_unlock(&manager->mutex);
 
@@ -635,16 +527,14 @@ int device_manager_try_dequeue_command(
 
 /* 持锁完成身份绑定和连接接管，并收集旧连接尚未发送的命令；
  * fd 和线程身份共同区分旧 worker 与新连接。 */
-int device_manager_bind_connection_collect_commands(
-    device_manager_t *manager,
-    const char *node_id,
-    device_transport_t transport,
-    int fd,
-    pthread_t thread_id,
-    frame_command_t *out_commands,
-    size_t command_capacity,
-    size_t *out_count
-)
+int device_manager_bind_connection_collect_commands(device_manager_t *manager,
+                                                    const char *node_id,
+                                                    device_transport_t transport,
+                                                    int fd,
+                                                    pthread_t thread_id,
+                                                    frame_command_t *out_commands,
+                                                    size_t command_capacity,
+                                                    size_t *out_count)
 {
     int index;
 
@@ -653,96 +543,54 @@ int device_manager_bind_connection_collect_commands(
     size_t pending_count;
     size_t i;
 
-
-    if (manager == NULL ||
-        node_id == NULL ||
-        node_id[0] == '\0' ||
-        fd < 0 ||
-        out_count == NULL)
+    if (manager == NULL || node_id == NULL || node_id[0] == '\0' || fd < 0 || out_count == NULL)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
-
-    if (strlen(node_id) >=
-        DEVICE_NODE_ID_SIZE)
+    if (strlen(node_id) >= DEVICE_NODE_ID_SIZE)
     {
         return DEVICE_MANAGER_ERROR;
     }
 
-
-    if (out_commands == NULL &&
-        command_capacity != 0U)
+    if (out_commands == NULL && command_capacity != 0U)
     {
         return DEVICE_MANAGER_ERROR;
     }
-
 
     *out_count = 0U;
 
+    pthread_mutex_lock(&manager->mutex);
 
-    pthread_mutex_lock(
-        &manager->mutex
-    );
-
-
-    index =
-        device_manager_find_index_locked(
-            manager,
-            node_id
-        );
-
+    index = device_manager_find_index_locked(manager, node_id);
 
     /*
      * 第一次看到这个node。
      */
     if (index < 0)
     {
-        if (manager->count >=
-            DEVICE_MANAGER_MAX_DEVICES)
+        if (manager->count >= DEVICE_MANAGER_MAX_DEVICES)
         {
-            pthread_mutex_unlock(
-                &manager->mutex
-            );
+            pthread_mutex_unlock(&manager->mutex);
 
             return DEVICE_MANAGER_FULL;
         }
 
+        device = &manager->devices[manager->count];
 
-        device =
-            &manager->devices[
-                manager->count
-            ];
+        memset(device, 0, sizeof(*device));
 
+        strcpy(device->node_id, node_id);
 
-        memset(
-            device,
-            0,
-            sizeof(*device)
-        );
+        device->transport = transport;
 
+        device->fd = fd;
 
-        strcpy(
-            device->node_id,
-            node_id
-        );
+        device->online = 1;
 
+        device->thread_id = thread_id;
 
-        device->transport =
-            transport;
-
-        device->fd =
-            fd;
-
-        device->online =
-            1;
-
-        device->thread_id =
-            thread_id;
-
-        device->last_seen =
-            time(NULL);
-
+        device->last_seen = time(NULL);
 
         /*
          * 新设备自然从空command queue开始。
@@ -751,37 +599,25 @@ int device_manager_bind_connection_collect_commands(
         device->command_tail = 0U;
         device->command_count = 0U;
 
-
         manager->count++;
 
-
-        pthread_mutex_unlock(
-            &manager->mutex
-        );
-
+        pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_OK;
     }
 
-
-    device =
-        &manager->devices[index];
-
+    device = &manager->devices[index];
 
     /*
      * 同一个node不能突然从Bluetooth变成WiFi，
      * 保持前面的transport冲突语义。
      */
-    if (device->transport !=
-        transport)
+    if (device->transport != transport)
     {
-        pthread_mutex_unlock(
-            &manager->mutex
-        );
+        pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_CONFLICT;
     }
-
 
     /*
      * 非常重要：
@@ -789,25 +625,14 @@ int device_manager_bind_connection_collect_commands(
      * 如果本来就是当前这个连接再次bind，
      * 不允许清command queue。
      */
-    if (device->online &&
-        device->fd == fd &&
-        pthread_equal(
-            device->thread_id,
-            thread_id
-        ))
+    if (device->online && device->fd == fd && pthread_equal(device->thread_id, thread_id))
     {
-        device->last_seen =
-            time(NULL);
+        device->last_seen = time(NULL);
 
-
-        pthread_mutex_unlock(
-            &manager->mutex
-        );
-
+        pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_OK;
     }
-
 
     /*
      * 到这里意味着：
@@ -816,9 +641,7 @@ int device_manager_bind_connection_collect_commands(
      * 或
      * 2. 新连接takeover旧连接。
      */
-    pending_count =
-        device->command_count;
-
+    pending_count = device->command_count;
 
     /*
      * caller想接收旧pending CMD，
@@ -826,44 +649,27 @@ int device_manager_bind_connection_collect_commands(
      *
      * 此时必须保持所有状态不变。
      */
-    if (out_commands != NULL &&
-        command_capacity < pending_count)
+    if (out_commands != NULL && command_capacity < pending_count)
     {
-        pthread_mutex_unlock(
-            &manager->mutex
-        );
+        pthread_mutex_unlock(&manager->mutex);
 
         return DEVICE_MANAGER_BUFFER_TOO_SMALL;
     }
-
 
     /*
      * 按FIFO顺序复制旧连接尚未发送的命令。
      */
     if (out_commands != NULL)
     {
-        for (i = 0U;
-             i < pending_count;
-             i++)
+        for (i = 0U; i < pending_count; i++)
         {
             size_t queue_index;
 
+            queue_index = (device->command_head + i) % DEVICE_COMMAND_QUEUE_CAPACITY;
 
-            queue_index =
-                (
-                    device->command_head +
-                    i
-                ) %
-                DEVICE_COMMAND_QUEUE_CAPACITY;
-
-
-            out_commands[i] =
-                device->command_queue[
-                    queue_index
-                ];
+            out_commands[i] = device->command_queue[queue_index];
         }
     }
-
 
     /*
      * 旧连接的queue生命周期到此结束。
@@ -872,31 +678,20 @@ int device_manager_bind_connection_collect_commands(
     device->command_tail = 0U;
     device->command_count = 0U;
 
-
     /*
      * 新连接成为当前owner。
      */
-    device->fd =
-        fd;
+    device->fd = fd;
 
-    device->online =
-        1;
+    device->online = 1;
 
-    device->thread_id =
-        thread_id;
+    device->thread_id = thread_id;
 
-    device->last_seen =
-        time(NULL);
+    device->last_seen = time(NULL);
 
+    *out_count = pending_count;
 
-    *out_count =
-        pending_count;
-
-
-    pthread_mutex_unlock(
-        &manager->mutex
-    );
-
+    pthread_mutex_unlock(&manager->mutex);
 
     return DEVICE_MANAGER_OK;
 }

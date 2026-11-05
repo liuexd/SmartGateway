@@ -32,14 +32,12 @@
  * @param parser        帧解析器（需已调用 frame_parser_init）
  * @param running       运行标志；被信号处理函数置0时退出
  *
- * @return 0：正常退出（running被清0）
+ * @return 0：主循环退出；-1：参数无效或初始化、线程创建失败。
  */
-int gateway_loop_run(
-    const char *serial_device,
-    int baud_rate,
-    gateway_context_t *context,
-    frame_parser_t *parser,
-    const volatile int *running
-);
+int gateway_loop_run(const char *serial_device,
+                     int baud_rate,
+                     gateway_context_t *context,
+                     frame_parser_t *parser,
+                     const volatile int *running);
 
 #endif

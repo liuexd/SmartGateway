@@ -19,34 +19,31 @@
 #define SERVER_LINK_BUFFER_SIZE 1024
 
 /*
- *队列为空时最多等待这么久
- *然后重新检查queue
+ * 队列为空时最多等待这么久
+ * 然后重新检查queue
  */
 #define SERVER_LINK_POLL_TIMEOUT_MS 100
 
 /* 关闭北向连接、清除半包并安排重试。 */
-static void server_link_close_and_schedule_retry(
-    gateway_context_t *context,
-    size_t *tcp_length
-)
+static void server_link_close_and_schedule_retry(gateway_context_t *context, size_t *rx_length)
 {
     time_t now;
 
-    if(context->tcp_fd >= 0)
+    if (context->tcp_fd >= 0)
     {
         tcp_client_close(context->tcp_fd);
 
         context->tcp_fd = -1;
     }
 
-    if(tcp_length != NULL)
+    if (rx_length != NULL)
     {
-        *tcp_length = 0;
+        *rx_length = 0;
     }
 
     now = time(NULL);
 
-    if(now !=(time_t)-1)
+    if (now != (time_t)-1)
     {
         context->next_tcp_retry = now + 1;
     }
@@ -86,30 +83,28 @@ void *server_link_worker(void *arg)
     gateway_app_downlink_context_t downlink_context;
     /* 出队后的消息由本线程持有；发送失败时保留并在重连后重试。 */
     gateway_message_t pending_message;
-    int have_pending_message = 0;
+    int has_pending_message = 0;
 
-    uint8_t read_buffer[SERVER_LINK_READ_BUFFER_SIZE];
+    uint8_t read_chunk[SERVER_LINK_READ_BUFFER_SIZE];
 
-    char tcp_buffer[SERVER_LINK_BUFFER_SIZE];
+    char rx_buffer[SERVER_LINK_BUFFER_SIZE];
 
-    size_t tcp_length =0;
+    size_t rx_length = 0;
 
-    if(arg == NULL)
+    if (arg == NULL)
     {
         return NULL;
     }
 
-    worker =(server_link_context_t *)arg;
+    worker = (server_link_context_t *)arg;
 
     context = worker->gateway_context;
     queue = worker->upstream_queue;
     running = worker->running;
     device_manager = worker->device_manager;
 
-    if(worker->gateway_context ==NULL||
-        worker->upstream_queue == NULL||
-        worker->running ==NULL ||
-        worker->device_manager == NULL)
+    if (worker->gateway_context == NULL || worker->upstream_queue == NULL ||
+        worker->running == NULL || worker->device_manager == NULL)
     {
         return NULL;
     }
@@ -123,10 +118,10 @@ void *server_link_worker(void *arg)
 
     printf("[SERVER WORKER] started\n");
 
-    while(*running)
+    while (*running)
     {
         int queue_result;
-        int sent_message =0;
+        int sent_message = 0;
 
         /*
          * -------------------------------------------------
@@ -136,24 +131,23 @@ void *server_link_worker(void *arg)
          * 因为还需要处理 Server 下行数据。
          * -------------------------------------------------
          */
-        if(!have_pending_message)
+        if (!has_pending_message)
         {
-            queue_result = message_queue_try_pop(queue,&pending_message);
+            queue_result = message_queue_try_pop(queue, &pending_message);
 
-            if(queue_result == MESSAGE_QUEUE_OK)
+            if (queue_result == MESSAGE_QUEUE_OK)
             {
-                have_pending_message = 1;
+                has_pending_message = 1;
             }
-            else if(queue_result == MESSAGE_QUEUE_SHUTDOWN)
+            else if (queue_result == MESSAGE_QUEUE_SHUTDOWN)
             {
                 break;
             }
-            else if(queue_result != MESSAGE_QUEUE_EMPTY)
+            else if (queue_result != MESSAGE_QUEUE_EMPTY)
             {
-                fprintf(stderr,
-                    "[SERVER WORKER] queue pop failed\n");
+                fprintf(stderr, "[SERVER WORKER] queue pop failed\n");
 
-                    break;
+                break;
             }
         }
 
@@ -166,14 +160,11 @@ void *server_link_worker(void *arg)
          * -------------------------------------------------
          */
 
-        if(context->tcp_fd <0)
+        if (context->tcp_fd < 0)
         {
-            gateway_app_try_tcp_connect(
-                context,
-                running
-            );
+            gateway_app_try_tcp_connect(context, running);
 
-            if(context->tcp_fd < 0)
+            if (context->tcp_fd < 0)
             {
                 server_link_wait_retry_interval(running);
                 continue;
@@ -182,7 +173,7 @@ void *server_link_worker(void *arg)
             /*
              * 新连接建立，丢弃上一次残留的半条JSON。
              */
-            tcp_length = 0;
+            rx_length = 0;
 
             /*
              * 置为非阻塞：
@@ -192,51 +183,39 @@ void *server_link_worker(void *arg)
              *
              * 设置失败时保留原有连接；阻塞 socket 上单次 send 仍可能阻塞。
              */
-            if(tcp_client_set_nonblocking(
-                    context->tcp_fd) != 0)
+            if (tcp_client_set_nonblocking(context->tcp_fd) != 0)
             {
-                fprintf(stderr,
-                    "[SERVER WORKER] set nonblocking failed: %s\n",
-                    strerror(errno)
-                );
+                fprintf(stderr, "[SERVER WORKER] set nonblocking failed: %s\n", strerror(errno));
             }
         }
 
-                /*
+        /*
          * -------------------------------------------------
          * 3. 有待发送消息时统一由 Server Worker 发送。
          * -------------------------------------------------
          */
 
-        if(have_pending_message)
+        if (has_pending_message)
         {
-            if(tcp_client_send_all(
-                context->tcp_fd,
-                pending_message.data,
-                pending_message.length
-                ) != 0
-            )
+            if (tcp_client_send_all(
+                    context->tcp_fd, pending_message.data, pending_message.length) != 0)
             {
                 context->tcp_send_error++;
 
-                fprintf(stderr,
-                    "[SERVER WORKER] send failed: %s\n",
-                    strerror(errno)
-                );
+                fprintf(stderr, "[SERVER WORKER] send failed: %s\n", strerror(errno));
 
                 /* 保留 pending_message，重连后先重发这一条。 */
-                server_link_close_and_schedule_retry(context,&tcp_length);
+                server_link_close_and_schedule_retry(context, &rx_length);
 
                 continue;
             }
 
             context->tcp_send++;
 
-            printf("[SERVER WORKER] sent, bytes=%u\n",
-                (unsigned int)pending_message.length);
+            printf("[SERVER WORKER] sent, bytes=%u\n", (unsigned int)pending_message.length);
 
             /* 发送成功后才能取下一条消息。 */
-            have_pending_message = 0;
+            has_pending_message = 0;
             sent_message = 1;
         }
 
@@ -262,69 +241,63 @@ void *server_link_worker(void *arg)
             pfd.events = POLLIN;
             pfd.revents = 0;
 
-            timeout_ms = sent_message ? 0 :SERVER_LINK_POLL_TIMEOUT_MS;
+            timeout_ms = sent_message ? 0 : SERVER_LINK_POLL_TIMEOUT_MS;
 
-            poll_result = poll(&pfd,1,timeout_ms);
+            poll_result = poll(&pfd, 1, timeout_ms);
 
-            if(poll_result < 0)
+            if (poll_result < 0)
             {
-                if(errno == EINTR)
+                if (errno == EINTR)
                 {
                     continue;
                 }
 
-                fprintf(stderr,
-                "[SERVER WORKER] poll failed: %s\n",
-                strerror(errno));
+                fprintf(stderr, "[SERVER WORKER] poll failed: %s\n", strerror(errno));
 
-                server_link_close_and_schedule_retry(context,&tcp_length);
+                server_link_close_and_schedule_retry(context, &rx_length);
 
                 continue;
             }
 
-            if(poll_result == 0)
+            if (poll_result == 0)
             {
                 continue;
             }
 
-            if((pfd.revents & POLLIN)!= 0)
+            if ((pfd.revents & POLLIN) != 0)
             {
                 ssize_t received;
-                received = recv(context->tcp_fd,read_buffer,sizeof(read_buffer),0);
-                if(received > 0)
+                received = recv(context->tcp_fd, read_chunk, sizeof(read_chunk), 0);
+                if (received > 0)
                 {
                     size_t received_size;
                     received_size = (size_t)received;
 
-                    if(tcp_length + received_size > sizeof(tcp_buffer))
+                    if (rx_length + received_size > sizeof(rx_buffer))
                     {
-                        fprintf(stderr,
-                        "[SERVER WORKER] receive buffer overflow\n");
+                        fprintf(stderr, "[SERVER WORKER] receive buffer overflow\n");
 
-                        tcp_length = 0;
+                        rx_length = 0;
                     }
                     else
                     {
-                        memcpy(tcp_buffer + tcp_length,
-                            read_buffer,
-                            received_size);
+                        memcpy(rx_buffer + rx_length, read_chunk, received_size);
 
-                        tcp_length += received_size;
+                        rx_length += received_size;
 
                         /* TCP 是字节流：保留不完整行，完整 JSON 行回调处理。 */
-                        line_parser_feed(tcp_buffer,
-                            &tcp_length,
-                            sizeof(tcp_buffer),
-                            gateway_app_on_tcp_line,
-                            &downlink_context
-                        );
+                        line_parser_feed(rx_buffer,
+                                         &rx_length,
+                                         sizeof(rx_buffer),
+                                         gateway_app_on_tcp_line,
+                                         &downlink_context);
                     }
                 }
                 else if (received == 0)
                 {
                     printf("[SERVER WORKER] server disconnected\n");
 
-                    server_link_close_and_schedule_retry(context,&tcp_length);
+                    server_link_close_and_schedule_retry(context, &rx_length);
 
                     continue;
                 }
@@ -338,35 +311,30 @@ void *server_link_worker(void *arg)
                 }
                 else if (errno != EINTR)
                 {
-                    fprintf(stderr,
-                        "[SERVER WORKER] recv failed: %s\n",
-                        strerror(errno));
+                    fprintf(stderr, "[SERVER WORKER] recv failed: %s\n", strerror(errno));
 
-                    server_link_close_and_schedule_retry(context,&tcp_length);
+                    server_link_close_and_schedule_retry(context, &rx_length);
 
                     continue;
                 }
-
             }
 
             /*
              * Server socket挂断或异常。
              */
-            if(context->tcp_fd >= 0 && (pfd.revents &
-                (POLLHUP | POLLERR |POLLNVAL))!=0)
+            if (context->tcp_fd >= 0 && (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
             {
-                fprintf(stderr,
-                "[SERVER WORKER] connection lost\n");
+                fprintf(stderr, "[SERVER WORKER] connection lost\n");
 
-                server_link_close_and_schedule_retry(context,&tcp_length);
+                server_link_close_and_schedule_retry(context, &rx_length);
             }
         }
     }
 
     /* 连接由本 worker 拥有，退出前在此关闭。 */
-    if(context->tcp_fd >= 0)
+    if (context->tcp_fd >= 0)
     {
-        tcp_client_close (context->tcp_fd);
+        tcp_client_close(context->tcp_fd);
 
         context->tcp_fd = -1;
     }

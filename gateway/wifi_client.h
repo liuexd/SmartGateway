@@ -31,44 +31,40 @@ typedef struct
 {
     int client_fd;
 
-    /*
-     * 暂时仍复用现有 gateway_context。
-     * M7-6 再改成 message queue。
-     */
+    /* 运行状态与统计；上行消息通过 upstream_queue 转交。 */
     gateway_context_t *gateway_context;
 
-    /*
-     *Gateway全局运行标志
-     *按下Ctrl+C后变为0
-     */
+    /* 主循环设置的共享运行标志。 */
     const volatile int *running;
 
     device_manager_t *device_manager;
 
     message_queue_t *upstream_queue;
 
-    /*
-     *本worker所属的线程组，用于退出时计数-1。
-     */
+    /* detached Worker 退出时递减计数，通知等待者。 */
     wifi_worker_group_t *wifi_worker_group;
 
 } wifi_client_context_t;
 
 /*
- * pthread worker entry。
+ * pthread 入口：接管 arg 指向的上下文和 client_fd，退出时关闭并释放。
  */
 
 void *wifi_client_worker(void *arg);
 
-int wifi_worker_group_init(wifi_worker_group_t * group);
+/* 主循环初始化线程组；成功返回 0，失败返回 -1。 */
+int wifi_worker_group_init(wifi_worker_group_t *group);
 
-void wifi_worker_group_add(wifi_worker_group_t * group);
+/* 创建 Worker 前递增；创建失败时由主循环调用 remove 回滚。 */
+void wifi_worker_group_add(wifi_worker_group_t *group);
 
-void wifi_worker_group_remove(wifi_worker_group_t * group);
+/* Worker 退出时递减，归零时唤醒等待线程。 */
+void wifi_worker_group_remove(wifi_worker_group_t *group);
 
-void wifi_worker_group_wait(wifi_worker_group_t * group);
+/* 等待所有 detached Worker 退出；调用期间可能阻塞。 */
+void wifi_worker_group_wait(wifi_worker_group_t *group);
 
-void wifi_worker_group_destroy(wifi_worker_group_t * group);
-
+/* 所有 Worker 退出后销毁同步对象。 */
+void wifi_worker_group_destroy(wifi_worker_group_t *group);
 
 #endif
