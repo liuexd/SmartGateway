@@ -148,6 +148,89 @@ clean:
 
 
 # ============================================================
+# ARM 交叉编译（D25-1）
+# ============================================================
+#
+# 目标：100ASK i.MX6ULL（ARMv7 Cortex-A7、hard-float、
+#       Linux 4.9.88、Buildroot 2020.02 / glibc 2.30）
+#
+# 为什么用 Buildroot SDK 而不是 Linaro GCC 6.2.1：
+#   目标 rootfs 的动态链接器是 ld-2.30.so（glibc 2.30），
+#   而 Linaro 6.2.1 自带 sysroot 为 glibc 2.23，且不含
+#   OpenSSL/json-c；用它编译出的程序在板端可能出现
+#   GLIBC_2.24+ 符号缺失。Buildroot SDK 与板端同源。
+#
+# 输出目录 build/arm-d25/ 与宿主机 build/ 完全隔离，
+# 不会覆盖任何 x86 产物。
+# ============================================================
+
+ARM_SDK_DIR ?= $(HOME)/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot
+ARM_CROSS   ?= $(ARM_SDK_DIR)/bin/arm-buildroot-linux-gnueabihf-
+ARM_CC      := $(ARM_CROSS)gcc
+ARM_READELF := $(ARM_CROSS)readelf
+ARM_STRIP   ?= $(ARM_CROSS)strip
+
+# 显式指定目标 sysroot，避免默认搜索路径引入宿主机头文件
+ARM_SYSROOT ?= $(ARM_SDK_DIR)/arm-buildroot-linux-gnueabihf/sysroot
+
+# i.MX6ULL：单核 Cortex-A7，ARMv7-A + VFPv4，hard-float ABI
+ARM_ARCH_FLAGS := -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm
+
+ARM_BUILD_DIR := build/arm-d25
+
+ARM_CFLAGS := -O2 -g -Wall -Wextra -Werror -std=c11 -pthread \
+	$(ARM_ARCH_FLAGS) --sysroot=$(ARM_SYSROOT)
+
+ARM_LDFLAGS := -pthread --sysroot=$(ARM_SYSROOT)
+
+# ARM 版本号：可在命令行覆盖
+#   make arm SMART_GATEWAY_ARM_VERSION=v0.1.2-arm
+SMART_GATEWAY_ARM_VERSION ?= d25-1-arm
+
+ARM_CPPFLAGS := $(CPPFLAGS) \
+	-DSMART_GATEWAY_VERSION='"$(SMART_GATEWAY_ARM_VERSION)"'
+
+ARM_COMMON_OBJS  := $(patsubst %.c,$(ARM_BUILD_DIR)/%.o,$(COMMON_SRCS))
+ARM_GATEWAY_OBJS := $(patsubst %.c,$(ARM_BUILD_DIR)/%.o,$(GATEWAY_SRCS))
+
+.PHONY: arm arm-check arm-info clean-arm
+
+# arm 只构建 Gateway 用户态程序；Server / mock 工具属于宿主机侧，
+# 不需要也不应该跑在目标板上。
+arm: $(ARM_BUILD_DIR)/smart_gateway
+
+$(ARM_BUILD_DIR)/smart_gateway: $(ARM_COMMON_OBJS) $(ARM_GATEWAY_OBJS)
+	$(ARM_CC) $^ $(ARM_LDFLAGS) -o $@
+
+$(ARM_BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_CPPFLAGS) $(ARM_CFLAGS) -c $< -o $@
+
+# 只读自检：不执行 ARM 代码，因此无板端/QEMU 也能给出静态证据
+arm-check: arm
+	@echo "== ELF 架构 =="
+	@file $(ARM_BUILD_DIR)/smart_gateway
+	@echo "== 动态解释器 =="
+	@$(ARM_READELF) -l $(ARM_BUILD_DIR)/smart_gateway | grep -i interpreter
+	@echo "== 依赖库 =="
+	@$(ARM_READELF) -d $(ARM_BUILD_DIR)/smart_gateway | grep NEEDED
+	@echo "== ABI 属性 =="
+	@$(ARM_READELF) -A $(ARM_BUILD_DIR)/smart_gateway | grep -E 'Tag_CPU_arch|Tag_FP_arch|Tag_ABI_VFP_args'
+	@echo "== 所需 glibc 符号版本 =="
+	@$(ARM_READELF) --version-info $(ARM_BUILD_DIR)/smart_gateway | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -5
+
+arm-info:
+	@echo "ARM_CC         = $(ARM_CC)"
+	@echo "ARM_SYSROOT    = $(ARM_SYSROOT)"
+	@echo "ARM_BUILD_DIR  = $(ARM_BUILD_DIR)"
+	@echo "ARM_CFLAGS     = $(ARM_CFLAGS)"
+	@echo "ARM_VERSION    = $(SMART_GATEWAY_ARM_VERSION)"
+
+clean-arm:
+	rm -rf $(ARM_BUILD_DIR)
+
+
+# ============================================================
 # 单元测试
 # ============================================================
 #

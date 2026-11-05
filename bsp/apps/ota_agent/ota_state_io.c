@@ -14,6 +14,8 @@
 
 #include <json-c/json.h>
 
+#include "ota_json_compat.h"
+
 #define OTA_STATE_FILE "ota_state.json"
 #define OTA_STATE_MAX 4096
 
@@ -324,7 +326,7 @@ int ota_state_load(
     if (json_tokener_get_error(tok) != json_tokener_success ||
         root == NULL ||
         json_object_get_type(root) != json_type_object ||
-        (size_t)json_tokener_get_parse_end(tok) != total)
+        ota_json_parse_end(tok) != total)
         goto cleanup;
 
     if (!json_object_object_get_ex(

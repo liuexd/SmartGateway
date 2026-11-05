@@ -17,6 +17,8 @@
 
 #include <json-c/json.h>
 
+#include "ota_json_compat.h"
+
 #define OTA_VERSION_MAX 64
 #define OTA_MANIFEST_MAX 4096
 #define OTA_COPY_MAX (64 * 1024 * 1024)
@@ -68,7 +70,7 @@ static int load_package_version(
     if (json_tokener_get_error(tok) != json_tokener_success ||
         !root ||
         json_object_get_type(root) != json_type_object ||
-        (size_t)json_tokener_get_parse_end(tok) != done)
+        ota_json_parse_end(tok) != done)
         goto out;
 
     if (!json_object_object_get_ex(root, "version", &field) ||

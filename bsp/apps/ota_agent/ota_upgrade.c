@@ -15,6 +15,8 @@
 
 #include <json-c/json.h>
 
+#include "ota_json_compat.h"
+
 #define MANIFEST_MAX 4096
 #define VERSION_MAX 64
 #define TEMP_LINK "current.activate.next"
@@ -86,7 +88,7 @@ static int read_identity(
     if (json_tokener_get_error(tok) != json_tokener_success ||
         !root ||
         json_object_get_type(root) != json_type_object ||
-        (size_t)json_tokener_get_parse_end(tok) != total)
+        ota_json_parse_end(tok) != total)
         goto out;
 
     if (!json_object_object_get_ex(

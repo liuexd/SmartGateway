@@ -39,6 +39,9 @@
 - [D15 AP3216C Sensor Agent 集成](docs/D15-ap3216c-sensor-agent-integration.md)
 - [D16 GDB 远程调试验收](docs/D16-gdb-remote-debugging.md)
 - [GDB/gdbserver 零基础实战教程](docs/tutorial-gdbserver-arm-remote-debugging.md)
+- [D23-6-8 北向故障回滚验收](docs/D23-6-8-northbound-fault-rollback.md)
+- [D24 TCP 连接超时与关停分析](docs/D24-tcp-connect-timeout-and-shutdown.md)
+- [D25-1 ARM 交叉编译与部署验收](docs/D25-1-arm-build-deployment-validation.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）
