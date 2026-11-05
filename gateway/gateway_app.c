@@ -10,6 +10,19 @@
 #include <time.h>
 
 /*
+ * 单次北向 TCP connect 的等待上限。
+ *
+ * 与 tcp_client.c 内部的默认值保持一致：
+ * 对端不回 SYN-ACK 时不再挂到内核重传耗尽（实测 18~21 秒），
+ * 而是在 3 秒后判定失败并交给 1 秒重试节流。
+ *
+ * 该上限同时决定了 SIGTERM 后 Server Worker 的最坏退出延迟，
+ * 但 server_link_worker 会把 running 传进来，
+ * 因此退出时无需等满整个超时。
+ */
+#define TCP_CONNECT_TIMEOUT_MS 3000
+
+/*
  * 检查当前serial_port.c支持的波特率。
  */
 static int baud_is_supported(int baud_rate)
@@ -218,7 +231,9 @@ return 0;
     return 0;
 }
 
-void gateway_app_try_tcp_connect(gateway_context_t *context)
+void gateway_app_try_tcp_connect(
+    gateway_context_t *context,
+    const volatile int *running)
 {
     time_t now;
 
@@ -228,6 +243,15 @@ void gateway_app_try_tcp_connect(gateway_context_t *context)
     }
 
     if (context->tcp_fd >= 0)
+    {
+        return;
+    }
+
+    /*
+     * 已收到退出请求时不再发起新连接，
+     * 避免退出路径上又进入一次可能很长的 connect。
+     */
+    if (running != NULL && !(*running))
     {
         return;
     }
@@ -253,23 +277,37 @@ void gateway_app_try_tcp_connect(gateway_context_t *context)
         (unsigned int)context->server_port
     );
 
-    context->tcp_fd = tcp_client_connect(
+    context->tcp_fd = tcp_client_connect_stoppable(
         context->server_ip,
-        context->server_port
+        context->server_port,
+        TCP_CONNECT_TIMEOUT_MS,
+        running
     );
 
     if (context->tcp_fd < 0)
     {
+        int saved_error = errno;
+
         context->tcp_connect_error++;
 
         fprintf(
             stderr,
-            "[TCP] tcp_connect failed: %s:%u\n",
+            "[TCP] tcp_connect failed: %s:%u (%s)\n",
             context->server_ip,
-            (unsigned int)context->server_port
+            (unsigned int)context->server_port,
+            strerror(saved_error)
         );
 
-        context->next_tcp_retry = now + 1;
+        /*
+         * 退出导致的中断不改变重试节流，
+         * 其余失败仍按 1 秒节奏退避。
+         */
+        if (!(running != NULL && !(*running)))
+        {
+            context->next_tcp_retry = now + 1;
+        }
+
+        errno = saved_error;
         return;
     }
 

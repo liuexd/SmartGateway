@@ -51,13 +51,30 @@ static void server_link_disconnect(
     }
 }
 
-static void server_link_short_wait(void)
+/*
+ * 重连失败后的短等待。
+ *
+ * 原来是一次 100ms 的 nanosleep，期间完全不看退出标志；
+ * 现在拆成 10ms 一片，每片都检查 running，
+ * 使 SIGTERM 后的线程回收不受该等待拖累。
+ */
+static void server_link_short_wait(const volatile int *running)
 {
     struct timespec delay;
-    delay.tv_sec =0;
-    delay.tv_nsec = 100000000L;
+    int slices = 10;
 
-    nanosleep (&delay,NULL);
+    delay.tv_sec = 0;
+    delay.tv_nsec = 10000000L;
+
+    while (slices-- > 0)
+    {
+        if (running != NULL && !(*running))
+        {
+            return;
+        }
+
+        nanosleep(&delay, NULL);
+    }
 }
 
 void *server_link_worker(void *arg)
@@ -154,12 +171,13 @@ void *server_link_worker(void *arg)
         if(context->tcp_fd <0)
         {
             gateway_app_try_tcp_connect(
-                context
+                context,
+                runningg
             );
 
             if(context->tcp_fd < 0)
             {
-                server_link_short_wait();
+                server_link_short_wait(runningg);
                 continue;
             }
 

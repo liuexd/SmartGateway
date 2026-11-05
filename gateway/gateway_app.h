@@ -105,9 +105,17 @@ int gateway_app_parse_args(
  * 未连接时调用；已连接则直接返回。
  * 连接失败时记录 tcp_connect_error，并设置 next_tcp_retry。
  *
+ * 连接本身是有界的（见 tcp_client_connect_stoppable）：
+ *   - running 非 NULL 时，置 0 可立即中断正在进行的 connect；
+ *   - 超时由 TCP_CLIENT_CONNECT_TIMEOUT_MS 控制。
+ *
  * @param context 网关上下文
+ * @param running Gateway 全局运行标志，可为 NULL
  */
-void gateway_app_try_tcp_connect(gateway_context_t *context);
+void gateway_app_try_tcp_connect(
+    gateway_context_t *context,
+    const volatile int *running
+);
 
 /*
  * 处理一帧已通过CRC校验的消息。

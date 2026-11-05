@@ -7,10 +7,34 @@
 /*
  * 连接TCP服务器。
  * 成功返回socket文件描述符，失败返回-1。
+ *
+ * 内部使用有界 connect（默认 TCP_CLIENT_CONNECT_TIMEOUT_MS，
+ * 当前 3000ms）：对端不回 SYN-ACK 时会在超时后返回 -1
+ * （errno=ETIMEDOUT），而不是挂到内核重传耗尽（约 18~21 秒）。
+ *
+ * 成功返回时 socket 处于阻塞模式，与历史行为一致。
  */
 int tcp_client_connect(
     const char *server_ip,
     uint16_t port
+);
+
+/*
+ * 可中断、可指定超时的连接。
+ *
+ * timeout_ms : 单次 connect 的最长等待时间，必须 > 0
+ * running    : 可为 NULL。非 NULL 时每个轮询分片检查一次，
+ *              置 0 立即放弃连接并返回 -1（errno=EINTR），
+ *              使 SIGTERM 后的线程回收不受 connect 超时拖累。
+ *
+ * 失败时所有路径都已关闭 socket，errno 保留真实原因
+ * （ETIMEDOUT / EINTR / ECONNREFUSED / ENETUNREACH 等）。
+ */
+int tcp_client_connect_stoppable(
+    const char *server_ip,
+    uint16_t port,
+    int timeout_ms,
+    const volatile int *running
 );
 
 /*
