@@ -1,3 +1,4 @@
+/* 模块 gateway_app：应用配置、设备上行转换与 Server 命令路由；依赖队列与设备表。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway_app.h"
@@ -227,7 +228,7 @@ int gateway_app_parse_args(
         return 1;
     }
 
-return 0;
+    return 0;
 }
 
 /* 北向连接管理。 */
@@ -858,6 +859,264 @@ void gateway_app_on_frame(
  *
  * @return 0已回复；-1参数非法或发送失败
  */
+/* WiFi 上行 JSON 处理。 */
+void gateway_app_on_wifi_line(
+    const char *line,
+    size_t length,
+    void *user_data
+)
+{
+    gateway_app_upstream_context_t *upstream_context;
+    gateway_context_t *context;
+    message_queue_t *upstream_queue;
+
+    char type_name[8];
+
+    if(line == NULL || user_data == NULL)
+    {
+        return;
+    }
+
+    upstream_context = (gateway_app_upstream_context_t *)user_data;
+    context = upstream_context->gateway_context;
+    upstream_queue = upstream_context->upstream_queue;
+
+    if(context == NULL || upstream_context == NULL)
+    {
+        return ;
+    }
+
+    /*
+     * WiFi 节点和蓝牙节点一样会回 DATA / ACK / NACK 三类，
+     * 必须按 type 分派。
+     *
+     * 之前这里直接调 message_json_decode_data()，
+     * 而它硬校验 type=="DATA"，
+     * 导致 WiFi 的 ACK/NACK 全部解析失败被丢弃，
+     * Server 侧命令永远等不到应答、只能反复超时重发。
+     */
+    if (message_json_peek_type(
+            line,
+            length,
+            type_name,
+            sizeof(type_name)) != 0)
+    {
+        context->decode_errors++;
+
+        fprintf(stderr,
+            "[WIFI] cannot read message type: %.*s\n",
+            (int)length,
+            line
+        );
+
+        return;
+    }
+
+    if (strcmp(type_name, "ACK") == 0)
+    {
+        frame_ack_t ack;
+        char ack_json[256];
+        int ack_length;
+
+        if (message_json_decode_ack(line, length, &ack) < 0)
+        {
+            context->decode_errors++;
+
+            fprintf(stderr,
+                "[WIFI] ACK decode failed: %.*s\n",
+                (int)length,
+                line
+            );
+
+            return;
+        }
+
+        if (gateway_app_bind_or_refresh_device(
+                upstream_context,
+                ack.node_id) != 0)
+        {
+            return;
+        }
+
+        printf(
+            "[WIFI ACK] node=%s seq=%06u fields=",
+            ack.node_id,
+            (unsigned int)ack.sequence
+        );
+
+        for (size_t i = 0; i < ack.field_count; i++)
+        {
+            printf(
+                "%s%s=%s",
+                (i > 0U) ? "," : "",
+                ack.fields[i].key,
+                ack.fields[i].value
+            );
+        }
+
+        printf("\n");
+
+        ack_length = message_json_build_ack(
+            ack_json,
+            sizeof(ack_json),
+            &ack
+        );
+
+        if (ack_length < 0)
+        {
+            fprintf(stderr, "[WIFI] ACK JSON build failed\n");
+            return;
+        }
+
+        gateway_app_enqueue_upstream_json(
+            upstream_queue,
+            ack_json,
+            ack_length
+        );
+
+        return;
+    }
+
+    if (strcmp(type_name, "NACK") == 0)
+    {
+        frame_nack_t nack;
+        char nack_json[256];
+        int nack_length;
+
+        if (message_json_decode_nack(line, length, &nack) < 0)
+        {
+            context->decode_errors++;
+
+            fprintf(stderr,
+                "[WIFI] NACK decode failed: %.*s\n",
+                (int)length,
+                line
+            );
+
+            return;
+        }
+
+        if (gateway_app_bind_or_refresh_device(
+                upstream_context,
+                nack.node_id) != 0)
+        {
+            return;
+        }
+
+        printf(
+            "[WIFI NACK] node=%s seq=%06u error=%s\n",
+            nack.node_id,
+            (unsigned int)nack.sequence,
+            nack.error
+        );
+
+        nack_length = message_json_build_nack(
+            nack_json,
+            sizeof(nack_json),
+            &nack
+        );
+
+        if (nack_length < 0)
+        {
+            fprintf(stderr, "[WIFI] NACK JSON build failed\n");
+            return;
+        }
+
+        gateway_app_enqueue_upstream_json(
+            upstream_queue,
+            nack_json,
+            nack_length
+        );
+
+        return;
+    }
+
+    /*
+     * 其余按 DATA 处理（含 type 不是 DATA 的未知类型，
+     * 由 decode_data 自己校验并报错）。
+     */
+    {
+        frame_data_t data;
+        const char *light_raw;
+        char json[256];
+        int json_length;
+
+        if(message_json_decode_data(line,length,&data) < 0)
+        {
+            context ->decode_errors++;
+
+            fprintf(stderr,
+            "[WIFI] DATA decode failed: %.*s\n",
+            (int)length,
+            line
+            );
+
+            return;
+        }
+
+        if (gateway_app_bind_or_refresh_device(upstream_context,data.node_id
+        ) != 0)
+        {
+            return;
+        }
+
+        printf(
+            "[WIFI DATA] node=%s seq=%06u fields=",
+            data.node_id,
+            data.sequence
+        );
+
+        for(size_t i=0; i<data.field_count;i++)
+        {
+            printf("%s%s=%s",
+            (i > 0U) ? "," :"",//添加中间的逗号
+            data.fields[i].key,
+            data.fields[i].value
+            );
+        }
+
+        printf("\n");
+
+        light_raw = frame_data_find_field(
+            &data,"LIGHT_RAW"
+            );
+
+        if(light_raw != NULL)
+        {
+            printf(
+                "            LIGHT_RAW=%s\n",
+                light_raw
+            );
+        }
+
+        /*
+         *将解码后的WIFIDATA重新序列化为标准JSON
+         *再加入上行队列，由 Server Link Worker 发送给服务器
+         */
+
+        json_length = message_json_build_data(
+            json,
+            sizeof(json),
+            &data
+        );
+
+        if(json_length < 0)
+        {
+            fprintf(stderr,
+                "[WIFI] JSON build failed\n"
+            );
+            return;
+        }
+
+        gateway_app_enqueue_upstream_json(
+            upstream_queue,
+            json,
+            json_length
+        );
+    }
+}
+
+
 /* Server 下行命令与路由失败处理。 */
 static int gateway_app_send_route_failure_nack(
     gateway_context_t *context,
@@ -1141,263 +1400,6 @@ void gateway_app_on_tcp_line(
 
 }
 //节点上传处理函数
-/* WiFi 上行 JSON 处理。 */
-void gateway_app_on_wifi_line(
-    const char *line,
-    size_t length,
-    void *user_data
-)
-{
-    gateway_app_upstream_context_t *upstream_context;
-    gateway_context_t *context;
-    message_queue_t *upstream_queue;
-
-    char type_name[8];
-
-    if(line == NULL || user_data == NULL)
-    {
-        return;
-    }
-
-    upstream_context = (gateway_app_upstream_context_t *)user_data;
-    context = upstream_context->gateway_context;
-    upstream_queue = upstream_context->upstream_queue;
-
-    if(context == NULL || upstream_context == NULL)
-    {
-        return ;
-    }
-
-    /*
-     * WiFi 节点和蓝牙节点一样会回 DATA / ACK / NACK 三类，
-     * 必须按 type 分派。
-     *
-     * 之前这里直接调 message_json_decode_data()，
-     * 而它硬校验 type=="DATA"，
-     * 导致 WiFi 的 ACK/NACK 全部解析失败被丢弃，
-     * Server 侧命令永远等不到应答、只能反复超时重发。
-     */
-    if (message_json_peek_type(
-            line,
-            length,
-            type_name,
-            sizeof(type_name)) != 0)
-    {
-        context->decode_errors++;
-
-        fprintf(stderr,
-            "[WIFI] cannot read message type: %.*s\n",
-            (int)length,
-            line
-        );
-
-        return;
-    }
-
-    if (strcmp(type_name, "ACK") == 0)
-    {
-        frame_ack_t ack;
-        char ack_json[256];
-        int ack_length;
-
-        if (message_json_decode_ack(line, length, &ack) < 0)
-        {
-            context->decode_errors++;
-
-            fprintf(stderr,
-                "[WIFI] ACK decode failed: %.*s\n",
-                (int)length,
-                line
-            );
-
-            return;
-        }
-
-        if (gateway_app_bind_or_refresh_device(
-                upstream_context,
-                ack.node_id) != 0)
-        {
-            return;
-        }
-
-        printf(
-            "[WIFI ACK] node=%s seq=%06u fields=",
-            ack.node_id,
-            (unsigned int)ack.sequence
-        );
-
-        for (size_t i = 0; i < ack.field_count; i++)
-        {
-            printf(
-                "%s%s=%s",
-                (i > 0U) ? "," : "",
-                ack.fields[i].key,
-                ack.fields[i].value
-            );
-        }
-
-        printf("\n");
-
-        ack_length = message_json_build_ack(
-            ack_json,
-            sizeof(ack_json),
-            &ack
-        );
-
-        if (ack_length < 0)
-        {
-            fprintf(stderr, "[WIFI] ACK JSON build failed\n");
-            return;
-        }
-
-        gateway_app_enqueue_upstream_json(
-            upstream_queue,
-            ack_json,
-            ack_length
-        );
-
-        return;
-    }
-
-    if (strcmp(type_name, "NACK") == 0)
-    {
-        frame_nack_t nack;
-        char nack_json[256];
-        int nack_length;
-
-        if (message_json_decode_nack(line, length, &nack) < 0)
-        {
-            context->decode_errors++;
-
-            fprintf(stderr,
-                "[WIFI] NACK decode failed: %.*s\n",
-                (int)length,
-                line
-            );
-
-            return;
-        }
-
-        if (gateway_app_bind_or_refresh_device(
-                upstream_context,
-                nack.node_id) != 0)
-        {
-            return;
-        }
-
-        printf(
-            "[WIFI NACK] node=%s seq=%06u error=%s\n",
-            nack.node_id,
-            (unsigned int)nack.sequence,
-            nack.error
-        );
-
-        nack_length = message_json_build_nack(
-            nack_json,
-            sizeof(nack_json),
-            &nack
-        );
-
-        if (nack_length < 0)
-        {
-            fprintf(stderr, "[WIFI] NACK JSON build failed\n");
-            return;
-        }
-
-        gateway_app_enqueue_upstream_json(
-            upstream_queue,
-            nack_json,
-            nack_length
-        );
-
-        return;
-    }
-
-    /*
-     * 其余按 DATA 处理（含 type 不是 DATA 的未知类型，
-     * 由 decode_data 自己校验并报错）。
-     */
-    {
-        frame_data_t data;
-        const char *light_raw;
-        char json[256];
-        int json_length;
-
-        if(message_json_decode_data(line,length,&data) < 0)
-        {
-            context ->decode_errors++;
-
-            fprintf(stderr,
-            "[WIFI] DATA decode failed: %.*s\n",
-            (int)length,
-            line
-            );
-
-            return;
-        }
-
-        if (gateway_app_bind_or_refresh_device(upstream_context,data.node_id
-        ) != 0)
-        {
-            return;
-        }
-
-        printf(
-            "[WIFI DATA] node=%s seq=%06u fields=",
-            data.node_id,
-            data.sequence
-        );
-
-        for(size_t i=0; i<data.field_count;i++)
-        {
-            printf("%s%s=%s",
-            (i > 0U) ? "," :"",//添加中间的逗号
-            data.fields[i].key,
-            data.fields[i].value
-            );
-        }
-
-        printf("\n");
-
-        light_raw = frame_data_find_field(
-            &data,"LIGHT_RAW"
-            );
-
-        if(light_raw != NULL)
-        {
-            printf(
-                "            LIGHT_RAW=%s\n",
-                light_raw
-            );
-        }
-
-        /*
-         *将解码后的WIFIDATA重新序列化为标准JSON
-         *再加入上行队列，由 Server Link Worker 发送给服务器
-         */
-
-        json_length = message_json_build_data(
-            json,
-            sizeof(json),
-            &data
-        );
-
-        if(json_length < 0)
-        {
-            fprintf(stderr,
-                "[WIFI] JSON build failed\n"
-            );
-            return;
-        }
-
-        gateway_app_enqueue_upstream_json(
-            upstream_queue,
-            json,
-            json_length
-        );
-    }
-}
-
 /* 运行统计与资源关闭。 */
 void gateway_app_print_stats(
     const gateway_context_t *context,

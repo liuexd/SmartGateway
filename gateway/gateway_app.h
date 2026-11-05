@@ -1,3 +1,4 @@
+/* 模块 gateway_app：应用配置、设备上行转换与 Server 命令路由；依赖队列与设备表。 */
 #ifndef GATEWAY_APP_H
 #define GATEWAY_APP_H
 
