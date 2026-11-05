@@ -54,7 +54,7 @@ typedef struct
  * 职责：
  *   1. 维护运行上下文（gateway_context_t）；
  *   2. 解析命令行参数（--serial/--baud/--server/--port）；
- *   3. 处理解析出的帧（DATA -> JSON -> TCP上报）；
+ *   3. 将设备 DATA/ACK/NACK 转为上行消息，路由 Server 命令；
  *   4. 管理TCP自动重连。
  *
  * 底层I/O（串口读取、主循环）见 gateway_loop.h。
@@ -78,7 +78,7 @@ void gateway_app_init(
  * 解析命令行参数。
  *
  * 支持：
- *   --serial <device>  串口设备（必填）
+ *   --serial <device> 或 --no-serial  选择串口模式
  *   --baud <rate>      波特率（可选，默认9600）
  *   --server <ip>      服务器地址（可选，默认127.0.0.1）
  *   --port <port>      服务器端口（可选，默认9000）
@@ -118,18 +118,11 @@ void gateway_app_try_tcp_connect(
 );
 
 /*
- * 处理一帧已通过CRC校验的消息。
- *
- * 当前只处理DATA帧：
- *   1. frame_decode_data() 解码；
- *   2. message_json 生成JSON；
- *   3. TCP发送到服务器（未连接时丢弃并计数）。
- *
- * 该函数可作为 frame_parser_feed() 的回调，
- * 也是 frame_parser_callback_t 签名（user_data为gateway_context_t*）。
- *
- * @param frame     已通过CRC校验的帧
- * @param user_data 必须是 gateway_context_t*，否则不处理
+ * Bluetooth Worker 的帧解析回调：解码 DATA、ACK 或 NACK，绑定或刷新
+ * 设备，并将 JSON 放入上行队列。入队可能因队列已满而阻塞；是否已
+ * 连接 Server 不影响入队。Server Link Worker 负责后续发送。
+ * frame 是已通过 CRC 校验的帧；user_data 为该 worker 持有的
+ * gateway_app_upstream_context_t *，其共享队列和设备表须保持有效。
  */
 void gateway_app_on_frame(
     const parsed_frame_t *frame,
@@ -144,9 +137,10 @@ void gateway_app_on_frame(
  *   2. device_manager_enqueue_command() 按 target_node 投递到该设备的命令队列。
  *
  * 注意：本函数运行在 Server Link Thread 中，
- * **不直接碰任何串口/socket**。真正的下行发送由
+ * 不直接操作设备串口或 WiFi socket。真正的下行发送由
  * 拥有该链路的设备 worker（bluetooth_worker / wifi_client_worker）
- * 在获得连接所有权的前提下完成。
+ * 在获得连接所有权的前提下完成。路由失败时，此线程可以使用自己
+ * 拥有的北向 TCP 连接直接发送 NACK。
  *
  * 这样做的原因：串口 fd 的所有权唯一，只有 bluetooth_worker 会
  * open/write/close 它；否则会在断线时出现"已关闭的fd又被写入"的竞态。
@@ -165,7 +159,9 @@ void gateway_app_on_tcp_line(
 );
 
 /*
- * 处理WIFI节点收到的一行DATA JSON
+ * WiFi Worker 的行解析回调：处理节点的 DATA、ACK、NACK JSON，
+ * 刷新设备并将消息加入上行队列，队列满时可能阻塞。
+ * line/length 指向完整行；user_data 为 gateway_app_upstream_context_t *。
  */
 void gateway_app_on_wifi_line(
     const char*line,
@@ -191,6 +187,8 @@ void gateway_app_print_stats(
  */
 void gateway_app_close(gateway_context_t *context);
 
+/* 设备 Worker 将 node_id、sequence 和 error 封装为上行 NACK；
+ * upstream_queue 须保持有效，队列满时可能阻塞；无返回值。 */
 void gateway_app_enqueue_nack(
     message_queue_t *upstream_queue,
     const char *node_id,
