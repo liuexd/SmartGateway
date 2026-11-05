@@ -1099,7 +1099,7 @@ void gateway_app_on_tcp_line(
     }
 
 }
-
+//节点上传处理函数
 void gateway_app_on_wifi_line(
     const char *line,
     size_t length,

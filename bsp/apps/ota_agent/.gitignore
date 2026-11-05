@@ -1,0 +1,9 @@
+/*.o
+
+# 编译产物（由 Makefile 生成）
+/ota_verify
+/ota_agent
+/ota_agent_x86
+
+# 临时日志
+/*.log

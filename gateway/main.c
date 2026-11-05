@@ -8,6 +8,10 @@
 #include <stdio.h>
 #include <string.h>
 
+/* 这个宏的作用是允许编译时指定 Gateway 的版本。没有提供版本参数时，默认使用 dev。 */
+#ifndef SMART_GATEWAY_VERSION
+#define SMART_GATEWAY_VERSION "dev"
+#endif
 /*
  * 使用sig_atomic_t，保证信号处理函数修改该变量时安全。
  */
@@ -52,6 +56,14 @@ static int install_signal_handlers(void)
 
 int main(int argc, char *argv[])
 {
+    if (argc == 2 &&
+        strcmp(argv[1], "--version") == 0)
+    {
+        printf("smart_gateway %s\n",
+               SMART_GATEWAY_VERSION);
+        return 0;
+    }
+
     const char *serial_device = NULL;
     int baud_rate = 9600;
 
