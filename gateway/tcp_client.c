@@ -1,3 +1,4 @@
+/* 模块 tcp_client：提供有界连接、socket 模式设置、完整发送与关闭。 */
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 

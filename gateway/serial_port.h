@@ -1,3 +1,4 @@
+/* 模块 serial_port：提供串口配置、读取等待、完整发送与关闭。 */
 #ifndef SERIAL_PORT_H
 #define SERIAL_PORT_H
 

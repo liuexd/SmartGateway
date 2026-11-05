@@ -1,3 +1,4 @@
+/* 模块 tcp_client：提供有界连接、socket 模式设置、完整发送与关闭。 */
 #ifndef TCP_CLIENT_H
 #define TCP_CLIENT_H
 
@@ -45,7 +46,7 @@ int tcp_client_connect_stoppable(
  * 而不会无限阻塞。
  *
  * 配合 tcp_client_set_nonblocking() 使用时行为最完整；
- * 即使是阻塞 socket 也能因 poll 超时而返回。
+ * 阻塞 socket 上单次 send 仍可能阻塞，不能保证整体超时。
  *
  * 成功返回0，失败返回-1。
  */

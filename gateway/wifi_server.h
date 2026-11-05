@@ -1,3 +1,4 @@
+/* 模块 wifi_server：创建监听 socket 并接受 WiFi 连接；客户端数据由 worker 处理。 */
 #ifndef WIFI_SERVER_H
 #define WIFI_SERVER_H
 
