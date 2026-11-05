@@ -25,6 +25,7 @@
 /*
  * 检查当前serial_port.c支持的波特率。
  */
+/* 参数校验与命令行配置。 */
 static int baud_is_supported(int baud_rate)
 {
     switch (baud_rate)
@@ -47,7 +48,7 @@ static int baud_is_supported(int baud_rate)
 /*
  * 将端口号文本转换成整数。
  */
-static int parse_port(
+static int parse_server_port(
     const char *text,
     unsigned short *port
 )
@@ -83,7 +84,7 @@ static int parse_port(
 /*
  * 将命令行中的波特率文本转换成整数。
  */
-static int parse_baud_rate(
+static int parse_serial_baud_rate(
     const char *text,
     int *baud_rate
 )
@@ -177,7 +178,7 @@ int gateway_app_parse_args(
         else if (strcmp(argv[i], "--baud") == 0)
         {
             if (i + 1 >= argc ||
-                parse_baud_rate(argv[i + 1], baud_rate) != 0)
+                parse_serial_baud_rate(argv[i + 1], baud_rate) != 0)
             {
                 fprintf(stderr, "Invalid or unsupported baud rate\n");
                 return 1;
@@ -198,7 +199,7 @@ int gateway_app_parse_args(
         else if (strcmp(argv[i], "--port") == 0)
         {
             if (i + 1 >= argc ||
-                parse_port(argv[i + 1], &context->server_port) != 0)
+                parse_server_port(argv[i + 1], &context->server_port) != 0)
             {
                 fprintf(stderr, "Invalid server port\n");
                 return 1;
@@ -227,10 +228,9 @@ int gateway_app_parse_args(
     }
 
 return 0;
-
-    return 0;
 }
 
+/* 北向连接管理。 */
 void gateway_app_try_tcp_connect(
     gateway_context_t *context,
     const volatile int *running)
@@ -322,11 +322,11 @@ void gateway_app_try_tcp_connect(
 }
 
 /*
- * 通过TCP将JSON加入队列
- *
- * 未连接时丢弃并计数（后续可考虑缓存重发）。
+ * 将 JSON 放入上行队列；连接状态不影响入队。队列满时可能阻塞，
+ * Server Link Worker 负责连接、发送和失败后的重试。
  */
-static void gateway_app_enqueue_json(
+/* 上行消息封装与入队。 */
+static void gateway_app_enqueue_upstream_json(
     message_queue_t *queue,
     const char *json,
     int json_length
@@ -451,7 +451,7 @@ void gateway_app_enqueue_nack(
         return;
     }
 
-    gateway_app_enqueue_json(
+    gateway_app_enqueue_upstream_json(
         upstream_queue,
         json,
         json_length
@@ -465,7 +465,8 @@ void gateway_app_enqueue_nack(
     );
 }
 
-static int gateway_app_touch_device(
+/* 设备身份绑定与状态刷新。 */
+static int gateway_app_bind_or_refresh_device(
     gateway_app_upstream_context_t *upstream_context,
     const char *node_id
 )
@@ -604,8 +605,9 @@ static int gateway_app_touch_device(
  * 2、将帧解码成结构体
  * 3、输出打印
  * 4、通过snprintf生成JSON
- * 5、通过tcp连接发送数据到server
+ * 5、放入上行队列，由 Server Link Worker 发送
  */
+/* 蓝牙上行帧处理。 */
 void gateway_app_on_frame(
     const parsed_frame_t *frame,
     void *user_data
@@ -654,7 +656,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            if(gateway_app_touch_device(upstream_context,data.node_id)!=0)
+            if(gateway_app_bind_or_refresh_device(upstream_context,data.node_id)!=0)
             {
                 return;
             }
@@ -706,7 +708,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            gateway_app_enqueue_json(upstream_queue, json, json_length);
+            gateway_app_enqueue_upstream_json(upstream_queue, json, json_length);
             break;
         }
 
@@ -727,7 +729,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            if(gateway_app_touch_device(upstream_context,ack.node_id)!=0)
+            if(gateway_app_bind_or_refresh_device(upstream_context,ack.node_id)!=0)
             {
                 return;
             }
@@ -762,7 +764,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            gateway_app_enqueue_json(upstream_queue, json, json_length);
+            gateway_app_enqueue_upstream_json(upstream_queue, json, json_length);
             break;
         }
 
@@ -783,7 +785,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            if(gateway_app_touch_device(upstream_context,nack.node_id)!=0)
+            if(gateway_app_bind_or_refresh_device(upstream_context,nack.node_id)!=0)
             {
                 return;
             }
@@ -807,7 +809,7 @@ void gateway_app_on_frame(
                 return;
             }
 
-            gateway_app_enqueue_json(upstream_queue, json, json_length);
+            gateway_app_enqueue_upstream_json(upstream_queue, json, json_length);
             break;
         }
 
@@ -856,7 +858,8 @@ void gateway_app_on_frame(
  *
  * @return 0已回复；-1参数非法或发送失败
  */
-static int gateway_app_send_route_nack(
+/* Server 下行命令与路由失败处理。 */
+static int gateway_app_send_route_failure_nack(
     gateway_context_t *context,
     const frame_command_t *command,
     const char *error
@@ -1074,7 +1077,7 @@ void gateway_app_on_tcp_line(
                 command.target_node
             );
 
-            gateway_app_send_route_nack(
+            gateway_app_send_route_failure_nack(
                 context,
                 &command,
                 "route_not_found"
@@ -1091,7 +1094,7 @@ void gateway_app_on_tcp_line(
                 command.target_node
             );
 
-            gateway_app_send_route_nack(
+            gateway_app_send_route_failure_nack(
                 context,
                 &command,
                 "route_offline"
@@ -1108,7 +1111,7 @@ void gateway_app_on_tcp_line(
                 command.target_node
             );
 
-            gateway_app_send_route_nack(
+            gateway_app_send_route_failure_nack(
                 context,
                 &command,
                 "route_queue_full"
@@ -1127,7 +1130,7 @@ void gateway_app_on_tcp_line(
                 result
             );
 
-            gateway_app_send_route_nack(
+            gateway_app_send_route_failure_nack(
                 context,
                 &command,
                 "route_internal"
@@ -1138,6 +1141,7 @@ void gateway_app_on_tcp_line(
 
 }
 //节点上传处理函数
+/* WiFi 上行 JSON 处理。 */
 void gateway_app_on_wifi_line(
     const char *line,
     size_t length,
@@ -1209,7 +1213,7 @@ void gateway_app_on_wifi_line(
             return;
         }
 
-        if (gateway_app_touch_device(
+        if (gateway_app_bind_or_refresh_device(
                 upstream_context,
                 ack.node_id) != 0)
         {
@@ -1246,7 +1250,7 @@ void gateway_app_on_wifi_line(
             return;
         }
 
-        gateway_app_enqueue_json(
+        gateway_app_enqueue_upstream_json(
             upstream_queue,
             ack_json,
             ack_length
@@ -1274,7 +1278,7 @@ void gateway_app_on_wifi_line(
             return;
         }
 
-        if (gateway_app_touch_device(
+        if (gateway_app_bind_or_refresh_device(
                 upstream_context,
                 nack.node_id) != 0)
         {
@@ -1300,7 +1304,7 @@ void gateway_app_on_wifi_line(
             return;
         }
 
-        gateway_app_enqueue_json(
+        gateway_app_enqueue_upstream_json(
             upstream_queue,
             nack_json,
             nack_length
@@ -1332,7 +1336,7 @@ void gateway_app_on_wifi_line(
             return;
         }
 
-        if (gateway_app_touch_device(upstream_context,data.node_id
+        if (gateway_app_bind_or_refresh_device(upstream_context,data.node_id
         ) != 0)
         {
             return;
@@ -1369,7 +1373,7 @@ void gateway_app_on_wifi_line(
 
         /*
          *将解码后的WIFIDATA重新序列化为标准JSON
-         *再通过现有的TCP发送给服务器
+         *再加入上行队列，由 Server Link Worker 发送给服务器
          */
 
         json_length = message_json_build_data(
@@ -1386,7 +1390,7 @@ void gateway_app_on_wifi_line(
             return;
         }
 
-        gateway_app_enqueue_json(
+        gateway_app_enqueue_upstream_json(
             upstream_queue,
             json,
             json_length
@@ -1394,6 +1398,7 @@ void gateway_app_on_wifi_line(
     }
 }
 
+/* 运行统计与资源关闭。 */
 void gateway_app_print_stats(
     const gateway_context_t *context,
     const frame_parser_t *parser
