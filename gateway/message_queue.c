@@ -1,3 +1,4 @@
+/* 模块 message_queue：固定容量线程安全上行队列；生产者与 Server Link 消费者共享。 */
 #include "message_queue.h"
 
 #include <stddef.h>
@@ -237,6 +238,7 @@ void message_queue_shutdown(message_queue_t *queue)
     pthread_mutex_unlock(&queue->mutex);
 }
 
+/* shutdown 只唤醒使用者；所有使用者退出后才能销毁同步对象。 */
 void message_queue_destroy(
     message_queue_t *queue
 )

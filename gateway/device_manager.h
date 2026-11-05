@@ -1,3 +1,4 @@
+/* 模块 device_manager：同步维护设备连接、在线状态及每设备的下行命令队列。 */
 #ifndef DEVICE_MANAGER_H
 #define DEVICE_MANAGER_H
 
@@ -147,7 +148,7 @@ typedef struct
 /*
  * 设备注册表。
  *
- * 固定容量的哈希/线性表（见 .c 的实现），
+ * 固定容量的线性表（见 .c 的实现），
  * 保存全部已接入设备并提供线程安全的查增删改。
  */
 typedef struct
@@ -373,6 +374,7 @@ int device_manager_try_dequeue_command(
     frame_command_t *out_command
 );
 
+/* 匹配当前连接后收集并移除待处理命令；容量不足时返回相应错误。 */
 int device_manager_disconnect_collect_commands(
     device_manager_t *manager,
     const char *node_id,
@@ -383,6 +385,7 @@ int device_manager_disconnect_collect_commands(
     size_t *out_count
 );
 
+/* 绑定或接管连接，并向调用者返回旧连接的待处理命令。 */
 int device_manager_bind_connection_collect_commands(
     device_manager_t *manager,
     const char *node_id,

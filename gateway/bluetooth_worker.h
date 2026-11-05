@@ -1,3 +1,4 @@
+/* 模块 bluetooth_worker：独占串口并处理蓝牙帧、命令发送和串口重连。 */
 #ifndef  BLUETOOTH_WORKER_H
 #define  BLUETOOTH_WORKER_H
 

@@ -1,3 +1,4 @@
+/* 模块 device_manager：同步维护设备连接、在线状态及每设备的下行命令队列。 */
 #include "device_manager.h"
 
 #include "string.h"
@@ -48,6 +49,7 @@ void device_manager_destroy(device_manager_t *manager)
     pthread_mutex_destroy(&manager->mutex);
 }
 
+/* 复制快照后释放锁，调用者不会持有可能被并发修改的内部指针。 */
 int device_manager_find(
     device_manager_t *manager,
     const char *node_id,
@@ -339,6 +341,8 @@ int device_manager_disconnect(
         );
 }
 
+/* 持锁核对 fd 和线程身份，旧 worker 不能断开已接管的新连接；
+ * 收集剩余命令供调用方处理，并完成断开状态转换。 */
 int device_manager_disconnect_collect_commands(
     device_manager_t *manager,
     const char *node_id,
@@ -483,6 +487,7 @@ int device_manager_disconnect_collect_commands(
  *
  * 只做内存复制，不做任何socket/serial I/O。
  */
+/* 只复制命令到设备队列，链路 I/O 由拥有连接的 worker 执行。 */
 int device_manager_enqueue_command(
     device_manager_t *manager,
     const char *node_id,
@@ -628,6 +633,8 @@ int device_manager_try_dequeue_command(
     return DEVICE_MANAGER_OK;
 }
 
+/* 持锁完成身份绑定和连接接管，并收集旧连接尚未发送的命令；
+ * fd 和线程身份共同区分旧 worker 与新连接。 */
 int device_manager_bind_connection_collect_commands(
     device_manager_t *manager,
     const char *node_id,

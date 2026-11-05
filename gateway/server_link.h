@@ -1,3 +1,4 @@
+/* 模块 server_link：维护北向 TCP 连接、发送上行队列并接收 Server 命令。 */
 #ifndef SERVER_LINK_H
 #define SERVER_LINK_H
 
@@ -7,8 +8,8 @@
 /*
  * Server Link Thread 启动参数。
  *
- * Server Link Thread 后续将成为
- * Gateway <-> Server TCP连接的唯一拥有者。
+ * Server Link Worker 是运行期间北向 TCP 连接的唯一拥有者。
+ * 调用方必须让上下文及共享资源保持有效，直到线程退出并 join。
  */
 typedef struct
 {

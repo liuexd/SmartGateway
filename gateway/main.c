@@ -1,3 +1,4 @@
+/* 模块 main：程序入口、命令行初始化、信号处理和退出统计。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "frame_parser.h"
@@ -119,7 +120,7 @@ int main(int argc, char *argv[])
     frame_parser_init(&parser);
 
     /*
-     * 进入串口主循环。
+     * 启动网关循环：监听 WiFi，管理 Server Link 和可选的蓝牙 worker。
      */
     gateway_loop_run(
         serial_device,
@@ -130,7 +131,7 @@ int main(int argc, char *argv[])
     );
 
     /*
-     * Ctrl+C正常退出后打印所有统计。
+     * 主循环完成线程回收后打印统计，最后关闭剩余应用资源。
      */
     gateway_app_print_stats(&context, &parser);
     gateway_app_close(&context);

@@ -1,3 +1,4 @@
+/* 模块 message_queue：固定容量线程安全上行队列；生产者与 Server Link 消费者共享。 */
 #ifndef MESSAGE_QUEUE_H
 #define MESSAGE_QUEUE_H
 
@@ -6,9 +7,7 @@
 #include <pthread.h>
 /*
  * message_queue.h
- *第一版本采用固定容量的有界环形队列，后续改成动态扩容的无界队列。
- * 
- *     
+ * 固定容量的有界环形队列，汇集设备 worker 的上行消息。
  */
 
 #define MESSAGE_QUEUE_CAPACITY 32
@@ -43,9 +42,9 @@ typedef struct
 {
     gateway_message_t items[MESSAGE_QUEUE_CAPACITY];
 
-    size_t head;
-    size_t tail;
-    size_t count;
+    size_t head;  /* 下一次读取的位置 */
+    size_t tail;  /* 下一次写入的位置 */
+    size_t count; /* 当前消息数；以上字段和 shutting_down 均受 mutex 保护 */
 
     pthread_mutex_t mutex;
 
@@ -71,7 +70,7 @@ typedef struct
  */
 int message_queue_init(message_queue_t *queue);
 /**
- * 向队列中推送消息
+ * 向队列中复制消息；满时等待空位或 shutdown。
  * @param queue 队列指针
  * @param message 消息指针
  * @return 返回值
@@ -79,7 +78,7 @@ int message_queue_init(message_queue_t *queue);
 int message_queue_push(message_queue_t *queue, const gateway_message_t *message);
 
 /**
- * 从队列中弹出消息
+ * 从队列中弹出消息；空时等待消息或 shutdown。
  * @param queue 队列指针
  * @param message 消息指针
  * @return 返回值
@@ -104,13 +103,14 @@ int message_queue_try_pop(
 );
 
 /**
- * 关闭队列
+ * 禁止新消息并广播两个条件变量，唤醒等待空位或消息的线程。
+ * 已入队消息仍可取出；此操作不销毁队列。
  * @param queue 队列指针
  */
 void message_queue_shutdown(message_queue_t *queue);
 
 /**
- * 销毁队列
+ * 销毁同步对象；调用前必须等待所有生产者和消费者退出。
  * @param queue 队列指针
  */
 void message_queue_destroy(message_queue_t *queue);

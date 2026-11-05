@@ -1,3 +1,4 @@
+/* 模块 bluetooth_worker：独占串口并处理蓝牙帧、命令发送和串口重连。 */
 #include "bluetooth_worker.h"
 
 #include "serial_port.h"
@@ -15,7 +16,7 @@
 
 static int bluetooth_worker_try_send_command(
     device_manager_t *device_manager,
-    gateway_app_upstream_context_t *app_context,
+    gateway_app_upstream_context_t *upstream_context,
     int serial_fd
 )
 {
@@ -27,7 +28,7 @@ static int bluetooth_worker_try_send_command(
     int frame_length;
 
     if(device_manager == NULL ||
-        app_context == NULL ||
+        upstream_context == NULL ||
         serial_fd < 0 )
     {
         return -1;
@@ -41,14 +42,14 @@ static int bluetooth_worker_try_send_command(
      * 注意不要在这里报错：绑定之前每秒都会走到这里，
      * 报错会变成刷屏。
      */
-    if(app_context->bound_node_id[0] == '\0')
+    if(upstream_context->bound_node_id[0] == '\0')
     {
         return 0;
     }
 
     result = device_manager_try_dequeue_command(
         device_manager,
-        app_context->bound_node_id,
+        upstream_context->bound_node_id,
         serial_fd,
         pthread_self(),
         &command
@@ -67,7 +68,7 @@ static int bluetooth_worker_try_send_command(
         fprintf(
             stderr,
             "[BT CMD] connection ownership conflict, node=%s fd=%d\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             serial_fd
         );
 
@@ -81,7 +82,7 @@ static int bluetooth_worker_try_send_command(
         fprintf(
             stderr,
             "[BT CMD] dequeue failed, node=%s result=%d\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             result
         );
 
@@ -102,13 +103,13 @@ static int bluetooth_worker_try_send_command(
         fprintf(
             stderr,
             "[BT CMD] frame build failed, node=%s seq=%06u\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             (unsigned int)command.sequence
         );
 
         gateway_app_enqueue_nack(
-            app_context->upstream_queue,
-            app_context->bound_node_id,
+            upstream_context->upstream_queue,
+            upstream_context->bound_node_id,
             command.sequence,
             "cmd_encode_failed"
         );
@@ -125,14 +126,14 @@ static int bluetooth_worker_try_send_command(
         fprintf(
             stderr,
             "[BT CMD] serial write failed, node=%s fd=%d: %s\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             serial_fd,
             strerror(errno)
         );
 
     gateway_app_enqueue_nack(
-        app_context->upstream_queue,
-        app_context->bound_node_id,
+        upstream_context->upstream_queue,
+        upstream_context->bound_node_id,
         command.sequence,
         "transport_send_failed"
     );
@@ -145,7 +146,7 @@ static int bluetooth_worker_try_send_command(
 
     printf(
         "[BT CMD] sent node=%s seq=%06u bytes=%d\n",
-        app_context->bound_node_id,
+        upstream_context->bound_node_id,
         (unsigned int)command.sequence,
         frame_length
     );
@@ -165,7 +166,7 @@ void *bluetooth_worker(void *arg)
     frame_parser_t *parser;
     const volatile int *running;
     message_queue_t *upstream_queue;
-    gateway_app_upstream_context_t app_context;
+    gateway_app_upstream_context_t upstream_context;
     device_manager_t *device_manager;
 
     uint8_t read_buffer[BLUETOOTH_READ_BUFFER_SIZE];
@@ -201,12 +202,12 @@ void *bluetooth_worker(void *arg)
         worker->baud_rate
     );
 
-    app_context.gateway_context = context;
-    app_context.upstream_queue = upstream_queue;
-    app_context.device_manager = device_manager;
-    app_context.transport = DEVICE_TRANSPORT_BLUETOOTH;
-    app_context.device_fd = -1;
-    app_context.bound_node_id[0] = '\0';
+    upstream_context.gateway_context = context;
+    upstream_context.upstream_queue = upstream_queue;
+    upstream_context.device_manager = device_manager;
+    upstream_context.transport = DEVICE_TRANSPORT_BLUETOOTH;
+    upstream_context.device_fd = -1;
+    upstream_context.bound_node_id[0] = '\0';
 
     while(*running)
     {
@@ -231,7 +232,7 @@ void *bluetooth_worker(void *arg)
             continue;
         }
 
-        app_context.device_fd = serial_fd;
+        upstream_context.device_fd = serial_fd;
 
         context->serial_connections++;
 
@@ -270,7 +271,7 @@ void *bluetooth_worker(void *arg)
 
                 command_result = bluetooth_worker_try_send_command(
                     device_manager,
-                    &app_context,
+                    &upstream_context,
                     serial_fd
                 );
 
@@ -321,12 +322,13 @@ void *bluetooth_worker(void *arg)
 
                 if(read_length >0)
                 {
+                    /* 每个完整帧回调应用层，首次上报时绑定设备身份。 */
                     frame_parser_feed(
                         parser,
                         read_buffer,
                         (size_t)read_length,
                         gateway_app_on_frame,
-                        &app_context
+                        &upstream_context
                     );
                 }
                 else if(
@@ -366,7 +368,7 @@ void *bluetooth_worker(void *arg)
             }
         }
 
-    if (app_context.bound_node_id[0] != '\0')
+    if (upstream_context.bound_node_id[0] != '\0')
     {
         frame_command_t pending_commands[
             DEVICE_COMMAND_QUEUE_CAPACITY
@@ -384,7 +386,7 @@ void *bluetooth_worker(void *arg)
         disconnect_result =
             device_manager_disconnect_collect_commands(
                 device_manager,
-                app_context.bound_node_id,
+                upstream_context.bound_node_id,
                 serial_fd,
                 pthread_self(),
                 pending_commands,
@@ -407,7 +409,7 @@ void *bluetooth_worker(void *arg)
                 i++)
             {
                 gateway_app_enqueue_nack(
-                    app_context.upstream_queue,
+                    upstream_context.upstream_queue,
                     pending_commands[i].target_node,
                     pending_commands[i].sequence,
                     "transport_disconnected"
@@ -421,7 +423,7 @@ void *bluetooth_worker(void *arg)
                     "[BT CMD] failed %zu pending command(s), "
                     "node=%s\n",
                     pending_count,
-                    app_context.bound_node_id
+                    upstream_context.bound_node_id
                 );
             }
         }
@@ -437,7 +439,7 @@ void *bluetooth_worker(void *arg)
             */
             printf(
                 "[BT] stale disconnect ignored, node=%s fd=%d\n",
-                app_context.bound_node_id,
+                upstream_context.bound_node_id,
                 serial_fd
             );
             }
@@ -455,9 +457,9 @@ void *bluetooth_worker(void *arg)
          *
          * 必须重新等待第条合法帧确认身份
          */
-        app_context.bound_node_id[0] = '\0';
+        upstream_context.bound_node_id[0] = '\0';
 
-        app_context.device_fd = -1;
+        upstream_context.device_fd = -1;
         /*
          *Ctrl+C时不需要重连
          */

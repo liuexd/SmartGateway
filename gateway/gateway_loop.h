@@ -1,3 +1,4 @@
+/* 模块 gateway_loop：初始化共享资源、启动工作线程、接收 WiFi 连接并按依赖顺序回收。 */
 #ifndef GATEWAY_LOOP_H
 #define GATEWAY_LOOP_H
 

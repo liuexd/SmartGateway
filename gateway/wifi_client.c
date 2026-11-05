@@ -1,3 +1,4 @@
+/* 模块 wifi_client：每个 WiFi worker 独占客户端 socket；group 跟踪 detached 线程。 */
 #include "wifi_client.h"
 #include "gateway_app.h"
 #include "line_parser.h"
@@ -174,7 +175,7 @@ static int wifi_client_send_all(
 
 static int wifi_client_try_send_command(
     device_manager_t *device_manager,
-    gateway_app_upstream_context_t *app_context,
+    gateway_app_upstream_context_t *upstream_context,
     int client_fd
 )
 {
@@ -186,7 +187,7 @@ static int wifi_client_try_send_command(
     int json_length;
 
     if(device_manager == NULL ||
-        app_context == NULL ||
+        upstream_context == NULL ||
         client_fd < 0)
     {
         return -1;
@@ -200,14 +201,14 @@ static int wifi_client_try_send_command(
      *注意是 bound_node_id[0]，不是 bound_node_id：
      *数组名不能和字符比较。
      */
-    if(app_context->bound_node_id[0] == '\0')
+    if(upstream_context->bound_node_id[0] == '\0')
     {
         return 0;
     }
 
     result = device_manager_try_dequeue_command(
         device_manager,
-        app_context->bound_node_id,
+        upstream_context->bound_node_id,
         client_fd,
         pthread_self(),
         &command
@@ -233,7 +234,7 @@ static int wifi_client_try_send_command(
     {
         fprintf(stderr,
             "[WIFI CMD] connection ownership conflict, node=%s fd=%d\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             client_fd
         );
 
@@ -244,7 +245,7 @@ static int wifi_client_try_send_command(
     {
         fprintf(stderr,
             "[WIFI CMD] dequeue failed, node=%s result=%d\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             result
         );
 
@@ -262,13 +263,13 @@ static int wifi_client_try_send_command(
         fprintf(
             stderr,
             "[WIFI CMD] JSON build failed, node=%s seq=%06u\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             (unsigned int)command.sequence
         );
 
         gateway_app_enqueue_nack(
-            app_context->upstream_queue,
-            app_context->bound_node_id,
+            upstream_context->upstream_queue,
+            upstream_context->bound_node_id,
             command.sequence,
             "cmd_encode_failed"
         );
@@ -281,14 +282,14 @@ static int wifi_client_try_send_command(
         fprintf(
             stderr,
             "[WIFI CMD] send failed, node=%s fd=%d: %s\n",
-            app_context->bound_node_id,
+            upstream_context->bound_node_id,
             client_fd,
             strerror(errno)
         );
 
         gateway_app_enqueue_nack(
-            app_context->upstream_queue,
-            app_context->bound_node_id,
+            upstream_context->upstream_queue,
+            upstream_context->bound_node_id,
             command.sequence,
             "transport_send_failed"
         );
@@ -298,7 +299,7 @@ static int wifi_client_try_send_command(
 
     printf(
         "[WIFI CMD] sent node=%s seq=%06u bytes=%d\n",
-        app_context->bound_node_id,
+        upstream_context->bound_node_id,
         (unsigned int)command.sequence,
         json_length
     );
@@ -315,12 +316,12 @@ void *wifi_client_worker(void *arg)
     const volatile int *running;
     wifi_worker_group_t  *worker_group;
     message_queue_t *upstream_queue;
-    gateway_app_upstream_context_t app_context;
+    gateway_app_upstream_context_t upstream_context;
     device_manager_t *device_manager;
 
-    uint8_t  read_buffer[WIFI_CLIENT_READ_BUFFER_SIZE];
-    char wifi_buffer[WIFI_CLIENT_BUFFER_SIZE];
-    size_t wifi_length = 0;
+    uint8_t  read_chunk[WIFI_CLIENT_READ_BUFFER_SIZE];
+    char rx_buffer[WIFI_CLIENT_BUFFER_SIZE];
+    size_t rx_length = 0;
 
     if(arg == NULL)
     {
@@ -346,12 +347,12 @@ void *wifi_client_worker(void *arg)
 
     free(client);
 
-    app_context.gateway_context = gateway_context;
-    app_context.upstream_queue = upstream_queue;
-    app_context.device_manager = device_manager;
-    app_context.transport = DEVICE_TRANSPORT_WIFI;
-    app_context.device_fd = client_fd;
-    app_context.bound_node_id[0] = '\0';
+    upstream_context.gateway_context = gateway_context;
+    upstream_context.upstream_queue = upstream_queue;
+    upstream_context.device_manager = device_manager;
+    upstream_context.transport = DEVICE_TRANSPORT_WIFI;
+    upstream_context.device_fd = client_fd;
+    upstream_context.bound_node_id[0] = '\0';
 
     /*
      * 必须是非阻塞的：
@@ -398,7 +399,7 @@ void *wifi_client_worker(void *arg)
 
             command_result = wifi_client_try_send_command(
                 device_manager,
-                &app_context,
+                &upstream_context,
                 client_fd
             );
             if(command_result < 0)
@@ -441,8 +442,8 @@ void *wifi_client_worker(void *arg)
 
             received = recv(
                 client_fd,
-                read_buffer,
-                sizeof(read_buffer),
+                read_chunk,
+                sizeof(read_chunk),
                 0
             );
 
@@ -452,35 +453,36 @@ void *wifi_client_worker(void *arg)
 
                 received_size = (size_t) received;
 
-                if(wifi_length + received_size > sizeof(wifi_buffer))
+                if(rx_length + received_size > sizeof(rx_buffer))
                 {
                     fprintf(stderr,
                     "[WIFI WORKER] receive buffer overflow, fd = %d\n",client_fd);
 
 
-                wifi_length = 0;
+                rx_length = 0;
                 continue;
                 }
 
                 memcpy(
-                    wifi_buffer + wifi_length,
-                    read_buffer,
+                    rx_buffer + rx_length,
+                    read_chunk,
                     received_size
                 );
 
-                wifi_length += received_size;
+                rx_length += received_size;
 
                 /*
                 *TCP没有消息边界
                 *继续复用现有的JSON Lines解析器
                 */
 
+                /* 每个连接维护自己的缓冲区，解析器保留拆分的不完整行。 */
                 line_parser_feed(
-                    wifi_buffer,
-                    &wifi_length,
-                    sizeof(wifi_buffer),
+                    rx_buffer,
+                    &rx_length,
+                    sizeof(rx_buffer),
                     gateway_app_on_wifi_line,
-                    &app_context
+                    &upstream_context
                 );
 
                 continue;
@@ -532,7 +534,7 @@ void *wifi_client_worker(void *arg)
     * 如果这个连接已经成功识别出node，
     * 通知Device Manager连接已经退出。
     */
-    if (app_context.bound_node_id[0] != '\0')
+    if (upstream_context.bound_node_id[0] != '\0')
     {
         frame_command_t pending_commands[
             DEVICE_COMMAND_QUEUE_CAPACITY
@@ -550,7 +552,7 @@ void *wifi_client_worker(void *arg)
         disconnect_result =
             device_manager_disconnect_collect_commands(
                 device_manager,
-                app_context.bound_node_id,
+                upstream_context.bound_node_id,
                 client_fd,
                 pthread_self(),
                 pending_commands,
@@ -567,7 +569,7 @@ void *wifi_client_worker(void *arg)
                 i++)
             {
                 gateway_app_enqueue_nack(
-                    app_context.upstream_queue,
+                    upstream_context.upstream_queue,
                     pending_commands[i].target_node,
                     pending_commands[i].sequence,
                     "transport_disconnected"
@@ -581,7 +583,7 @@ void *wifi_client_worker(void *arg)
                     "[WIFI CMD] failed %zu pending command(s), "
                     "node=%s\n",
                     pending_count,
-                    app_context.bound_node_id
+                    upstream_context.bound_node_id
                 );
             }
         }
@@ -591,7 +593,7 @@ void *wifi_client_worker(void *arg)
         {
             printf(
                 "[WIFI] stale disconnect ignored, node=%s fd=%d\n",
-                app_context.bound_node_id,
+                upstream_context.bound_node_id,
                 client_fd
             );
         }
@@ -611,6 +613,7 @@ void *wifi_client_worker(void *arg)
      return NULL;
 }
 
+/* Group 计数 detached worker，wait 在共享资源销毁前等待计数归零。 */
 int wifi_worker_group_init(wifi_worker_group_t *group)
 {
     if(group == NULL)

@@ -1,3 +1,4 @@
+/* 模块 wifi_client：每个 WiFi worker 独占客户端 socket；group 跟踪 detached 线程。 */
 #ifndef WIFI_CLIENT_H
 #define WIFI_CLIENT_H
 
