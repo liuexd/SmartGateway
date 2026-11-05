@@ -130,3 +130,20 @@ Known limitations:
 - README 只描述目前已在仓库中实现的能力及经过验证的结果。
 - 发布正式 Tag（如首次完整 M7 版本）前，确认最终验收清单已通过；不要用 Tag 暗示未完成的硬件测试已经完成。
 - **不要改写既有 M5 / M7-1～M7-7 提交历史**。已有短 Commit 标题可以通过 CHANGELOG 补充背景和具体工作。
+
+## 8. Gateway 可读性约定
+
+`gateway/` 的 C 文件使用该目录下的 `.clang-format`。安装 clang-format 后，
+对改动文件执行 `clang-format -i gateway/<file>.c`；格式化应与业务变更分开
+审查，不要将这一规则自动应用到 BSP、Server 或其他模块。
+
+- 命名使用小写下划线：公开函数带模块前缀，局部变量说明资源和用途，
+  例如 `client_context`、`rx_buffer` 和 `has_pending_message`。保留稳定的
+  公共接口名称；重命名前检查所有调用者。
+- 文件注释说明职责和资源所有权；公共接口说明参数、返回值、阻塞与
+  生命周期；复杂分支重点解释并发、失败处理和设计原因。
+- 使用 `/* ... */` 风格，注释紧邻所描述的对象；修改代码时同步更新，
+  避免过时的里程碑说明、重复赋值说明和未经验证的行为保证。
+- 上下文、socket 和同步对象的创建、使用、关闭和销毁顺序参见
+  [gateway/README.md](gateway/README.md)。可重复的模拟联调使用
+  `make test-gateway-smoke`，真实硬件验收仍需单独进行。

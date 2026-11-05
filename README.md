@@ -169,6 +169,7 @@ help
 make test            # 10 个独立单元测试程序
 make test-tcp        # 需要 nc 等依赖的 TCP 集成测试
 make tests-bin       # 构建单测、集成测试及手动联调工具
+make test-gateway-smoke  # 需要 socat，端口 7000 空闲；模拟网关完整链路
 make test-asan       # AddressSanitizer + UBSan
 make test-tsan       # ThreadSanitizer
 ~~~

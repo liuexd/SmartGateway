@@ -53,3 +53,13 @@ updated source passed the build, `make test`, `make tests-bin`, `make test-tcp`,
 and the simulated end-to-end checks listed above. The code was also compared
 as C tokens against `37523d5`: apart from the corrected log string, executable
 and declaration tokens match. Physical board validation is still outstanding.
+
+## Gateway style and reusable smoke test
+
+Gateway C sources and headers were formatted using `gateway/.clang-format`;
+core ownership and message-flow comments were reviewed and selected internal
+names clarified. An executable-token comparison against `79699a6` found only
+the documented internal identifier renames. In the Ubuntu VM, the build,
+`make test`, `make tests-bin`, `make test-tcp`, and the new
+`make test-gateway-smoke` passed. The smoke test also rejected an occupied WiFi
+port as expected. It uses simulated peers and is not physical board validation.

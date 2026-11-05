@@ -429,3 +429,8 @@ test-asan: $(ASAN_TEST_BINS)
 # 依次跑两种 sanitizer
 test-sanitizers: test-tsan test-asan
 	@echo "Sanitizer 检查全部通过"
+
+# Linux-only simulated end-to-end gateway validation. The gateway binds port 7000.
+.PHONY: test-gateway-smoke
+test-gateway-smoke: gateway mock_node
+	python3 tests/test_gateway_smoke.py
