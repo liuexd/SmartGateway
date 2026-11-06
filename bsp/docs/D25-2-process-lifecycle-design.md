@@ -3,20 +3,20 @@
 > 项目：SmartGateway-BSP / 100ASK i.MX6ULL
 > 分支：`feature/bsp-imx6ull`
 > 文档性质：**设计文档（DESIGN）**，不是验收报告
-> 状态：**未实现、未实测**。本文件所有结论都是设计判断，不是运行证据。
+> 状态：**方案设计与原型验证完成；主体未实现**。
 > 前置：[D25-1](D25-1-arm-build-deployment-validation.md)、[D25-1B](D25-1B-board-environment-recheck.md)
 
 ## 0. 为什么先写设计而不写代码
 
-D25-1B 确认板端仍不可达，四项验收全部 BLOCKED。但进程生命周期管理的设计
+本文档初稿写于 D25-1B 板端仍不可达之时。当时进程生命周期管理的设计
 **不依赖板端即可完成**，因为它的约束来自代码与系统语义，而非硬件行为。
 
-有一条硬约束必须先说明：**本方案的多个关键参数（`/opt` 是否持久、
-Gateway 由谁启动、Buildroot 用哪套 init）目前都未经板端验证**。
-因此设计必须做到"参数可配置、缺省安全"，而不是把假设写死。
+**D25-1B 已恢复板端连接并完成实测**，因此原本待确认的关键参数
+（`/opt` 是否持久、Gateway 由谁启动、用哪套 init）现已全部有了答案，
+见第 2.1 节。这些答案**没有推翻原设计**，只填实了原先预留的分支。
 
-**本文件不解决 D25-1B 的阻塞**。二者并行推进：板端恢复是人工任务，
-设计是软件任务。
+有一条硬约束始终成立：**设计必须做到"参数可配置、缺省安全"**，
+不能把未经证实的假设写死。
 
 ---
 
@@ -74,7 +74,9 @@ D23 的实验里 Gateway 是 OTA Agent 自己 fork 的（`Gateway started: pid=4
 
 ## 2. 必须先回答的四个未知
 
-以下问题**必须在板端确认**才能定稿。设计对每个问题都提供两条路径。
+> **2026-11-06 更新**：板端已恢复，四项未知中的三项已由
+> [D25-1B](D25-1B-board-environment-recheck.md) 实测回答。
+> 下表保留原始设计意图，实测结果见 2.1。
 
 | # | 未知项 | 影响 | 若为 A | 若为 B |
 | --- | --- | --- | --- | --- |
@@ -86,6 +88,65 @@ D23 的实验里 Gateway 是 OTA Agent 自己 fork 的（`Gateway started: pid=4
 **在设计上如何应对**：引入一个**薄抽象层** `ota_supervisor_ops`，
 把"启动/停止/查询状态"三个动作抽象出来，针对 U2/U3 提供两种实现。
 这样无论板端是哪种，都不需要改 OTA 主体逻辑。
+
+### 2.1 板端实测结论（D25-1B）
+
+| # | 未知项 | **实测答案** | 证据 |
+| --- | --- | --- | --- |
+| **U1** | `/opt` 是否持久 | **是** | 真实重启后内容/md5/inode 全一致 |
+| **U2** | Gateway 由谁启动 | **当前无人启动**，无 init 脚本 | `ps` 无 smart_gateway；`/etc/init.d` 无匹配 |
+| **U3** | init 系统 | **BusyBox init** | PID 1 = `init`；无 `systemctl` |
+| **U4** | `start-stop-daemon` | **未确认** | 本轮未执行该检查 |
+
+板端关键事实：
+
+```text
+$ ps | head -2
+PID   USER     COMMAND
+    1 root     init            ← BusyBox init，非 systemd
+
+$ command -v systemctl
+（不存在）
+
+$ ls /etc/init.d/S*
+S01syslogd S02klogd S02sysctl S09modload S10udev S20urandom
+S30dbus S40network S44modem-manager S49ntp S50mosquitto
+S50pulseaudio S50sshd S50telnet S80dnsmasq S98swupdate
+S98wired S99adbd S99myirhmi2 S99wificonnect
+
+$ cat /etc/network/interfaces
+auto eth0
+iface eth0 inet static
+    address 192.168.10.3
+    netmask 255.255.255.0
+```
+
+### 2.2 由此确定的设计分支
+
+**U2 + U3 确定走"外部实现"分支**，但有一个前提缺口：
+板端**目前根本没有 Gateway 的 init 脚本**。因此 S5 的第一步不是
+"集成到已有 init"，而是**先创建一个**。
+
+修正后的 S5 步骤：
+
+1. 新建 `/etc/init.d/S99smartgateway`（BusyBox 约定：`start|stop|restart`）。
+2. 启动时写 pidfile 到 `/opt/<install>/run/gateway.pid`。
+3. OTA Agent 通过 pidfile + `/proc` 二元组校验来管理。
+4. 停止时**只发 SIGTERM**，由 init 脚本负责 `wait` 与回收。
+
+**第 4 点很重要**：不能让 OTA Agent 去 `waitpid` 一个不是它
+fork 出来的进程——那会失败（见 1.2）。职责必须分开：
+OTA 发信号，init 回收。
+
+**U1 已确认为"是"**，意味着不需要 overlay 或换挂载点，
+S7（重启持久性验证）的技术前提已满足。
+
+**U4 未确认**，因此实现前需先执行：
+
+```sh
+command -v start-stop-daemon
+busybox --list | grep start-stop-daemon
+```
 
 ---
 
@@ -459,17 +520,28 @@ F7 就会失败并可能杀死无关进程。必须在测试中构造这个用�
 | S2 | 自管实现的 supervisor（复用 `ota_process`） | S1 | ✅ 可以 |
 | S3 | 升级流程插入 0a–0c 步骤 | S2 | ✅ 可以（x86 可测） |
 | S4 | 故障注入 F1–F8、F10（x86） | S3 | ✅ 可以 |
-| S5 | 外部实现的 supervisor（init 集成） | **U2/U3 板端确认** | ❌ BLOCKED |
-| S6 | 板端全量 F1–F10 | **板端可达** | ❌ BLOCKED |
-| S7 | 重启持久性（F9） | **U1 板端确认** | ❌ BLOCKED |
+| S5 | 外部实现的 supervisor（init 集成） | **U4 确认** | ⚠️ U2/U3 已答，仅缺 U4 |
+| S6 | 板端全量 F1–F10 | **板端可达** | ✅ **前置已满足** |
+| S7 | 重启持久性（F9） | **U1 确认** | ✅ **U1 已确认持久** |
 
 **S1a 已完成**：`bsp/tools/d25-2-pidsig.c` 在 x86 与 ARM（qemu）上
 各跑 9 项自测全部通过，并实证了两个解析陷阱（见 4.2.1 / 4.2.2）。
 这意味着 S1 的最大技术不确定性已被消除——pid 校验算法**不需要再摸索**，
 直接移植原型即可。
 
+**D25-1B 带来的状态变化**：
+
+| 阶段 | D25-1B 之前 | 现在 |
+| --- | --- | --- |
+| S5 | ❌ 完全 BLOCKED（U2/U3 未知） | ⚠️ 仅缺 U4（`start-stop-daemon`） |
+| S6 | ❌ 板端不可达 | ✅ 板端已恢复，SSH/串口可用 |
+| S7 | ❌ U1 未知 | ✅ U1 已确认 `/opt` 持久 |
+
+**S5 的新增前置工作**：板端**没有** Gateway 的 init 脚本，
+所以 S5 第一步是"创建脚本"，而不是"改造现有脚本"。
+
 **尚未完成的部分**：pidfile 的文件 IO（原子写、权限、fsync）、
-以及 supervisor 接口与现有 `ota_upgrade_run.c` 的集成。这些是 S1/S2 的工作。
+supervisor 接口与 `ota_upgrade_run.c` 的集成。这些是 S1/S2 的工作。
 
 **关键判断**：S1–S4 **不依赖板端**，可以立即推进，且在 x86 上能验证
 逻辑正确性（除真实信号/文件系统行为差异外）。S5–S7 必须等板端。
@@ -482,8 +554,10 @@ F7 就会失败并可能杀死无关进程。必须在测试中构造这个用�
    再决定 S5 的实现方式。
 4. 最后做 S6–S7。
 
-**不建议**的顺序：先做 S5 外部 supervisor。因为 U2/U3 未知时，
-大概率要做错，返工成本高于等待。
+**不建议**的顺序：先做 S5 外部 supervisor 而不先确认 U4。
+U2/U3 虽已由 D25-1B 回答（BusyBox init、无人启动），
+但 `start-stop-daemon` 是否存在仍是未知——若不存在，
+S5 需要自己实现 pidfile 与进程回收，工作量与设计都不同。
 
 ### 8.3 S1 的最小验证（不需要板端）
 
@@ -530,7 +604,7 @@ F7 就会失败并可能杀死无关进程。必须在测试中构造这个用�
 
 | # | 风险 | 等级 | 缓解 |
 | --- | --- | --- | --- |
-| R1 | U1–U4 未知导致 S5 设计返工 | **高** | 先做 S1–S4；S5 等板端确认 |
+| R1 | U4（`start-stop-daemon`）未知导致 S5 返工 | 中 | 先做 S1–S4（不依赖 U4）；S5 前先执行 `command -v start-stop-daemon` |
 | R2 | 改 `ota_upgrade_run.c` 破坏 D23 已验证流程 | **高** | 改动后必须重跑 D23 全用例 |
 | R3 | `/proc/<pid>/stat` 的 starttime 在板端不可用 | 中 | 实现时第一项验证；不可用则退回"仅 pid + 命令行校验" |
 | R4 | 升级中途掉电导致状态不自洽 | 中 | F9 覆盖；依赖 `current` 软链的原子性 |

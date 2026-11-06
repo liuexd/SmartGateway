@@ -42,7 +42,7 @@
 - [D23-6-8 北向故障回滚验收](docs/D23-6-8-northbound-fault-rollback.md)
 - [D24 TCP 连接超时与关停分析](docs/D24-tcp-connect-timeout-and-shutdown.md)
 - [D25-1 ARM 交叉编译与部署验收](docs/D25-1-arm-build-deployment-validation.md)
-- [D25-1B 板端环境复测](docs/D25-1B-board-environment-recheck.md)
+- [D25-1B 板端实测补验收（串口/SSH、真实运行、持久化）](docs/D25-1B-board-environment-recheck.md)
 - [D25-2 Gateway 进程生命周期管理设计](docs/D25-2-process-lifecycle-design.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
