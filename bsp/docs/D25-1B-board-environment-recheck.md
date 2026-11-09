@@ -10,7 +10,7 @@
 
 | # | 验收目标 | 结果 | 依据 |
 | --- | --- | --- | --- |
-| 1 | 恢复网络 / ADB / 串口连接并记录访问方式 | **PASS** | 第 2 节：串口 + SSH 双通道实测可用 |
+| 1 | 恢复网络 / ADB / 串口连接并记录访问方式 | **PASS** | 第 2 节：ADB + SSH + 串口**三通道全部实测可用** |
 | 2 | 板端验证 ARM Gateway、OTA Agent 及动态库依赖 | **PASS** | 第 4 节：真实执行 + SHA-256 校验 |
 | 3 | 核查正式 Gateway 启动方式、进程、资源、隔离条件 | **部分 PASS** | 第 5 节：启动方式/进程/隔离 PASS；**资源占用未采集** |
 | 4 | 确认 OTA 安装目录可写性 + 跨重启持久性 | **PASS** | 第 6 节：真实重启，内容/md5/inode 全一致 |
@@ -91,11 +91,40 @@ $ ssh root@192.168.10.3
 板端 `/etc/network/interfaces` 中 `eth0` 为静态配置，与 D01 记录一致。
 网络此前不通的原因是**网线物理连接**，不是软件配置。
 
-### 2.3 ADB（未作为通道使用）
+### 2.3 ADB（2026-11-09 恢复为 device 状态）
 
-`adb devices` 仍显示 offline。SSH 与串口均可用，本轮未继续排查。
-前几轮 `ADB_TRACE` 观察到的现象是：主机发出 `CNXN` 后设备 5 秒无应答。
-该问题不影响本轮任何验收项。
+D25-1B 主体测试（11-06）时 adb 仍为 `offline`，因此当时以 SSH/串口为主通道。
+11-09 复查时 adb **已自行恢复**：
+
+```text
+$ adb devices -l
+100ask_IMX6ULL  device usb:3-4.1 product:occam model:Nexus_4 \
+                device:mako transport_id:360
+
+$ adb shell "id; uname -a"
+uid=0(root) gid=0(root) groups=0(root)
+Linux 100ask 4.9.88 #1 SMP PREEMPT ... armv7l GNU/Linux
+```
+
+实测能力：
+
+| 能力 | 结果 | 证据 |
+| --- | --- | --- |
+| shell（root） | ✅ | `id` 返回 uid=0 |
+| 板端文件读写 | ✅ | 写 `/tmp/adbtest.txt` 后读回一致 |
+| `adb push` 传输 | ✅ | 342.8 MB/s |
+| 传输完整性 | ✅ | SHA-256 `1beb5d2f...303` 与宿主机一致 |
+| 推到板端后执行 | ✅ | `/tmp/adb-push-test --version` → `smart_gateway d25-1-arm` |
+
+**此时三种通道同时可用**：ADB `device`、SSH 免密、串口 `/dev/ttyACM0`。
+
+**关于之前 offline 的原因**：未最终确认。前几轮 `ADB_TRACE` 显示主机发出
+`CNXN` 后设备 5 秒无应答。现在自行恢复正常，推测与板端 usb 配置服务
+（`S99adbd`）或 USB 重新枚举有关，但**没有证据支持具体结论**，不做断言。
+
+**对本项目的意义**：ADB 可作为**第三条独立通道**用于部署与调试。
+尤其当网络与串口同时故障时，adb 是仅存的恢复手段。
+但 **OTA 自身的运行不依赖 adb**，它只是开发调试通道。
 
 ## 3. 目标板环境核验（实测）
 
@@ -461,7 +490,7 @@ test_crc16 ... test_tcp_send_timeout   全部 PASS
 | --- | --- | --- | --- |
 | R1 | **Gateway 运行时资源占用未采集** | **未验证** | 第 3 项验收子项缺口；需 `top` 或 `/proc/<pid>` 采样 |
 | R2 | `start-stop-daemon` 是否存在 | **未确认** | 影响 D25-2 的 S5 实现方式 |
-| R3 | ADB 仍 offline | 未解决 | 不影响验收；SSH/串口已可替代 |
+| R3 | ADB 状态曾长时间 offline | **已恢复** | 11-09 复查为 `device`，shell/push 均可用；根因未确认 |
 | R4 | Gateway 无 init 脚本 | 待建 | D25-2 的 S5 需要新建 `/etc/init.d/S*` |
 | R5 | 端口 7000 固定 | 已知限制 | 第二实例因冲突退出，见 D25-1 R3 |
 | R6 | `manifest` 尾部多余字节被接受 | 已知限制 | 既有行为，x86/ARM 一致 |
@@ -507,31 +536,40 @@ S1–S4（supervisor 接口、自管实现、升级流程插入 0a–0c、故障
 
 ## 10. 复现命令
 
-```sh
-# 串口（备用通道）
-stty -F /dev/ttyACM0 115200 raw -echo
-screen /dev/ttyACM0 115200
+三条通道任选其一即可，互为备份。
 
-# 网络
+```sh
+# ---- 通道 A：ADB（USB，最快，无需网络）----
+adb devices -l                       # 期望出现 100ask_IMX6ULL  device
+adb shell "uname -a"
+adb push build/arm-d25/smart_gateway /tmp/d25-1/
+
+# ---- 通道 B：SSH（网络）----
 ping 192.168.10.3
 ssh root@192.168.10.3
-
-# 部署
 scp build/arm-d25/{smart_gateway,ota_agent,ota_verify} \
     root@192.168.10.3:/tmp/d25-1/
 
-# 板端验证
-ssh root@192.168.10.3 '
-  /tmp/d25-1/smart_gateway --version
-  /tmp/d25-1/ota_agent verify /tmp/d25-1/pkg
-  timeout 6 /tmp/d25-1/smart_gateway --no-serial \
-      --server 127.0.0.1 --port 19000
-'
+# ---- 通道 C：串口（备用，网络与 USB 都故障时的最后手段）----
+stty -F /dev/ttyACM0 115200 raw -echo
+screen /dev/ttyACM0 115200
+# 提示：打开后必须先发一次回车，否则看不到 login 提示符
 
-# 持久化验证
-ssh root@192.168.10.3 'echo t > /opt/persist-test; sync; reboot'
+# ---- 板端验证（任选通道执行）----
+/tmp/d25-1/smart_gateway --version
+/tmp/d25-1/ota_agent verify /tmp/d25-1/pkg
+timeout 6 /tmp/d25-1/smart_gateway --no-serial \
+    --server 127.0.0.1 --port 19000
+
+# ---- 持久化验证 ----
+echo t > /opt/persist-test; sync; reboot
 # 等待重启后
-ssh root@192.168.10.3 'cat /opt/persist-test'
+cat /opt/persist-test
+
+# ---- adb 传输完整性校验 ----
+sha256sum build/arm-d25/smart_gateway
+adb shell "sha256sum /tmp/d25-1/smart_gateway"
+# 两者应完全一致
 ```
 
 ## 11. 本轮清理与最终状态
