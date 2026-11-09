@@ -77,6 +77,7 @@ OTA_SRCS := \
 	ota_upgrade.c \
 	ota_process.c \
 	ota_health.c \
+	ota_supervisor.c \
 	ota_upgrade_run.c
 
 
@@ -94,6 +95,7 @@ OTA_HEADERS := \
 	ota_upgrade.h \
 	ota_process.h \
 	ota_health.h \
+	ota_supervisor.h \
 	ota_upgrade_run.h \
 	ota_json_compat.h
 
@@ -214,6 +216,36 @@ arm-info:
 	@echo "ARM_CFLAGS     = $(ARM_CFLAGS)"
 	@echo "ARM_PKG_CFLAGS = $(ARM_PKG_CFLAGS)"
 	@echo "ARM_PKG_LIBS   = $(ARM_PKG_LIBS)"
+
+
+# ============================================================
+# 5. D25-2 S1：Supervisor 单元测试
+#
+# 只测 ota_supervisor.c，不链接其他 OTA 模块，
+# 因此不会触及 D23 已验证的升级逻辑。
+# ============================================================
+
+.PHONY: test-supervisor test-supervisor-arm
+
+SUP_TEST_BIN  := $(ARM_BUILD_DIR)/ota_supervisor_test
+HOST_SUP_BIN  := /tmp/ota_supervisor_test_host
+
+# 宿主机版本
+test-supervisor:
+	$(CC) $(CFLAGS) \
+		ota_supervisor.c ota_supervisor_test.c \
+		-o $(HOST_SUP_BIN)
+	@$(HOST_SUP_BIN)
+
+# ARM 版本（需要板端执行，此处只构建）
+test-supervisor-arm:
+	@mkdir -p $(ARM_BUILD_DIR)
+	$(ARM_CC) $(ARM_CFLAGS) \
+		-DOTA_TARGET_ARM_V7 \
+		ota_supervisor.c ota_supervisor_test.c \
+		-o $(SUP_TEST_BIN)
+	@echo "已构建: $(SUP_TEST_BIN)"
+	@echo "部署到板端后执行：adb push $(SUP_TEST_BIN) /tmp/ && adb shell '/tmp/ota_supervisor_test'"
 
 
 # ============================================================

@@ -18,6 +18,29 @@
 有一条硬约束始终成立：**设计必须做到"参数可配置、缺省安全"**，
 不能把未经证实的假设写死。
 
+### 0.1 一个必须说清的边界：x86 OTA 验证 ≠ 板端 OTA 验证
+
+x86 上的 OTA 流程（D23-6-8）已经过**真实的北向 TCP 故障注入**，
+验证了「L1 通过但 L2 业务失败 → 自动回滚 → 旧版恢复业务」这条路径。
+但那是**宿主机 x86 环境**，且用的是手工构造的 install 目录。
+
+**板端至今没有执行过完整升级流程。** D25-1B 在板端做的是：
+
+| 板端已做 | 板端未做 |
+| --- | --- |
+| 部署二进制并执行 `--version` | 完整 `stage → activate → health → confirm` |
+| `verify` 校验包（含 4 个负向用例） | 真实版本切换（`current` 软链原子切换） |
+| 隔离启动 Gateway（19000 端口） | 升级过程中的优雅停止 / 重启旧版 |
+| 确认 `/opt` 跨重启持久 | 健康检查失败后的板端回滚 |
+| 确认无 init 脚本、BusyBox init | 重启后状态机自洽性验证 |
+
+因此**不能**说"OTA 已在板端验证"。正确的表述是：
+**x86 已验证，板端未验证**，这项工作排在 D25-2 完成之后。
+
+写成这个顺序的理由：没有 supervisor 与 pidfile，
+板端做完整升级会遇到"旧版停不下来"或"停下来了但无法确认"的问题，
+测试结果会失真。先把进程所有权做扎实，再上板端跑全流程。
+
 ---
 
 ## 1. 现状：已有能力与关键缺口
@@ -157,10 +180,72 @@ busybox --list | grep start-stop-daemon
 | # | 目标 | 验收方式 |
 | --- | --- | --- |
 | G1 | OTA 能可靠判断"Gateway 是否在运行"，且**不会误杀无关进程** | 单元测试 + 故障注入 |
-| G2 | 升级时能安全地在"旧版退场"与"新版上场"之间切换 | 集成测试 |
+| G2 | 升级时能安全地在"旧版退场"与"新版上场"之间交替 | 集成测试 |
 | G3 | 任何失败路径都回到**可用状态**（旧版在跑，或明确报告停止） | 故障注入矩阵 |
-| G4 | 崩溃后能被拉起，且拉起失败能回滚 | 故障注入 |
+| G4a | **开机时**能启动 Gateway | 重启测试 |
+| G4b | **运行期间崩溃**后能被自动拉起，且连续失败能回滚 | 故障注入 |
 | G5 | 全程不破坏"当前可用版本" | 重启测试 |
+
+### 3.1.1 G4a 与 G4b 是两件不同的事（重要修正）
+
+初版把 G4 写成"崩溃后能被拉起"，表述过于笼统，容易让人以为
+"写一个 `S99smartgateway` 启动脚本"就等于实现了崩溃恢复。
+**这两件事没有关系**，必须分开设计与验收。
+
+| | G4a：开机启动 | G4b：崩溃自愈 |
+| --- | --- | --- |
+| 触发时机 | 系统启动，`rcS` 遍历 `/etc/init.d/S*` 执行一次 | 进程**运行中**意外退出 |
+| 实现机制 | init 脚本调用一次启动命令 | **需要持续监控**，没有任何脚本会自动做这件事 |
+| 失败后果 | 开机后服务不存在 | 服务消失且无人知晓，直到下次重启 |
+| 验收方法 | 重启一次，检查进程在不在 | 主动 `kill -9`，检查进程是否被重新拉起 |
+
+**BusyBox init 的能力边界（已在板端核实）**：
+
+板端 `/etc/inittab` 实际内容（节选）：
+
+```text
+::sysinit:/etc/init.d/rcS
+
+# Put a getty on the serial port
+ttymxc0::respawn:/sbin/getty -L  ttymxc0 0 vt100 # GENERIC_SERIAL
+
+::shutdown:/etc/init.d/rcK
+::shutdown:/sbin/swapoff -a
+::shutdown:/bin/umount -a -r
+```
+
+可见 **`respawn` 动作确实可用**——getty 就是用它拉起的。
+但 Gateway **没有被注册**到 inittab 中，目前完全无人管理。
+
+若要使用 `respawn`，需要：
+
+1. 修改 `/etc/inittab`，添加类似
+   `::respawn:/opt/sgw/current/smart_gateway --no-serial ...`
+2. 理解 `respawn` 的语义：init 在**子进程退出时**重启它，
+   且**没有退避**——若程序立刻崩溃，会形成高频重启循环，
+   可能刷爆日志并拖慢系统。
+3. 注意 `respawn` 会**改变进程所有权**：Gateway 成为 init 的直接子进程，
+   OTA 再也不能用 `waitpid` 管理它，必须走 pidfile + 信号。
+
+**因此 G4b 的三条候选路径**（S5 阶段需选一，本轮不下结论）：
+
+| 方案 | 机制 | 优点 | 缺点 |
+| --- | --- | --- | --- |
+| A | `/etc/inittab` 的 `respawn` | 零额外进程；内核级可靠 | 无退避，可能重启风暴；改 inittab 属系统级改动 |
+| B | 独立监控进程（watchdog daemon） | 可控退避、可计数、失败多次后触发 **OTA 回滚** | 多一个常驻进程与故障点 |
+| C | 由 OTA Agent 常驻承担 | 与回滚逻辑天然一体 | 当前 OTA 是一次性 CLI，需改造其生命周期 |
+
+**本项目的倾向（待 S5 决策）**：方案 B。理由：
+
+- 只有独立监控进程才能实现"**连续崩溃 N 次 → 判定候选版本不可用 → 触发回滚**"，
+  而这正是 G3 与 G4b 的交叉点。`respawn` 只会无限重启，无法回滚。
+- 方案 A 的"重启风暴"在健康检查失败时会非常危险：新版有 bug 时，
+  respawn 会把系统拖入高频 fork/exec，而 OTA 根本来不及介入。
+- 方案 C 需要把 OTA 从一次性 CLI 改成常驻服务，改动面比新增一个
+  小监控进程更大，且会让"升级者"与"被升级对象"耦合过紧。
+
+**明确不做的**：不把 `S99smartgateway` 脚本本身当作 G4b 的实现。
+脚本只解决 G4a。这一点必须写在验收标准里，避免自欺。
 
 ### 3.2 明确不做
 
@@ -169,6 +254,8 @@ busybox --list | grep start-stop-daemon
 - **不做进程级资源限制**（cgroup），超出本阶段。
 - **不修改 Gateway 的端口常量**。若需要并存测试，另立任务。
 - **不实现"零停机切换"**。单实例应用做不到，也不应假装做到。
+- **不在 S1–S4 阶段改 `/etc/inittab`**。G4b 的机制选择属 S5，且涉及
+  系统级配置，必须先经板端确认与人工评审。
 
 ---
 
@@ -515,14 +602,60 @@ F7 就会失败并可能杀死无关进程。必须在测试中构造这个用�
 
 | 阶段 | 内容 | 前置条件 | 可否现在做 |
 | --- | --- | --- | --- |
-| **S1a** | **原型 `d25-2-pidsig.c`：pid+starttime 校验** | 无 | ✅ **已完成**（x86 + ARM 自测全通过） |
-| S1 | `ota_supervisor` 接口 + pidfile 读写（吸收 S1a 成果） | S1a | ✅ 可以 |
+| **S1a** | **原型 `d25-2-pidsig.c`：pid+starttime 校验** | 无 | ✅ **已完成** |
+| **S1** | **`ota_supervisor` 接口 + pidfile 读写** | S1a | ✅ **已完成**（75 项单测 x86 + 板端 PASS） |
 | S2 | 自管实现的 supervisor（复用 `ota_process`） | S1 | ✅ 可以 |
 | S3 | 升级流程插入 0a–0c 步骤 | S2 | ✅ 可以（x86 可测） |
 | S4 | 故障注入 F1–F8、F10（x86） | S3 | ✅ 可以 |
-| S5 | 外部实现的 supervisor（init 集成） | **U4 确认** | ⚠️ U2/U3 已答，仅缺 U4 |
-| S6 | 板端全量 F1–F10 | **板端可达** | ✅ **前置已满足** |
-| S7 | 重启持久性（F9） | **U1 确认** | ✅ **U1 已确认持久** |
+| S5 | 外部实现的 supervisor（init 集成）+ **G4b 机制选型** | **U4 确认** | ⚠️ 仅缺 U4 |
+| S6 | 板端全量 F1–F10 | 板端可达 | ✅ 前置已满足 |
+| S7 | 重启持久性（F9） | U1 确认 | ✅ U1 已确认持久 |
+
+### 8.0 S1 交付内容（已完成）
+
+新增三个文件，**未改动任何 D23 已验证的源文件**：
+
+| 文件 | 内容 |
+| --- | --- |
+| `ota_supervisor.h` | 接口与语义约定 |
+| `ota_supervisor.c` | 身份采集、pidfile 原子读写、状态查询 |
+| `ota_supervisor_test.c` | 13 组共 75 项检查 |
+
+接口清单：
+
+```c
+int  ota_sup_pidfile_path(const char *install_dir, char *out, size_t cap);
+int  ota_sup_read_starttime(pid_t pid, unsigned long long *out);
+int  ota_sup_capture_identity(pid_t pid, ota_sup_identity_t *out);
+int  ota_sup_pidfile_write(const char *install_dir, const ota_sup_identity_t *id);
+int  ota_sup_pidfile_read(const char *install_dir, ota_sup_identity_t *out);
+int  ota_sup_pidfile_remove(const char *install_dir);
+ota_sup_state_t ota_sup_verify_identity(const ota_sup_identity_t *id);
+ota_sup_state_t ota_sup_query(const char *install_dir, pid_t *pid_out);
+const char *ota_sup_state_name(ota_sup_state_t state);
+```
+
+**S1 实现中被测试抓出的真实缺陷**（值得记录）：
+
+pidfile 解析最初用 `sscanf("%ld %llu")`。测试用例
+`"12345 678999999999999999999999\n"` 暴露了问题：
+`%llu` 溢出时 C 标准未定义行为，glibc 实际返回 `ULLONG_MAX`
+且**仍报告解析成功**，于是越界数值被当作合法记录接受。
+已改为 `strtoll`/`strtoull` 并显式检查 `ERANGE`。
+
+**若未发现**，后果是：一个被外部写坏的 pidfile 可能让
+`query()` 返回 RUNNING/STOPPED 的确定结论，而正确行为应是
+UNKNOWN（→ 中止升级）。属于"静默给出错误答案"类缺陷。
+
+**S1 验收结果**：
+
+| 环境 | 检查项 | 失败 | 结果 |
+| --- | --- | --- | --- |
+| 宿主机 x86-64 | 75 | 0 | PASS |
+| **板端 i.MX6ULL（ARM）** | 75 | 0 | **PASS** |
+
+板端通过这一点很重要：它证明 `/proc/<pid>/stat` 的字段布局
+在**目标内核 4.9.88** 上与本实现一致，消除了 D25-1B 曾列出的 R3 风险。
 
 **S1a 已完成**：`bsp/tools/d25-2-pidsig.c` 在 x86 与 ARM（qemu）上
 各跑 9 项自测全部通过，并实证了两个解析陷阱（见 4.2.1 / 4.2.2）。

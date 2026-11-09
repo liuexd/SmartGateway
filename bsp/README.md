@@ -6,7 +6,7 @@
 
 在现有 SmartGateway Linux C / Socket / pthread 应用基础上，学习和实操 i.MX6ULL 的 Device Tree、GPIO/IRQ、I²C、用户态调试和应用级 OTA，并最后通过 UART/RS485 + Modbus RTU 扩展第二类传感器节点。仅把**有实际证据验证**的事项标记为完成。
 
-## 当前进度（截至 D16）
+## 当前进度（截至 D25-2 S1）
 
 - **D01 基线调查：部分完成**。已记录硬件、U-Boot、Linux、Buildroot、eMMC 和 rootfs；原厂资料、完整恢复流程与可恢复性验证仍需完成。
 - **D02 内核模块：核心实机验收通过**。Hello 模块编译、传输、加载/卸载有记录。
@@ -14,12 +14,23 @@
 - **D10–D14 AP3216C 驱动**：I²C 读取、错误统计、故障注入与日志控制有阶段记录。
 - **D15 Sensor Agent**：NODE04 / AP3216C 用户态采集和 Gateway 数据链路有实测记录。
 - **D16 GDB 远程调试**：已验证 ARM 远程调试、线程/寄存器分析、NODE04 队列转发和 Gateway 端 TCP 发送成功分支；同一条消息的 Server 应用层接收确认仍按验收文档补证。
+- **D17–D24 应用级 OTA**：包格式、校验、staging、版本切换、健康确认、失败回滚与故障注入均有 x86 实测记录；北向故障回滚见 D23-6-8。
+- **D25-1 ARM 交叉编译：通过**。Buildroot 2020.02 SDK 工具链（glibc 2.30、OpenSSL 1.1.1g、json-c 4.0.0）产出 ARM EABI5 hard-float ELF；产物与板端库版本逐项一致。
+- **D25-1B 板端实测：四项验收通过**。串口 @115200 / SSH / ADB 三通道可用；ARM Gateway 与 OTA Agent 在板端真实执行，OTA 包校验及 4 个负向用例正确；隔离启动（19000 端口）生命周期完整、无残留；`/opt` 跨重启持久（inode/md5 一致）。
+  - **未验证**：Gateway 运行资源占用曾未采集，已于 D25-2 S1 阶段补齐（见 D25-1B 第 5.5 节）。
+- **D25-2 进程生命周期管理：设计完成，S1 实现完成**。
+  - 设计：[D25-2 方案](docs/D25-2-process-lifecycle-design.md)
+  - S1（Supervisor 接口 + pidfile 身份校验）：已实现并通过 75 项单元测试（x86 与 ARM 板端均 PASS）
+  - S2 及之后（接入升级流程、故障注入、init 集成）：**未开始**
 
 ## 下一阶段顺序（用户确认）
 
-1. **D17–D25：应用级 OTA**——先核查存储与恢复条件，再实现升级包校验、staging、版本切换、健康确认、失败回滚和故障注入。
-2. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成 UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
-3. **D35–D42：综合回归与交付**——稳定性、Perf、GDB 案例、文档和候选版本。
+1. **D25-2 剩余阶段**：S2 自管 supervisor → S3 升级流程接入 → S4 故障注入 → S5 init 集成。
+   - 已确认：板端为 **BusyBox init**，Gateway **当前无人启动且无 init 脚本**，`/opt` 持久。
+   - 未确认：`start-stop-daemon` 是否存在（S5 前必须核实）。
+2. **OTA 完整板端验收**：x86 已完成北向故障注入与回滚验证，但**板端完整升级 / 健康检查 / 回滚流程尚未执行**，须在 D25-2 完成后补做。
+3. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成 UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
+4. **D35–D42：综合回归与交付**——稳定性、Perf、GDB 案例、文档和候选版本。
 
 详细任务、验收标准和安全边界见 [D16 后路线图](docs/ROADMAP.md)。
 
