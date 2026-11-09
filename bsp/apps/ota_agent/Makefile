@@ -225,27 +225,62 @@ arm-info:
 # 因此不会触及 D23 已验证的升级逻辑。
 # ============================================================
 
-.PHONY: test-supervisor test-supervisor-arm
+.PHONY: test-supervisor test-supervisor-s2 test-supervisor-arm
 
 SUP_TEST_BIN  := $(ARM_BUILD_DIR)/ota_supervisor_test
+S2_TEST_BIN   := $(ARM_BUILD_DIR)/ota_supervisor_s2_test
+E2E_BIN       := $(ARM_BUILD_DIR)/ota_supervisor_e2e
 HOST_SUP_BIN  := /tmp/ota_supervisor_test_host
+HOST_S2_BIN   := /tmp/ota_supervisor_s2_test_host
 
-# 宿主机版本
+# S1 宿主机测试
+#
+# ota_supervisor.c 现在包含 S2 的实现，而 S2 调用 ota_process_*，
+# 因此即使是 S1 测试也必须链接 ota_process.c。
+# ota_process.c 在 -Werror 下有既存的 unused-result 告警，
+# 该文件属 D23 已验证代码，本阶段不修改，故单独放宽该告警。
 test-supervisor:
-	$(CC) $(CFLAGS) \
-		ota_supervisor.c ota_supervisor_test.c \
+	$(CC) $(CFLAGS) -Wno-unused-result \
+		ota_supervisor.c ota_process.c \
+		ota_supervisor_test.c \
 		-o $(HOST_SUP_BIN)
 	@$(HOST_SUP_BIN)
+
+# S2 宿主机测试
+test-supervisor-s2:
+	$(CC) $(CFLAGS) -Wno-unused-result \
+		ota_supervisor.c ota_process.c \
+		ota_supervisor_s2_test.c \
+		-o $(HOST_S2_BIN)
+	@$(HOST_S2_BIN)
 
 # ARM 版本（需要板端执行，此处只构建）
 test-supervisor-arm:
 	@mkdir -p $(ARM_BUILD_DIR)
-	$(ARM_CC) $(ARM_CFLAGS) \
+	$(ARM_CC) $(ARM_CFLAGS) -Wno-unused-result \
 		-DOTA_TARGET_ARM_V7 \
-		ota_supervisor.c ota_supervisor_test.c \
+		ota_supervisor.c ota_process.c \
+		ota_supervisor_test.c \
 		-o $(SUP_TEST_BIN)
-	@echo "已构建: $(SUP_TEST_BIN)"
-	@echo "部署到板端后执行：adb push $(SUP_TEST_BIN) /tmp/ && adb shell '/tmp/ota_supervisor_test'"
+	$(ARM_CC) $(ARM_CFLAGS) -Wno-unused-result \
+		-DOTA_TARGET_ARM_V7 \
+		ota_supervisor.c ota_process.c \
+		ota_supervisor_s2_test.c \
+		-o $(S2_TEST_BIN)
+	$(ARM_CC) $(ARM_CFLAGS) -Wno-unused-result \
+		-DOTA_TARGET_ARM_V7 \
+		ota_supervisor.c ota_process.c \
+		ota_supervisor_e2e.c \
+		-o $(E2E_BIN)
+	@echo "已构建:"
+	@echo "  $(SUP_TEST_BIN)"
+	@echo "  $(S2_TEST_BIN)"
+	@echo "  $(E2E_BIN)"
+	@echo ""
+	@echo "板端端到端验证（需要真实 Gateway）："
+	@echo "  adb push $(E2E_BIN) /tmp/e2e-bin"
+	@echo "  adb push build/arm-d25/smart_gateway /tmp/gw"
+	@echo "  adb shell 'mkdir -p /tmp/e2e-inst && /tmp/e2e-bin /tmp/e2e-inst /tmp/gw'"
 
 
 # ============================================================

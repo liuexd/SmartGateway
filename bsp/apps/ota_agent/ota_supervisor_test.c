@@ -595,9 +595,141 @@ static void test_incomplete_identity(void)
           "NULL 身份被拒绝");
 }
 
+static void test_zombie_process(void)
+{
+    printf("\n== 14. 僵尸进程 -> STOPPED（S1-R 关键修正）==\n");
+
+    /*
+     * 僵尸进程的 /proc/<pid>/stat 仍然存在，starttime 仍可读。
+     * 只比对 starttime 的实现会误判为 RUNNING。
+     * 正确行为：state=='Z' 视为已停止。
+     */
+    pid_t child = fork();
+
+    if (child == 0)
+        _exit(0);   /* 立即退出，父进程不 wait -> 僵尸 */
+
+    if (child <= 0) {
+        printf("  SKIP  fork 失败\n");
+        return;
+    }
+
+    /* 等它变成僵尸 */
+    struct timespec delay = { .tv_sec = 0, .tv_nsec = 300000000 };
+    (void)nanosleep(&delay, NULL);
+
+    char state_char = '\0';
+
+    int rc = ota_sup_read_state(child, &state_char);
+
+    CHECK(rc == 0, "能读取僵尸进程的 state");
+    CHECK(state_char == 'Z',
+          "state 为 'Z'（实际 '%c'）", state_char);
+    CHECK(!ota_sup_state_is_alive(state_char),
+          "state_is_alive('Z') == 0");
+
+    /* 确认僵尸的 starttime 确实可读——这正是误判的来源 */
+    unsigned long long st = 0;
+
+    CHECK(ota_sup_read_starttime(child, &st) == 0 && st != 0,
+          "僵尸的 starttime 仍可读（%llu），故仅比对它不够", st);
+
+    ota_sup_identity_t id = { .pid = child, .starttime = st };
+
+    ota_sup_state_t live = ota_sup_verify_identity(&id);
+
+    CHECK(live == OTA_SUP_STOPPED,
+          "僵尸 -> STOPPED（实际 %s）",
+          ota_sup_state_name(live));
+
+    /* 写入 pidfile 后整体查询也应得到 STOPPED */
+    CHECK(ota_sup_pidfile_write(g_dir, &id) == 0,
+          "写入僵尸身份");
+
+    pid_t got = -1;
+    ota_sup_state_t q = ota_sup_query(g_dir, &got);
+
+    CHECK(q == OTA_SUP_STOPPED,
+          "query -> STOPPED（实际 %s）",
+          ota_sup_state_name(q));
+    CHECK(got == -1, "STOPPED 时不输出 pid");
+
+    (void)waitpid(child, NULL, 0);
+}
+
+static void test_state_char_classification(void)
+{
+    printf("\n== 15. 状态字符分类 ==\n");
+
+    CHECK(ota_sup_state_is_alive('R') == 1, "'R' 运行");
+    CHECK(ota_sup_state_is_alive('S') == 1, "'S' 可中断睡眠");
+    CHECK(ota_sup_state_is_alive('D') == 1, "'D' 不可中断");
+    CHECK(ota_sup_state_is_alive('T') == 1, "'T' 停止（受控）");
+
+    CHECK(ota_sup_state_is_alive('Z') == 0, "'Z' 僵尸不算运行");
+    CHECK(ota_sup_state_is_alive('X') == 0, "'X' 已死亡不算运行");
+    CHECK(ota_sup_state_is_alive('x') == 0, "'x' 已死亡不算运行");
+}
+
+static void test_temp_file_isolation(void)
+{
+    printf("\n== 16. 临时文件按进程隔离 ==\n");
+
+    ota_sup_identity_t id;
+
+    CHECK(ota_sup_capture_identity(getpid(), &id) == 0,
+          "捕获身份");
+    CHECK(ota_sup_pidfile_write(g_dir, &id) == 0,
+          "写入 pidfile");
+
+    /*
+     * 写入完成后临时文件应已 rename 掉。
+     * 同时验证 run 目录中不存在任何残留 tmp 文件。
+     */
+    char dir[PATH_MAX + 32];
+    int dn = snprintf(dir, sizeof(dir), "%s/run", g_dir);
+
+    CHECK(dn > 0 && (size_t)dn < sizeof(dir), "路径合法");
+
+    char cmd[PATH_MAX + 64];
+    int cn = snprintf(
+        cmd, sizeof(cmd),
+        "ls '%s'/gateway.pid.tmp.* 2>/dev/null | wc -l", g_dir);
+
+    CHECK(cn > 0 && (size_t)cn < sizeof(cmd), "命令构造成功");
+
+    FILE *fp = popen(cmd, "r");
+
+    if (fp != NULL) {
+        int count = -1;
+
+        if (fscanf(fp, "%d", &count) != 1)
+            count = -1;
+
+        (void)pclose(fp);
+
+        CHECK(count == 0,
+              "无残留临时文件（实际 %d 个）", count);
+    }
+
+    /* 并发写：两个不同 pid 的临时名不应冲突 */
+    ota_sup_identity_t a = { .pid = getpid(), .starttime = 111 };
+    ota_sup_identity_t b = { .pid = getpid(), .starttime = 222 };
+
+    CHECK(ota_sup_pidfile_write(g_dir, &a) == 0, "写 A");
+    CHECK(ota_sup_pidfile_write(g_dir, &b) == 0, "写 B");
+
+    ota_sup_identity_t back;
+
+    CHECK(ota_sup_pidfile_read(g_dir, &back) == 0,
+          "读回成功");
+    CHECK(back.starttime == 222,
+          "后写者生效（%llu）", back.starttime);
+}
+
 int main(void)
 {
-    printf("ota_supervisor 单元测试（D25-2 S1）\n");
+    printf("ota_supervisor 单元测试（D25-2 S1 + S1-R）\n");
 
     make_temp_dir();
     printf("临时目录: %s\n", g_dir);
@@ -615,6 +747,9 @@ int main(void)
     test_remove();
     test_path_handling();
     test_incomplete_identity();
+    test_zombie_process();
+    test_state_char_classification();
+    test_temp_file_isolation();
 
     cleanup_temp_dir();
 

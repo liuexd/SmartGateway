@@ -81,6 +81,28 @@ int ota_sup_read_starttime(
     unsigned long long *starttime_out);
 
 /*
+ * 读取 /proc/<pid>/stat 的进程状态字符（第 3 字段）。
+ *
+ * 返回 0 成功，*state_out 为状态字符；-1 失败。
+ *
+ * 用途：区分"活着"与"僵尸"。
+ *   僵尸进程（state == 'Z'）的 /proc 条目仍然存在、starttime 仍可读，
+ *   若只比对 starttime 会把它误判为 RUNNING。
+ *   僵尸不消耗 CPU、不响应业务，必须视为 STOPPED。
+ */
+int ota_sup_read_state(
+    pid_t pid,
+    char *state_out);
+
+/*
+ * 判断状态字符是否代表"仍在运行"。
+ *
+ * 'Z'（僵尸）与 'X'/'x'（已死亡）一律视为非运行。
+ * 其余（R/S/D/T 等）视为运行中。
+ */
+int ota_sup_state_is_alive(char state_char);
+
+/*
  * 采集当前进程的身份（pid + starttime）。
  *
  * 用于"我刚启动了一个进程，把它登记下来"的场景。
@@ -171,5 +193,77 @@ ota_sup_state_t ota_sup_query(
  * 把状态枚举转成可读字符串，用于日志与测试输出。
  */
 const char *ota_sup_state_name(ota_sup_state_t state);
+
+/* ================================================================== */
+/* S2：自管 Supervisor                                                 */
+/* ================================================================== */
+/*
+ * "自管"= Gateway 由 OTA 自己 fork 出来，因此是本进程的子进程。
+ *
+ * 适用场景：
+ *   - 升级过程中临时拉起候选版本做健康检查
+ *   - 测试环境
+ *
+ * 不适用场景：
+ *   - 正式部署中由 init 启动的常驻 Gateway。那种情况下本进程
+ *     收不到该 Gateway 的 SIGCHLD，waitpid 会返回 ECHILD。
+ *     必须使用未来的"外部 supervisor"实现（S5）。
+ *
+ * 所有权约定（非常重要）：
+ *   只有调用 ota_sup_start_managed() 成功的那个进程，才有资格调用
+ *   ota_sup_stop_managed()。跨进程使用 pid 去 stop 是错误用法，
+ *   会失败并返回 -1/ECHILD。
+ */
+
+typedef struct {
+    pid_t pid;
+    unsigned long long starttime;
+
+    /*
+     * 记录启动者 pid。
+     * 若 stop 时发现当前进程不是启动者，直接拒绝，
+     * 避免"另一个进程误以为自己有权回收"的混乱。
+     */
+    pid_t owner_pid;
+} ota_sup_managed_t;
+
+/*
+ * 启动一个由本进程管理的 Gateway 进程，并写 pidfile。
+ *
+ * executable：Gateway 绝对路径
+ * argv      ：参数数组，argv[0] 应为 executable
+ * handle_out：输出句柄
+ *
+ * 返回 0 成功；-1 失败，errno 有效。
+ *
+ * 失败语义：
+ *   exec 失败时不会留下 pidfile；
+ *   pidfile 写入失败时会杀掉刚启动的进程，避免"进程在跑但无记录"。
+ */
+int ota_sup_start_managed(
+    const char *install_dir,
+    const char *executable,
+    char *const argv[],
+    ota_sup_managed_t *handle_out);
+
+/*
+ * 停止由本进程启动的 Gateway，并清理 pidfile。
+ *
+ * timeout_ms：SIGTERM 后等待优雅退出的时间。
+ * wait_status：waitpid 原始状态（可为 NULL）。
+ * elapsed_ms：耗时（可为 NULL）。
+ *
+ * 返回值沿用 ota_process_stop 的语义：
+ *   OTA_PROCESS_GRACEFUL / FORCED / ALREADY_EXITED，或 -1。
+ *
+ * 注意：即使 stop 失败，pidfile 也不会被无条件删除——
+ * 进程可能仍在运行，删掉记录会让下一次 query 误判为 STOPPED。
+ */
+int ota_sup_stop_managed(
+    const char *install_dir,
+    const ota_sup_managed_t *handle,
+    int timeout_ms,
+    int *wait_status,
+    long long *elapsed_ms);
 
 #endif

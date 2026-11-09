@@ -18,16 +18,21 @@
 - **D25-1 ARM 交叉编译：通过**。Buildroot 2020.02 SDK 工具链（glibc 2.30、OpenSSL 1.1.1g、json-c 4.0.0）产出 ARM EABI5 hard-float ELF；产物与板端库版本逐项一致。
 - **D25-1B 板端实测：四项验收通过**。串口 @115200 / SSH / ADB 三通道可用；ARM Gateway 与 OTA Agent 在板端真实执行，OTA 包校验及 4 个负向用例正确；隔离启动（19000 端口）生命周期完整、无残留；`/opt` 跨重启持久（inode/md5 一致）。
   - **未验证**：Gateway 运行资源占用曾未采集，已于 D25-2 S1 阶段补齐（见 D25-1B 第 5.5 节）。
-- **D25-2 进程生命周期管理：设计完成，S1 实现完成**。
+- **D25-2 进程生命周期管理：设计完成，S1 + S1-R + S2 实现完成**。
   - 设计：[D25-2 方案](docs/D25-2-process-lifecycle-design.md)
-  - S1（Supervisor 接口 + pidfile 身份校验）：已实现并通过 75 项单元测试（x86 与 ARM 板端均 PASS）
-  - S2 及之后（接入升级流程、故障注入、init 集成）：**未开始**
+  - S1（Supervisor 接口 + pidfile 身份校验）：99 项单元测试（x86 与板端均 PASS）
+  - S1-R（安全修正）：发现并修复**僵尸进程误判**与**临时文件并发冲突**两个真实缺陷
+  - S2（自管 Supervisor）：40 项单测 + 真实 ARM Gateway 端到端验证，x86 与板端均 PASS
+  - 详见 [S1-R + S2 验收](docs/D25-2-S1R-S2-supervisor.md)
+  - S3 及之后（接入升级流程、故障注入、init 集成）：**未开始**
 
 ## 下一阶段顺序（用户确认）
 
-1. **D25-2 剩余阶段**：S2 自管 supervisor → S3 升级流程接入 → S4 故障注入 → S5 init 集成。
+1. **D25-2 剩余阶段**：S3 升级流程接入 → S4 故障注入 → S5 init 集成。
    - 已确认：板端为 **BusyBox init**，Gateway **当前无人启动且无 init 脚本**，`/opt` 持久。
    - 未确认：`start-stop-daemon` 是否存在（S5 前必须核实）。
+   - **S3 是首个会改动 D23 已验证代码的阶段**，改动后必须重跑 D23 全用例；
+     注意 D23 集成测试依赖 `build/ota-test/` 下的手工构建工具，需先补齐。
 2. **OTA 完整板端验收**：x86 已完成北向故障注入与回滚验证，但**板端完整升级 / 健康检查 / 回滚流程尚未执行**，须在 D25-2 完成后补做。
 3. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成 UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
 4. **D35–D42：综合回归与交付**——稳定性、Perf、GDB 案例、文档和候选版本。
@@ -55,6 +60,7 @@
 - [D25-1 ARM 交叉编译与部署验收](docs/D25-1-arm-build-deployment-validation.md)
 - [D25-1B 板端实测补验收（串口/SSH、真实运行、持久化）](docs/D25-1B-board-environment-recheck.md)
 - [D25-2 Gateway 进程生命周期管理设计](docs/D25-2-process-lifecycle-design.md)
+- [D25-2 S1-R + S2 安全修正与自管 Supervisor](docs/D25-2-S1R-S2-supervisor.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）
