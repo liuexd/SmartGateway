@@ -804,6 +804,21 @@ static void test_concurrent_writers(void)
         return;
     }
 
+    /*
+     * S2-R2 修正：先清掉可能已存在的 pidfile。
+     *
+     * 若不清，即使所有子进程写入全部失败，最后仍能读到
+     * 一个"之前遗留的合法 pidfile"，测试照样通过 —— 假阳性。
+     */
+    (void)ota_sup_pidfile_remove(g_dir);
+
+    ota_sup_identity_t pre;
+
+    errno = 0;
+
+    CHECK(ota_sup_pidfile_read(g_dir, &pre) == -1 && errno == ENOENT,
+          "起始状态已清空（无遗留 pidfile）");
+
     const int writers = 4;
     const int rounds = 50;
     pid_t pids[8];
@@ -815,7 +830,15 @@ static void test_concurrent_writers(void)
         pid_t p = fork();
 
         if (p == 0) {
-            /* 子进程：反复写 */
+            /*
+             * 子进程：反复写，并**统计成功次数**。
+             *
+             * 退出码编码：成功次数（0..255 范围内）。
+             * 父进程据此确认每个子进程都真的写成功过，
+             * 而不是"全部失败但没人知道"。
+             */
+            int ok_count = 0;
+
             for (int r = 0; r < rounds; r++) {
                 ota_sup_identity_t id = {
                     .pid = getpid(),
@@ -823,19 +846,47 @@ static void test_concurrent_writers(void)
                     .boot_id = {0}
                 };
 
-                (void)ota_sup_pidfile_write(g_dir, &id);
+                if (ota_sup_pidfile_write(g_dir, &id) == 0)
+                    ok_count++;
             }
 
-            _exit(0);
+            _exit(ok_count > 255 ? 255 : ok_count);
         }
 
         pids[i] = p;
     }
 
+    int total_ok = 0;
+    int all_exited_normally = 1;
+
     for (int i = 0; i < writers; i++) {
-        if (pids[i] > 0)
-            (void)waitpid(pids[i], NULL, 0);
+        if (pids[i] <= 0)
+            continue;
+
+        int status = 0;
+        pid_t r = waitpid(pids[i], &status, 0);
+
+        if (r != pids[i] || !WIFEXITED(status)) {
+            all_exited_normally = 0;
+            continue;
+        }
+
+        total_ok += WEXITSTATUS(status);
     }
+
+    CHECK(all_exited_normally,
+          "所有写者进程正常退出");
+    CHECK(total_ok > 0,
+          "确有写入成功（累计 %d 次）", total_ok);
+
+    /*
+     * 关键断言：每个子进程至少成功写过一次。
+     * 若实现有严重问题（例如全部因 EEXIST 互相删除而失败），
+     * 这里会暴露，而不是被"遗留 pidfile"掩盖。
+     */
+    CHECK(total_ok >= writers,
+          "成功次数不少于进程数（%d >= %d）",
+          total_ok, writers);
 
     /*
      * 并发写结束后，pidfile 必须是一个**完整可解析**的记录。
@@ -1038,6 +1089,135 @@ static void test_probe_consistency(void)
           "不存在的 pid -> ENOENT");
 }
 
+/*
+ * S2-R2 新增：临时文件唯一性（同进程多次调用不撞名）。
+ *
+ * 这是"问题二"的直接验证：原实现用 pid 作后缀，
+ * 同一进程的多个线程会得到相同临时名。
+ * 现在加了原子序号，连续调用必须产生不同临时文件。
+ */
+static void test_temp_uniqueness(void)
+{
+    printf("\n== 20. 临时文件名唯一性 ==\n");
+
+    /*
+     * 连续写入多个身份，确认每次都成功——
+     * 若临时名重复，第二次会因 O_EXCL 失败。
+     */
+    int ok = 0;
+
+    for (int i = 0; i < 20; i++) {
+        ota_sup_identity_t id = {
+            .pid = getpid(),
+            .starttime = (unsigned long long)(7000 + i),
+            .boot_id = {0}
+        };
+
+        if (ota_sup_pidfile_write(g_dir, &id) == 0)
+            ok++;
+    }
+
+    CHECK(ok == 20,
+          "20 次连续写入全部成功（实际 %d 次）", ok);
+
+    ota_sup_identity_t back;
+
+    CHECK(ota_sup_pidfile_read(g_dir, &back) == 0, "最终可读");
+    CHECK(back.starttime == 7019,
+          "最后一次生效（%llu）", back.starttime);
+}
+
+/*
+ * S2-R2 新增：孤儿临时文件清理。
+ *
+ * 验证 ota_sup_cleanup_stale_temp()：
+ *   - 不删除"新鲜"的临时文件（可能是活跃写者）；
+ *   - 删除"陈旧"的临时文件（崩溃遗留）。
+ */
+static void test_stale_temp_cleanup(void)
+{
+    printf("\n== 21. 孤儿临时文件清理 ==\n");
+
+    char run_dir[PATH_MAX + 16];
+    snprintf(run_dir, sizeof(run_dir), "%s/run", g_dir);
+    (void)mkdir(run_dir, 0700);
+
+    char fresh[PATH_MAX + 64];
+    char stale[PATH_MAX + 64];
+
+    snprintf(fresh, sizeof(fresh),
+             "%s/gateway.pid.tmp.111.1", run_dir);
+    snprintf(stale, sizeof(stale),
+             "%s/gateway.pid.tmp.222.2", run_dir);
+
+    FILE *f = fopen(fresh, "w");
+    if (f != NULL) {
+        (void)fputs("fresh\n", f);
+        (void)fclose(f);
+    }
+
+    f = fopen(stale, "w");
+    if (f != NULL) {
+        (void)fputs("stale\n", f);
+        (void)fclose(f);
+    }
+
+    /* 把 stale 的 mtime 改成 2 小时前 */
+    struct timespec times[2];
+    times[0].tv_sec = time(NULL) - 7200;
+    times[0].tv_nsec = 0;
+    times[1] = times[0];
+
+    (void)utimensat(AT_FDCWD, stale, times, 0);
+
+    int removed = ota_sup_cleanup_stale_temp(g_dir, 60);
+
+    CHECK(removed == 1,
+          "只删除 1 个陈旧临时文件（实际 %d）", removed);
+    CHECK(access(stale, F_OK) != 0,
+          "陈旧临时文件已删除");
+    CHECK(access(fresh, F_OK) == 0,
+          "新鲜临时文件被保留（不误删活跃写者）");
+
+    (void)unlink(fresh);
+}
+
+/*
+ * S2-R2 新增：旧格式识别。
+ */
+static void test_legacy_detection(void)
+{
+    printf("\n== 22. 旧格式 pidfile 识别 ==\n");
+
+    int is_legacy = -1;
+
+    /* 旧格式（无 boot_id） */
+    write_raw_pidfile("5555 12345\n");
+
+    CHECK(ota_sup_identity_is_legacy(g_dir, &is_legacy) == 0,
+          "旧格式可识别");
+    CHECK(is_legacy == 1,
+          "识别为旧格式（实际 %d）", is_legacy);
+
+    /* 新格式（含 boot_id） */
+    write_raw_pidfile(
+        "5555 12345 0a023e15-9190-44fa-becc-c3dfb34712ba\n");
+
+    CHECK(ota_sup_identity_is_legacy(g_dir, &is_legacy) == 0,
+          "新格式可识别");
+    CHECK(is_legacy == 0,
+          "识别为新格式（实际 %d）", is_legacy);
+
+    /* 无 pidfile */
+    (void)ota_sup_pidfile_remove(g_dir);
+
+    errno = 0;
+
+    CHECK(ota_sup_identity_is_legacy(g_dir, &is_legacy) == -1 &&
+          errno == ENOENT,
+          "无记录时返回 -1/ENOENT");
+}
+
 int main(void)
 {
     printf("ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）\n");
@@ -1064,6 +1244,9 @@ int main(void)
     test_concurrent_writers();
     test_boot_id();
     test_probe_consistency();
+    test_temp_uniqueness();
+    test_stale_temp_cleanup();
+    test_legacy_detection();
 
     cleanup_temp_dir();
 

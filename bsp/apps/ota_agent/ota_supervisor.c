@@ -21,16 +21,39 @@
 #define OTA_SUP_PID_NAME "gateway.pid"
 
 /*
- * 临时文件使用"固定前缀 + 进程私有后缀"。
+ * 临时文件名：固定前缀 + 进程私有后缀 + 调用序号。
  *
- * 不能用固定名字：两个进程同时写 pidfile 时（例如 OTA 与 init 脚本
- * 都在登记），会互相截断对方正在写的临时文件，rename 后才可能发现
- * 内容已损坏。用 pid 作后缀可保证各自的临时文件互不干扰。
+ * 演进过程（值得记录，因为每一步都对应一个真实的并发现象）：
  *
- * 注意：这仍需配合 .ota.lock 使用，因为 pidfile 本身的语义是
- * "唯一一份记录"，并发写只应该发生在一个持有锁的写者上。
+ *   1. 最初用固定名 "gateway.pid.tmp"
+ *      -> 两个进程同时写会互相 O_TRUNC 截断。
+ *
+ *   2. 改为 "gateway.pid.tmp.<pid>"
+ *      -> 不同进程隔离了，但**同一进程的多个线程** pid 相同，
+ *         仍会撞名；而且 EEXIST 分支会删掉对方正在写的文件。
+ *
+ *   3. 现在加调用序号，并在同一进程内用原子计数器保证唯一：
+ *      "gateway.pid.tmp.<pid>.<seq>"
+ *      -> 即使多线程并发调用也不会撞名，
+ *         因此**不再需要**"遇 EEXIST 就删除重试"的危险逻辑。
+ *
+ * 注意：这只解决"临时文件名冲突"，**不提供单写者语义**。
+ * pidfile 的语义是"唯一一份记录"，多个写者同时更新仍会
+ * 产生"后写者胜"的结果。真正的串行化必须由调用方持有
+ * .ota.lock 来完成（见 D25-2-S2R2 文档"问题二"）。
  */
 #define OTA_SUP_TEMP_PREFIX "gateway.pid.tmp."
+
+/*
+ * 进程内原子序号。
+ *
+ * 用 __sync_fetch_and_add 而非 pthread_mutex，理由是：
+ *   - 不引入 pthread 依赖（本模块当前不链接 pthread）；
+ *   - 单条原子指令即可，无锁开销，也不会在 fork 后处于
+ *     不一致的锁定状态（fork 只会复制调用线程，持锁状态下
+ *     fork 会导致子进程持有一把永不释放的锁）。
+ */
+static unsigned long temp_seq = 0;
 
 /* pidfile 最大长度：两个十进制数 + 换行，留足余量即可 */
 #define OTA_SUP_PIDFILE_MAX 128
@@ -444,10 +467,20 @@ int ota_sup_pidfile_write(
     if (dirfd < 0)
         return -1;
 
-    /* 临时名带自身 pid，避免并发写者互相截断 */
+    /*
+     * 临时名：pid + 进程内原子序号。
+     *
+     * 加序号的原因：同一进程的多个线程 pid 相同，
+     * 只用 pid 仍会撞名。加原子序号后每次调用唯一，
+     * 因此不再需要"遇 EEXIST 删除重试"的逻辑——
+     * 那个逻辑会删掉另一个线程正在写的文件。
+     */
+    unsigned long seq = __sync_fetch_and_add(&temp_seq, 1);
+
     int tn = snprintf(
         tmp_name, sizeof(tmp_name),
-        OTA_SUP_TEMP_PREFIX "%ld", (long)getpid());
+        OTA_SUP_TEMP_PREFIX "%ld.%lu",
+        (long)getpid(), seq);
 
     if (tn < 0 || (size_t)tn >= sizeof(tmp_name)) {
         (void)close(dirfd);
@@ -458,9 +491,10 @@ int ota_sup_pidfile_write(
     /*
      * O_EXCL：临时文件必须由本次调用独占创建。
      *
-     * 若已存在同名文件（可能是上次崩溃残留，或有人预置了符号链接），
-     * 直接失败而不是复用——复用一个未知来源的文件会把内容写进
-     * 意料之外的位置。
+     * 名字已唯一，正常情况下不会 EEXIST。
+     * 若仍发生（序号回绕、或有人预置同名文件），
+     * 直接失败而**不再删除重试**——
+     * 删除可能命中另一个写者正在使用的文件。
      */
     tmpfd = openat(
         dirfd,
@@ -470,26 +504,9 @@ int ota_sup_pidfile_write(
 
     if (tmpfd < 0) {
         saved_errno = errno;
-
-        /* 上次残留的临时文件：清掉后重试一次 */
-        if (saved_errno == EEXIST) {
-            (void)unlinkat(dirfd, tmp_name, 0);
-
-            tmpfd = openat(
-                dirfd,
-                tmp_name,
-                O_WRONLY | O_CREAT | O_EXCL |
-                O_CLOEXEC | O_NOFOLLOW,
-                0600);
-
-            saved_errno = errno;
-        }
-
-        if (tmpfd < 0) {
-            (void)close(dirfd);
-            errno = saved_errno;
-            return -1;
-        }
+        (void)close(dirfd);
+        errno = saved_errno;
+        return -1;
     }
 
     /* O_CREAT 的 0600 会受 umask 影响，这里强制确认 */
@@ -836,38 +853,105 @@ int ota_sup_pidfile_remove(const char *install_dir)
     }
 
     /*
-     * 清理可能的残留临时文件。
+     * S2-R2 修正：这里**不再**扫描删除临时文件。
      *
-     * 临时文件名带 pid 后缀，无法在不知道 pid 的情况下精确删除，
-     * 因此这里扫描 run 目录，删除所有匹配前缀的普通文件。
-     * 只删前缀匹配项，不误删其他文件。
+     * 原实现删除所有匹配前缀的临时文件，看似"顺手清理"，
+     * 实际会误删另一个写者正在使用的文件：
+     *   A 正在写 gateway.pid.tmp.100.3
+     *   B 调用 remove()，把 A 的文件删掉
+     *   A 的 fsync/rename 失败，且错误原因难以理解
+     *
+     * 正常路径下临时文件由写入方自己负责清理
+     * （成功走 rename，失败走 unlink），不会残留。
+     * 只有崩溃才可能留下孤儿文件，那应当由
+     * ota_sup_cleanup_stale_temp() 在持有 .ota.lock 时处理。
      */
-    int scanfd = dup(dirfd);
-
-    if (scanfd >= 0) {
-        DIR *dir = fdopendir(scanfd);
-
-        if (dir != NULL) {
-            struct dirent *entry;
-
-            while ((entry = readdir(dir)) != NULL) {
-                if (strncmp(
-                        entry->d_name,
-                        OTA_SUP_TEMP_PREFIX,
-                        strlen(OTA_SUP_TEMP_PREFIX)) == 0) {
-                    (void)unlinkat(
-                        dirfd, entry->d_name, 0);
-                }
-            }
-
-            (void)closedir(dir);
-        } else {
-            (void)close(scanfd);
-        }
-    }
-
     (void)close(dirfd);
     return 0;
+}
+
+int ota_sup_cleanup_stale_temp(
+    const char *install_dir,
+    int older_than_seconds)
+{
+    int dirfd;
+    int removed = 0;
+    time_t now;
+
+    if (older_than_seconds < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    dirfd = open_run_dir(install_dir, 0);
+
+    if (dirfd < 0) {
+        if (errno == ENOENT)
+            return 0;      /* 没有 run 目录，自然没有临时文件 */
+
+        return -1;
+    }
+
+    now = time(NULL);
+
+    if (now == (time_t)-1) {
+        (void)close(dirfd);
+        return -1;
+    }
+
+    int scanfd = dup(dirfd);
+
+    if (scanfd < 0) {
+        (void)close(dirfd);
+        return -1;
+    }
+
+    DIR *dir = fdopendir(scanfd);
+
+    if (dir == NULL) {
+        (void)close(scanfd);
+        (void)close(dirfd);
+        return -1;
+    }
+
+    const size_t prefix_len = strlen(OTA_SUP_TEMP_PREFIX);
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, OTA_SUP_TEMP_PREFIX,
+                    prefix_len) != 0)
+            continue;
+
+        /*
+         * 只删"足够旧"的文件。
+         *
+         * 用年龄而不是"是否为当前进程"来判断，是因为崩溃遗留的
+         * 临时文件可能来自任意 pid，而活跃写者的文件总是很新。
+         * 阈值给得保守（调用方通常传 60 秒），
+         * 确保不会碰到正在写入的文件——写一个 pidfile 只需毫秒级。
+         */
+        struct stat st;
+
+        if (fstatat(dirfd, entry->d_name, &st,
+                    AT_SYMLINK_NOFOLLOW) != 0)
+            continue;
+
+        if (!S_ISREG(st.st_mode))
+            continue;
+
+        double age = difftime(now, st.st_mtime);
+
+        if (age < (double)older_than_seconds)
+            continue;
+
+        if (unlinkat(dirfd, entry->d_name, 0) == 0)
+            removed++;
+    }
+
+    (void)closedir(dir);
+    (void)close(dirfd);
+
+    return removed;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1003,6 +1087,37 @@ const char *ota_sup_state_name(ota_sup_state_t state)
     default:
         return "UNKNOWN";
     }
+}
+
+int ota_sup_identity_is_legacy(
+    const char *install_dir,
+    int *is_legacy_out)
+{
+    ota_sup_identity_t identity;
+
+    if (is_legacy_out == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (ota_sup_pidfile_read(install_dir, &identity) != 0)
+        return -1;
+
+    /*
+     * boot_id 为空 = 旧格式。
+     *
+     * 旧格式无法校验启动周期：重启后 pid 从 1 重新分配、
+     * jiffies 也从 0 重计，一条来自上次启动的记录很可能
+     * 在新周期中"碰巧匹配"到一个无关进程。
+     *
+     * 调用方拿到 1 后应当自行决定策略，典型选择：
+     *   - 保守：视为 UNKNOWN，要求人工/显式清理后再操作；
+     *   - 宽松：仍按 (pid, starttime) 校验，接受该风险。
+     * 本模块不替调用方做这个决定，只如实报告。
+     */
+    *is_legacy_out = (identity.boot_id[0] == '\0') ? 1 : 0;
+
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */

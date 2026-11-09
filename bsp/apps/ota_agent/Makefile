@@ -233,6 +233,14 @@ E2E_BIN       := $(ARM_BUILD_DIR)/ota_supervisor_e2e
 HOST_SUP_BIN  := /tmp/ota_supervisor_test_host
 HOST_S2_BIN   := /tmp/ota_supervisor_s2_test_host
 
+# 测试超时（秒）
+#
+# 程序内部的 elapsed 断言只能在返回后生效，
+# 若测试自身挂起（例如 fork 后子进程未退出、
+# 父进程无界 waitpid），断言根本执行不到。
+# 必须由外部 timeout 兜底。
+TEST_TIMEOUT ?= 120
+
 # S1 宿主机测试
 #
 # ota_supervisor.c 现在包含 S2 的实现，而 S2 调用 ota_process_*，
@@ -244,7 +252,8 @@ test-supervisor:
 		ota_supervisor.c ota_process.c \
 		ota_supervisor_test.c \
 		-o $(HOST_SUP_BIN)
-	@$(HOST_SUP_BIN)
+	@timeout $(TEST_TIMEOUT) $(HOST_SUP_BIN) || \
+		{ rc=$$?; [ $$rc -eq 124 ] && echo "FAIL: 测试超时 ($(TEST_TIMEOUT)s)"; exit $$rc; }
 
 # S2 宿主机测试
 test-supervisor-s2:
@@ -252,7 +261,8 @@ test-supervisor-s2:
 		ota_supervisor.c ota_process.c \
 		ota_supervisor_s2_test.c \
 		-o $(HOST_S2_BIN)
-	@$(HOST_S2_BIN)
+	@timeout $(TEST_TIMEOUT) $(HOST_S2_BIN) || \
+		{ rc=$$?; [ $$rc -eq 124 ] && echo "FAIL: 测试超时 ($(TEST_TIMEOUT)s)"; exit $$rc; }
 
 # ARM 版本（需要板端执行，此处只构建）
 test-supervisor-arm:

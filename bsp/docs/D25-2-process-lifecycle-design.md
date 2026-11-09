@@ -4,12 +4,16 @@
 > 分支：`feature/bsp-imx6ull`
 > 文档性质：**设计文档（DESIGN）**，不是验收报告
 > 状态（2026-11-09 更新）：
->   - **S1 / S1-R / S2-R 已实现并有实测记录**（身份校验 + 自管 Supervisor）
->   - **S2 已实现**，可管理 OTA 自己 fork 的 Gateway
+>   - **S1 / S1-R / S2 / S2-R / S2-R2 已实现并有实测记录**
+>     （身份校验 + 自管 Supervisor + 两轮复审修正）
 >   - **尚未实现**：S3（接入升级流程）、S4（故障注入）、S5（BusyBox init 集成）
 >   - 因此本文档描述的完整"进程生命周期闭环"**仍未闭环**——
 >     当前完成的是"子进程管理能力"，不是"OTA 升级时序正确性"
-> 验收记录：[S1-R + S2](D25-2-S1R-S2-supervisor.md)
+>   - **S3 准入条件**：supervisor 操作必须包在 `.ota.lock` 内；
+>     须处理旧格式 pidfile；须清理孤儿临时文件；
+>     且**先恢复 D23 测试链路**再改 `ota_upgrade_run.c`
+> 验收记录：[S1-R + S2](D25-2-S1R-S2-supervisor.md)、
+>   [S2-R](D25-2-S2R-review-fixes.md)、[S2-R2](D25-2-S2R2-review-fixes.md)
 > 前置：[D25-1](D25-1-arm-build-deployment-validation.md)、[D25-1B](D25-1B-board-environment-recheck.md)
 
 ## 0. 为什么先写设计而不写代码

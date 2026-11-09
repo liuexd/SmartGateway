@@ -205,8 +205,43 @@ int ota_sup_pidfile_read(
  * 删除 pidfile（忽略不存在的情况）。
  *
  * 返回 0 成功或文件本就不存在；-1 失败。
+ *
+ * 注意：本函数**不清理临时文件**。
+ * 扫描删除会误伤并发写者正在使用的临时文件。
+ * 崩溃遗留的孤儿临时文件请用 ota_sup_cleanup_stale_temp()。
  */
 int ota_sup_pidfile_remove(const char *install_dir);
+
+/*
+ * 清理崩溃遗留的孤儿临时文件。
+ *
+ * older_than_seconds：只删除修改时间早于该秒数的临时文件。
+ *   建议 60 秒。写一个 pidfile 是毫秒级操作，
+ *   因此 60 秒前的临时文件必然是崩溃遗留，不会是活跃写者的。
+ *
+ * 返回删除的文件数（>=0）；-1 表示失败。
+ *
+ * 调用约束：应在持有 .ota.lock 排他锁时调用，
+ * 否则仍可能与跨进程的写入者竞争。
+ */
+int ota_sup_cleanup_stale_temp(
+    const char *install_dir,
+    int older_than_seconds);
+
+/*
+ * 查询可选的安全策略：是否允许在存在"旧格式 pidfile"时继续。
+ *
+ * 旧格式（无 boot_id）无法校验启动周期，跨重启时存在身份误匹配风险。
+ * 本函数用于让调用方显式决定如何处理这种记录。
+ *
+ * 返回：
+ *   0  记录是新格式（含 boot_id），可安全校验
+ *   1  记录是旧格式（无 boot_id），跨重启安全性弱
+ *  -1  读不到记录或格式损坏
+ */
+int ota_sup_identity_is_legacy(
+    const char *install_dir,
+    int *is_legacy_out);
 
 /*
  * 校验身份对应的进程是否仍是当初那个实例。
