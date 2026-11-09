@@ -18,13 +18,16 @@
 - **D25-1 ARM 交叉编译：通过**。Buildroot 2020.02 SDK 工具链（glibc 2.30、OpenSSL 1.1.1g、json-c 4.0.0）产出 ARM EABI5 hard-float ELF；产物与板端库版本逐项一致。
 - **D25-1B 板端实测：四项验收通过**。串口 @115200 / SSH / ADB 三通道可用；ARM Gateway 与 OTA Agent 在板端真实执行，OTA 包校验及 4 个负向用例正确；隔离启动（19000 端口）生命周期完整、无残留；`/opt` 跨重启持久（inode/md5 一致）。
   - **未验证**：Gateway 运行资源占用曾未采集，已于 D25-2 S1 阶段补齐（见 D25-1B 第 5.5 节）。
-- **D25-2 进程生命周期管理：设计完成，S1 + S1-R + S2 实现完成**。
+- **D25-2 进程生命周期管理：设计完成，S1 / S1-R / S2 / S2-R 已完成**。
   - 设计：[D25-2 方案](docs/D25-2-process-lifecycle-design.md)
-  - S1（Supervisor 接口 + pidfile 身份校验）：99 项单元测试（x86 与板端均 PASS）
-  - S1-R（安全修正）：发现并修复**僵尸进程误判**与**临时文件并发冲突**两个真实缺陷
-  - S2（自管 Supervisor）：40 项单测 + 真实 ARM Gateway 端到端验证，x86 与板端均 PASS
-  - 详见 [S1-R + S2 验收](docs/D25-2-S1R-S2-supervisor.md)
-  - S3 及之后（接入升级流程、故障注入、init 集成）：**未开始**
+  - S1（Supervisor 接口 + pidfile 身份校验）：130 项单元测试（x86 与板端均 PASS）
+  - S1-R（安全修正）：修复**僵尸进程误判**与**临时文件并发冲突**
+  - S2（自管 Supervisor）：44 项单测 + 真实 ARM Gateway 端到端验证
+  - S2-R（复审修正）：修复假阳性测试、补并发/立即退出测试、
+    单次读取快照、boot_id 跨重启校验、有界回收
+  - 详见 [S1-R + S2 验收](docs/D25-2-S1R-S2-supervisor.md) 与 [S2-R 复审修正](docs/D25-2-S2R-review-fixes.md)
+  - **未完成**：S3（接入升级流程）、S4（故障注入）、S5（init 集成）、S6–S7（板端完整升级）
+  - **注意：本项目无 CI**，所有 PASS 均为本地/板端手工执行结果
 
 ## 下一阶段顺序（用户确认）
 
@@ -61,6 +64,7 @@
 - [D25-1B 板端实测补验收（串口/SSH、真实运行、持久化）](docs/D25-1B-board-environment-recheck.md)
 - [D25-2 Gateway 进程生命周期管理设计](docs/D25-2-process-lifecycle-design.md)
 - [D25-2 S1-R + S2 安全修正与自管 Supervisor](docs/D25-2-S1R-S2-supervisor.md)
+- [D25-2 S2-R 复审问题修正](docs/D25-2-S2R-review-fixes.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）

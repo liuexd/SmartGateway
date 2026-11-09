@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "ota_process.h"
@@ -63,103 +64,22 @@ int ota_sup_pidfile_path(
 }
 
 /*
- * 读取 /proc/<pid>/stat 的进程状态字符（第 3 字段）。
+ * 一次读取 /proc/<pid>/stat，解析出 state 与 starttime。
  *
- * 格式：pid (comm) state ppid ...
- * ')' 之后的第一个非空白字符即 state。
- */
-int ota_sup_read_state(
-    pid_t pid,
-    char *state_out)
-{
-    char path[64];
-    char buffer[1024];
-    int fd;
-    ssize_t n;
-
-    if (pid <= 0 || state_out == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    int len = snprintf(
-        path, sizeof(path),
-        "/proc/%ld/stat", (long)pid);
-
-    if (len < 0 || (size_t)len >= sizeof(path)) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
-
-    fd = open(path, O_RDONLY | O_CLOEXEC);
-
-    if (fd < 0)
-        return -1;
-
-    do {
-        n = read(fd, buffer, sizeof(buffer) - 1);
-    } while (n < 0 && errno == EINTR);
-
-    (void)close(fd);
-
-    if (n < 0)
-        return -1;
-
-    if (n == 0) {
-        errno = EIO;
-        return -1;
-    }
-
-    buffer[n] = '\0';
-
-    const char *close_paren = strrchr(buffer, ')');
-
-    if (close_paren == NULL || close_paren[1] == '\0') {
-        errno = EINVAL;
-        return -1;
-    }
-
-    const char *cursor = close_paren + 1;
-
-    while (*cursor == ' ')
-        cursor++;
-
-    if (*cursor == '\0') {
-        errno = EINVAL;
-        return -1;
-    }
-
-    *state_out = *cursor;
-
-    return 0;
-}
-
-int ota_sup_state_is_alive(char state_char)
-{
-    /*
-     * 'Z' 僵尸：/proc 条目尚在但进程已终止，不可视为运行。
-     * 'X' / 'x'：已死亡（内核 4.9 起 x 为 X 的别名）。
-     * 其余（R/S/D/T/t/W）均表示进程仍存在，保守视为运行。
-     */
-    if (state_char == 'Z' || state_char == 'X' || state_char == 'x')
-        return 0;
-
-    return 1;
-}
-
-/*
- * 从 /proc/<pid>/stat 解析 starttime（第 22 字段）。
- *
- * 格式：pid (comm) state ppid ... starttime ...
+ * 这是唯一真正访问 /proc 的地方。
+ * read_state / read_starttime / probe_process 都基于它，
+ * 保证三者对同一份 stat 内容的解析逻辑完全一致，
+ * 也避免调用方为取两个字段而读两次（产生快照错配窗口）。
  *
  * 关键：comm 可能含空格与 ')'，必须从**最后一个** ')' 之后开始。
  * 用 strchr 取第一个 ')' 或按空白分列，都会静默取到错误值。
  *
- * ')' 之后按空白切分，第 1 个 token 是 state（第 3 字段），
- * 因此 starttime（第 22 字段）是第 20 个 token（索引 19）。
+ * ')' 之后的 token 序列：state(第3) ppid(4) ... starttime(22)
+ * 因此 starttime 是 ')' 之后的第 20 个 token（索引 19）。
  */
-int ota_sup_read_starttime(
+static int read_stat_fields(
     pid_t pid,
+    char *state_out,
     unsigned long long *starttime_out)
 {
     char path[64];
@@ -167,7 +87,8 @@ int ota_sup_read_starttime(
     int fd;
     ssize_t n;
 
-    if (pid <= 0 || starttime_out == NULL) {
+    if (pid <= 0 ||
+        (state_out == NULL && starttime_out == NULL)) {
         errno = EINVAL;
         return -1;
     }
@@ -210,7 +131,22 @@ int ota_sup_read_starttime(
     }
 
     const char *cursor = close_paren + 1;
+
+    /* 第 3 字段：state（单个字符） */
+    while (*cursor == ' ')
+        cursor++;
+
+    if (*cursor == '\0' || *cursor == '\n') {
+        errno = EINVAL;
+        return -1;
+    }
+
+    char parsed_state = *cursor;
+
+    /* 继续前进到第 22 字段：starttime */
     int token_index = 0;
+    unsigned long long parsed_starttime = 0;
+    int have_starttime = 0;
 
     while (*cursor != '\0') {
         while (*cursor == ' ')
@@ -224,16 +160,15 @@ int ota_sup_read_starttime(
 
             errno = 0;
 
-            unsigned long long value =
-                strtoull(cursor, &end, 10);
+            parsed_starttime = strtoull(cursor, &end, 10);
 
             if (errno != 0 || end == cursor) {
                 errno = EINVAL;
                 return -1;
             }
 
-            *starttime_out = value;
-            return 0;
+            have_starttime = 1;
+            break;
         }
 
         while (*cursor != ' ' && *cursor != '\0' &&
@@ -243,9 +178,142 @@ int ota_sup_read_starttime(
         token_index++;
     }
 
-    /* 字段数不足：/proc 格式与预期不符 */
-    errno = EINVAL;
-    return -1;
+    /*
+     * 只要调用方需要 starttime，就必须真的解析到它。
+     * 字段数不足说明 /proc 格式与预期不符。
+     */
+    if (starttime_out != NULL && !have_starttime) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (state_out != NULL)
+        *state_out = parsed_state;
+
+    if (starttime_out != NULL)
+        *starttime_out = parsed_starttime;
+
+    return 0;
+}
+
+/*
+ * 读取 /proc/<pid>/stat 的进程状态字符（第 3 字段）。
+ */
+int ota_sup_read_state(
+    pid_t pid,
+    char *state_out)
+{
+    return read_stat_fields(pid, state_out, NULL);
+}
+
+int ota_sup_probe_process(
+    pid_t pid,
+    char *state_out,
+    unsigned long long *starttime_out)
+{
+    return read_stat_fields(pid, state_out, starttime_out);
+}
+
+/*
+ * 读取 /proc/sys/kernel/random/boot_id。
+ *
+ * 内核输出形如 "1f2e3d4c-5b6a-7890-abcd-ef0123456789\n"。
+ * 去掉尾部空白后返回；空内容视为失败。
+ */
+int ota_sup_read_boot_id(
+    char *output,
+    size_t capacity)
+{
+    const char *path = "/proc/sys/kernel/random/boot_id";
+    char buffer[OTA_SUP_BOOT_ID_MAX * 2];
+    int fd;
+    ssize_t n;
+
+    if (output == NULL || capacity < 2) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+
+    if (fd < 0)
+        return -1;
+
+    do {
+        n = read(fd, buffer, sizeof(buffer) - 1);
+    } while (n < 0 && errno == EINTR);
+
+    (void)close(fd);
+
+    if (n <= 0) {
+        errno = (n == 0) ? EIO : errno;
+        return -1;
+    }
+
+    buffer[n] = '\0';
+
+    /* 去掉尾部换行与空白 */
+    while (n > 0) {
+        char c = buffer[n - 1];
+
+        if (c == '\n' || c == '\r' || c == ' ' || c == '\t') {
+            buffer[--n] = '\0';
+            continue;
+        }
+
+        break;
+    }
+
+    if (n == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if ((size_t)n >= capacity) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    memcpy(output, buffer, (size_t)n + 1);
+
+    return 0;
+}
+
+int ota_sup_state_is_alive(char state_char)
+{
+    /*
+     * 'Z' 僵尸：/proc 条目尚在但进程已终止，不可视为运行。
+     * 'X' / 'x'：已死亡（内核 4.9 起 x 为 X 的别名）。
+     * 其余（R/S/D/T/t/W）均表示进程仍存在，保守视为运行。
+     */
+    if (state_char == 'Z' || state_char == 'X' || state_char == 'x')
+        return 0;
+
+    return 1;
+}
+
+/*
+ * 从 /proc/<pid>/stat 解析 starttime（第 22 字段）。
+ *
+ * 格式：pid (comm) state ppid ... starttime ...
+ *
+ * 关键：comm 可能含空格与 ')'，必须从**最后一个** ')' 之后开始。
+ * 用 strchr 取第一个 ')' 或按空白分列，都会静默取到错误值。
+ *
+ * ')' 之后按空白切分，第 1 个 token 是 state（第 3 字段），
+ * 因此 starttime（第 22 字段）是第 20 个 token（索引 19）。
+ */
+int ota_sup_read_starttime(
+    pid_t pid,
+    unsigned long long *starttime_out)
+{
+    if (starttime_out == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* 复用单次读取核心，避免与 read_state 逻辑分叉 */
+    return read_stat_fields(pid, NULL, starttime_out);
 }
 
 int ota_sup_capture_identity(
@@ -253,6 +321,8 @@ int ota_sup_capture_identity(
     ota_sup_identity_t *identity_out)
 {
     unsigned long long starttime = 0;
+    char boot_id[OTA_SUP_BOOT_ID_MAX];
+    ota_sup_identity_t result;
 
     if (pid <= 0 || identity_out == NULL) {
         errno = EINVAL;
@@ -262,8 +332,23 @@ int ota_sup_capture_identity(
     if (ota_sup_read_starttime(pid, &starttime) != 0)
         return -1;
 
-    identity_out->pid = pid;
-    identity_out->starttime = starttime;
+    result.pid = pid;
+    result.starttime = starttime;
+    memset(result.boot_id, 0, sizeof(result.boot_id));
+
+    /*
+     * boot_id 读取失败不视为致命错误。
+     *
+     * 极少数内核配置下 /proc/sys/kernel/random/boot_id 可能不可读。
+     * 此时退化为 (pid, starttime) 校验——能力削弱但仍然可用。
+     * 不在这里失败，是为了不让一个辅助维度阻断主流程；
+     * 调用方可通过读取结果中的 boot_id 是否为空来判断。
+     */
+    if (ota_sup_read_boot_id(boot_id, sizeof(boot_id)) == 0) {
+        memcpy(result.boot_id, boot_id, sizeof(result.boot_id));
+    }
+
+    *identity_out = result;
 
     return 0;
 }
@@ -423,11 +508,29 @@ int ota_sup_pidfile_write(
         }
     }
 
-    len = snprintf(
-        payload, sizeof(payload),
-        "%ld %llu\n",
-        (long)identity->pid,
-        identity->starttime);
+    /*
+     * 格式："<pid> <starttime> <boot_id>\n"
+     *
+     * boot_id 为空时省略第三段，保持与旧格式兼容：
+     *   旧："12345 678\n"        -> 仅 (pid, starttime) 校验
+     *   新："12345 678 <uuid>\n" -> 额外校验启动周期
+     *
+     * 读取端两种都接受，因此升级不会因遗留 pidfile 而失败。
+     */
+    if (identity->boot_id[0] != '\0') {
+        len = snprintf(
+            payload, sizeof(payload),
+            "%ld %llu %s\n",
+            (long)identity->pid,
+            identity->starttime,
+            identity->boot_id);
+    } else {
+        len = snprintf(
+            payload, sizeof(payload),
+            "%ld %llu\n",
+            (long)identity->pid,
+            identity->starttime);
+    }
 
     if (len < 0 || (size_t)len >= sizeof(payload)) {
         (void)close(tmpfd);
@@ -619,6 +722,78 @@ int ota_sup_pidfile_read(
 
     cursor = end;
 
+    /*
+     * 可选第三段：boot_id
+     *
+     * 旧格式 "pid starttime\n" 在 starttime 后直接是空白/结尾，
+     * 新格式 "pid starttime boot_id\n" 中间有空格分隔。
+     * 两种都必须接受，否则升级后遗留的旧 pidfile 会全部判为损坏。
+     */
+    memset(identity_out->boot_id, 0,
+           sizeof(identity_out->boot_id));
+
+    if (*cursor == ' ') {
+        cursor++;
+
+        const char *boot_start = cursor;
+
+        while (*cursor != '\0' && *cursor != '\n' &&
+               *cursor != '\r' && *cursor != ' ' &&
+               *cursor != '\t') {
+            cursor++;
+        }
+
+        size_t boot_len = (size_t)(cursor - boot_start);
+
+        /*
+         * boot_id 必须严格是内核格式：36 字符 UUID。
+         *
+         * 不加这一层校验会有一个危险的后果：
+         * 若把 "12345 678 999" 这种内容当成合法记录（999 作 boot_id），
+         * 那么 verify 时 boot_id 当然不匹配，于是判为 STOPPED ——
+         * 而 pid 12345 可能真的有一个 Gateway 在跑。
+         * 结果 OTA 会误以为"没在运行"并启动第二个实例。
+         *
+         * 正确的做法是把格式非法视为"记录损坏" -> UNKNOWN -> 中止操作。
+         * 宁可停下，也不要基于一个看不懂的记录继续。
+         */
+        if (boot_len != 36) {
+            errno = EINVAL;
+            return -1;
+        }
+
+        for (size_t i = 0; i < boot_len; i++) {
+            char c = boot_start[i];
+            int sep_ok = (i == 8 || i == 13 || i == 18 || i == 23);
+
+            if (sep_ok) {
+                if (c != '-') {
+                    errno = EINVAL;
+                    return -1;
+                }
+                continue;
+            }
+
+            int is_hex =
+                (c >= '0' && c <= '9') ||
+                (c >= 'a' && c <= 'f') ||
+                (c >= 'A' && c <= 'F');
+
+            if (!is_hex) {
+                errno = EINVAL;
+                return -1;
+            }
+        }
+
+        if (boot_len >= sizeof(identity_out->boot_id)) {
+            errno = EINVAL;
+            return -1;
+        }
+
+        memcpy(identity_out->boot_id, boot_start, boot_len);
+        identity_out->boot_id[boot_len] = '\0';
+    }
+
     /* 剩余部分只允许空白（一个换行） */
     while (*cursor != '\0') {
         char c = *cursor;
@@ -717,8 +892,17 @@ ota_sup_state_t ota_sup_verify_identity(
     if (identity->pid <= 1)
         return OTA_SUP_UNKNOWN;
 
-    if (ota_sup_read_starttime(identity->pid, &current) != 0) {
-        /* 进程确实不存在 */
+    /*
+     * S2-R：单次读取同时取得 state 与 starttime。
+     *
+     * 原先分两次读 /proc/<pid>/stat，两次之间有窗口：
+     *   读 starttime 时是旧进程 -> 旧进程退出、pid 被复用
+     *   -> 读 state 时是新进程 -> 把旧 starttime 与新状态组合判断。
+     * 那样得出的结论不对应任何真实快照。
+     * 合并为一次读取后不存在这种错配。
+     */
+    if (ota_sup_probe_process(
+            identity->pid, &process_state, &current) != 0) {
         if (errno == ENOENT)
             return OTA_SUP_STOPPED;
 
@@ -727,27 +911,41 @@ ota_sup_state_t ota_sup_verify_identity(
     }
 
     /*
-     * 僵尸检测 —— 这是 S1-R 修正的关键点。
+     * 僵尸检测 —— S1-R 修正的要点。
      *
      * 僵尸进程（state='Z'）的 /proc 条目仍然存在，starttime 仍可读且
      * 与记录一致。如果只比对 starttime，会把它判为 RUNNING，
      * 而实际上该进程早已终止、不响应任何业务。
      *
-     * 后果举例：OTA 想停旧版 -> query 返回 RUNNING ->
-     * 发 SIGTERM 给僵尸（无效果）-> 等到超时 -> SIGKILL 同样无效
-     * -> 卡在"停不下来"，或错误地认为旧版仍在服务。
-     *
-     * 因此：先看 state，再比 starttime。
+     * 注意顺序：先看 state，再比 starttime。
      */
-    if (ota_sup_read_state(identity->pid, &process_state) != 0) {
-        if (errno == ENOENT)
-            return OTA_SUP_STOPPED;
-
-        return OTA_SUP_UNKNOWN;
-    }
-
     if (!ota_sup_state_is_alive(process_state))
         return OTA_SUP_STOPPED;
+
+    /* S2-R：跨重启身份校验（boot_id） */
+    if (identity->boot_id[0] != '\0') {
+        char current_boot_id[OTA_SUP_BOOT_ID_MAX];
+
+        if (ota_sup_read_boot_id(
+                current_boot_id, sizeof(current_boot_id)) != 0) {
+            /*
+             * 有 boot_id 记录但当前读不到：
+             * 无法确认是否为同一启动周期，保守返回 UNKNOWN。
+             */
+            return OTA_SUP_UNKNOWN;
+        }
+
+        if (strcmp(identity->boot_id, current_boot_id) != 0) {
+            /*
+             * boot_id 不同 = 跨重启。
+             *
+             * 记录来自上一个启动周期，其中的 pid 在本周期毫无意义：
+             * 即使 pid 恰好存在、starttime 恰好相同，那也只是巧合，
+             * 绝不是当初记录的那个 Gateway 实例。
+             */
+            return OTA_SUP_STOPPED;
+        }
+    }
 
     if (current == identity->starttime)
         return OTA_SUP_RUNNING;
@@ -763,7 +961,7 @@ ota_sup_state_t ota_sup_query(
     const char *install_dir,
     pid_t *pid_out)
 {
-    ota_sup_identity_t identity = {0, 0};
+    ota_sup_identity_t identity = { .pid = 0, .starttime = 0, .boot_id = {0} };
 
     if (pid_out != NULL)
         *pid_out = -1;
@@ -811,6 +1009,54 @@ const char *ota_sup_state_name(ota_sup_state_t state)
 /* S2：自管 Supervisor                                                 */
 /* ------------------------------------------------------------------ */
 
+/*
+ * 有界回收一个刚被终止的子进程。
+ *
+ * 为什么不能用 waitpid(pid, NULL, 0)：
+ *   无界阻塞。若子进程处于 D 状态（不可中断睡眠，常见于
+ *   NFS/块设备 I/O 卡死），SIGKILL 也无法让它退出，
+ *   父进程会永久挂住——OTA Agent 就此卡死，比不回收更糟。
+ *
+ * 策略：轮询等待至多 timeout_ms；超时则放弃回收并返回 -1。
+ * 遗留的僵尸会在 OTA 进程自身退出时由 init 接管，
+ * 这远好于让整个升级流程挂死。
+ *
+ * 返回 0 已回收；1 超时未回收；-1 系统调用错误。
+ */
+static int reap_bounded(pid_t pid, int timeout_ms)
+{
+    const int step_ms = 20;
+    int waited = 0;
+
+    for (;;) {
+        int status = 0;
+        pid_t r;
+
+        do {
+            r = waitpid(pid, &status, WNOHANG);
+        } while (r < 0 && errno == EINTR);
+
+        if (r > 0)
+            return 0;      /* 已回收 */
+
+        if (r < 0)
+            return (errno == ECHILD) ? 0 : -1;
+
+        if (waited >= timeout_ms)
+            return 1;      /* 超时，放弃 */
+
+        struct timespec ts = {
+            .tv_sec = 0,
+            .tv_nsec = step_ms * 1000000L
+        };
+
+        while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+        }
+
+        waited += step_ms;
+    }
+}
+
 int ota_sup_start_managed(
     const char *install_dir,
     const char *executable,
@@ -818,7 +1064,7 @@ int ota_sup_start_managed(
     ota_sup_managed_t *handle_out)
 {
     pid_t pid = -1;
-    ota_sup_identity_t identity = {0, 0};
+    ota_sup_identity_t identity = { .pid = 0, .starttime = 0, .boot_id = {0} };
 
     if (install_dir == NULL || install_dir[0] == '\0' ||
         executable == NULL || executable[0] == '\0' ||
@@ -864,9 +1110,12 @@ int ota_sup_start_managed(
         /*
          * 子进程可能已经退出并成为僵尸，必须回收，
          * 否则会留下僵尸进程。
+         *
+         * 用有界回收：若进程卡在 D 状态无法终止，
+         * 不能让 OTA 永久挂在这里。
          */
         (void)kill(pid, SIGKILL);
-        (void)waitpid(pid, NULL, 0);
+        (void)reap_bounded(pid, 2000);
 
         errno = saved_errno;
         return -1;
@@ -879,9 +1128,16 @@ int ota_sup_start_managed(
          * 无法登记身份 = 无法管理。
          * 必须把刚启动的进程收掉，避免留下一个
          * "在跑但没有任何记录"的孤儿 Gateway。
+         *
+         * 同样使用有界回收，避免进程不响应信号时永久阻塞。
          */
         (void)kill(pid, SIGTERM);
-        (void)waitpid(pid, NULL, 0);
+
+        if (reap_bounded(pid, 1000) != 0) {
+            /* SIGTERM 未生效，升级为 SIGKILL 再等一次 */
+            (void)kill(pid, SIGKILL);
+            (void)reap_bounded(pid, 2000);
+        }
 
         errno = saved_errno;
         return -1;

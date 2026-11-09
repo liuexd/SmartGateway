@@ -3,7 +3,13 @@
 > 项目：SmartGateway-BSP / 100ASK i.MX6ULL
 > 分支：`feature/bsp-imx6ull`
 > 文档性质：**设计文档（DESIGN）**，不是验收报告
-> 状态：**方案设计与原型验证完成；主体未实现**。
+> 状态（2026-11-09 更新）：
+>   - **S1 / S1-R / S2-R 已实现并有实测记录**（身份校验 + 自管 Supervisor）
+>   - **S2 已实现**，可管理 OTA 自己 fork 的 Gateway
+>   - **尚未实现**：S3（接入升级流程）、S4（故障注入）、S5（BusyBox init 集成）
+>   - 因此本文档描述的完整"进程生命周期闭环"**仍未闭环**——
+>     当前完成的是"子进程管理能力"，不是"OTA 升级时序正确性"
+> 验收记录：[S1-R + S2](D25-2-S1R-S2-supervisor.md)
 > 前置：[D25-1](D25-1-arm-build-deployment-validation.md)、[D25-1B](D25-1B-board-environment-recheck.md)
 
 ## 0. 为什么先写设计而不写代码

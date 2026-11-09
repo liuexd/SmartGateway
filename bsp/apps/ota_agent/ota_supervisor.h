@@ -37,6 +37,11 @@ typedef enum {
 } ota_sup_state_t;
 
 /*
+ * boot_id 最大长度：内核格式为 36 字符 UUID，含结尾 NUL 留 40 字节。
+ */
+#define OTA_SUP_BOOT_ID_MAX 40
+
+/*
  * pidfile 中记录的身份。
  *
  * 为什么需要 starttime：
@@ -48,10 +53,21 @@ typedef enum {
  * 注意：starttime 单独**不能**作唯一标识——同一时钟节拍内 fork 的多个
  * 进程 starttime 相同（已实测）。唯一性来自 pid，starttime 只用于
  * 检测"这个 pid 还是不是当初那个进程"。
+ *
+ * 为什么还需要 boot_id（S2-R 新增）：
+ *   (pid, starttime) 只在**同一个启动周期**内有效。
+ *   重启后内核从头分配 pid、jiffies 也从 0 重新计，于是
+ *   "旧 pidfile 的 pid + starttime"完全可能在新周期中碰巧匹配到
+ *   一个无关进程，造成误判。
+ *   加上 boot_id（取自 /proc/sys/kernel/random/boot_id，每次启动都不同）
+ *   即可识别"这份记录来自上一次启动"，从而判为 STOPPED。
+ *
+ * boot_id 为空字符串表示"不校验"，用于兼容未写入该字段的旧 pidfile。
  */
 typedef struct {
     pid_t pid;
     unsigned long long starttime;
+    char boot_id[OTA_SUP_BOOT_ID_MAX];
 } ota_sup_identity_t;
 
 /*
@@ -93,6 +109,44 @@ int ota_sup_read_starttime(
 int ota_sup_read_state(
     pid_t pid,
     char *state_out);
+
+/*
+ * 单次读取 /proc/<pid>/stat，同时取出 status 与 starttime。
+ *
+ * 为什么需要这个接口（S2-R 修正）：
+ *   分别调用 ota_sup_read_state() 与 ota_sup_read_starttime() 会读两次
+ *   /proc/<pid>/stat，两次读取之间存在时间窗口。可能发生：
+ *     1. 第一次读取时 pid 仍是旧 Gateway；
+ *     2. 旧进程退出，pid 被内核复用；
+ *     3. 第二次读取读到的是新进程。
+ *   结果是把"旧进程的 starttime"与"新进程的状态"组合在一起判断，
+ *   得出的结论与任何一个真实快照都不对应。
+ *
+ *   合并为一次读取后，两个字段必然来自同一份 stat 内容，
+ *   不存在组合错配。
+ *
+ * 返回 0 成功；-1 失败，errno 有效（ENOENT 表示进程不存在）。
+ */
+int ota_sup_probe_process(
+    pid_t pid,
+    char *state_out,
+    unsigned long long *starttime_out);
+
+/*
+ * 读取本启动周期的 boot_id。
+ *
+ * 来源：/proc/sys/kernel/random/boot_id
+ * 这是一个 36 字符的 UUID，每次内核启动都会重新生成。
+ *
+ * 返回 0 成功；-1 失败（文件不存在、内容为空或超长）。
+ *
+ * 用途：识别 pidfile 是否来自上一次启动，避免跨重启的身份误匹配。
+ * 若该文件不可用（极少数内核配置），调用方可选择忽略此维度，
+ * 但应记录该限制——这意味着跨重启校验被削弱。
+ */
+int ota_sup_read_boot_id(
+    char *output,
+    size_t capacity);
 
 /*
  * 判断状态字符是否代表"仍在运行"。

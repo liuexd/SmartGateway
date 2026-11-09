@@ -395,6 +395,133 @@ static void test_invalid_args(void)
           errno == EPERM, "pid=1 被拒（绝不操作 init）");
 }
 
+/*
+ * S2-R 新增：启动后立即退出。
+ *
+ * 这是 S1-R 僵尸缺陷的现实来源：
+ * 子进程启动后极快退出，父进程采集 starttime 时可能已经读不到，
+ * 或读到了但进程已变僵尸。
+ *
+ * 必须验证：
+ *   1. 不留下无效 pidfile；
+ *   2. 不产生僵尸；
+ *   3. 不出现无期限阻塞（本测试用外部 timeout 兜底）。
+ */
+static void test_immediate_exit(void)
+{
+    printf("\n== 9. 启动后立即退出 ==\n");
+
+    (void)ota_sup_pidfile_remove(g_dir);
+
+    /*
+     * /bin/true 会立刻退出。可执行文件存在（所以 exec 成功），
+     * 但进程生命周期极短。
+     */
+    char *argv[] = { "/bin/true", NULL };
+    ota_sup_managed_t h = {0};
+
+    time_t start = time(NULL);
+
+    errno = 0;
+    int rc = ota_sup_start_managed(
+        g_dir, "/bin/true", argv, &h);
+
+    time_t elapsed_s = time(NULL) - start;
+
+    /*
+     * 两种可接受结果：
+     *   a) 采集身份失败 -> 返回 -1（已回收进程）
+     *   b) 采集成功但进程随即退出 -> 返回 0，但 query 应为 STOPPED
+     * 不接受：返回 0 且 pidfile 留下一条指向已死进程的记录却不自知。
+     */
+    if (rc != 0) {
+        CHECK(1, "启动失败并已清理（errno=%d: %s）",
+              errno, strerror(errno));
+
+        ota_sup_identity_t id;
+        errno = 0;
+
+        CHECK(ota_sup_pidfile_read(g_dir, &id) == -1 &&
+              errno == ENOENT,
+              "未留下无效 pidfile");
+    } else {
+        CHECK(1, "启动成功（进程可能已退出）");
+
+        /* 等它彻底退出 */
+        sleep_ms(300);
+
+        ota_sup_state_t st = ota_sup_query(g_dir, NULL);
+
+        CHECK(st == OTA_SUP_STOPPED,
+              "立即退出后 -> STOPPED（实际 %s）",
+              ota_sup_state_name(st));
+
+        int status = 0;
+
+        (void)ota_sup_stop_managed(g_dir, &h, 1000, &status, NULL);
+    }
+
+    /* 关键：不得有僵尸残留 */
+    int zombies = 0;
+    int max_pid = 200000;
+
+    for (pid_t p = 2; p < max_pid && zombies < 1; p++) {
+        /*
+         * 只检查自己可能创建的范围不现实，这里改用更直接的办法：
+         * 遍历 /proc 找 state=='Z' 且 ppid==getpid() 的进程。
+         */
+        char path[64];
+        snprintf(path, sizeof(path), "/proc/%ld/stat", (long)p);
+
+        FILE *fp = fopen(path, "r");
+
+        if (fp == NULL)
+            continue;
+
+        char line[1024];
+
+        if (fgets(line, sizeof(line), fp) == NULL) {
+            (void)fclose(fp);
+            continue;
+        }
+
+        (void)fclose(fp);
+
+        const char *rp = strrchr(line, ')');
+
+        if (rp == NULL || rp[1] == '\0')
+            continue;
+
+        char st_char = rp[2];
+
+        /* ppid 是 ')' 之后第 2 个 token（state 之后） */
+        long ppid = 0;
+        char *c = (char *)rp + 1;
+
+        for (int t = 0; t < 2 && *c != '\0'; t++) {
+            while (*c == ' ')
+                c++;
+
+            if (t == 1)
+                ppid = strtol(c, NULL, 10);
+
+            while (*c != ' ' && *c != '\0' && *c != '\n')
+                c++;
+        }
+
+        if (st_char == 'Z' && ppid == (long)getpid())
+            zombies++;
+    }
+
+    CHECK(zombies == 0,
+          "无僵尸残留（实际 %d 个）", zombies);
+
+    CHECK(elapsed_s <= 5,
+          "未出现长时间阻塞（耗时 %lds）", (long)elapsed_s);
+
+    (void)ota_sup_pidfile_remove(g_dir);
+}
+
 int main(void)
 {
     printf("ota_supervisor S2 自管 Supervisor 测试\n");
@@ -410,6 +537,7 @@ int main(void)
     test_no_zombie_after_stop();
     test_unknown_blocks_start();
     test_invalid_args();
+    test_immediate_exit();
 
     cleanup_temp_dir();
 

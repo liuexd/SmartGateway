@@ -1,23 +1,34 @@
 /*
- * ota_supervisor 单元测试（D25-2 S1）
+ * ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）
  *
- * 覆盖场景：
- *   1. 无 pidfile              -> STOPPED
- *   2. 捕获自身身份            -> RUNNING
- *   3. 进程退出后              -> STOPPED
- *   4. pid 复用（starttime 变） -> STOPPED，且不误杀
- *   5. pid=1                   -> UNKNOWN，绝不发信号
- *   6. pidfile 内容损坏         -> UNKNOWN / EINVAL
- *   7. pidfile 尾部垃圾         -> 拒绝
- *   8. pidfile 是符号链接       -> 拒绝
- *   9. comm 含空格与括号        -> starttime 解析正确
- *  10. pidfile 权限 0600
- *  11. 原子写后重新读取一致
- *  12. 目录不存在时 remove 不报错
- *  13. 路径截断检测
+ * 覆盖场景（与 main() 中实际调用一一对应）：
+ *   1.  无 pidfile                  -> STOPPED
+ *   2.  捕获自身身份                -> RUNNING
+ *   3.  进程退出后                  -> STOPPED
+ *   4.  pid 复用（starttime 变）     -> STOPPED，且不误杀
+ *   5.  pid=1                       -> UNKNOWN，绝不发信号
+ *   6.  pidfile 内容损坏             -> UNKNOWN / EINVAL
+ *   7.  pidfile 是符号链接           -> 拒绝
+ *   8.  comm 含空格与括号            -> starttime 解析正确
+ *   9.  pidfile 权限 0600
+ *  10.  原子写后重新读取一致
+ *  11.  目录不存在时 remove 不报错
+ *  12.  路径截断检测
+ *  13.  不完整身份拒绝写入
+ *  14.  僵尸进程                    -> STOPPED（S1-R）
+ *  15.  状态字符分类
+ *  16.  临时文件路径与清理（S2-R 修正了原假阳性路径）
+ *  17.  真正的并发写入（S2-R 新增）
+ *  18.  boot_id 跨重启校验（S2-R 新增）
+ *  19.  单次读取快照一致性（S2-R 新增）
  *
  * 本测试不启动 Gateway，只操作临时目录中的 pidfile，
  * 并使用 fork 出来的哨兵进程模拟"被管理的进程"。
+ *
+ * 注：S2-R 修正了原注释与实现的偏差——旧注释声称覆盖
+ * "启动后立即退出"场景，但 main() 实际没有对应测试。
+ * 该场景现由 ota_supervisor_s2_test.c 的快速退出用例覆盖，
+ * 此处不再声称。
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -673,7 +684,7 @@ static void test_state_char_classification(void)
 
 static void test_temp_file_isolation(void)
 {
-    printf("\n== 16. 临时文件按进程隔离 ==\n");
+    printf("\n== 16. 临时文件隔离与清理 ==\n");
 
     ota_sup_identity_t id;
 
@@ -683,18 +694,24 @@ static void test_temp_file_isolation(void)
           "写入 pidfile");
 
     /*
-     * 写入完成后临时文件应已 rename 掉。
-     * 同时验证 run 目录中不存在任何残留 tmp 文件。
+     * S2-R 修正：原测试用 "<install>/gateway.pid.tmp.*" 检查残留，
+     * 但临时文件实际位于 "<install>/run/" 下，路径少了一层 run，
+     * 导致该检查恒返回 0 —— 是**假阳性**，无论是否有残留都会通过。
+     *
+     * 这里改为检查正确目录，并额外确认目录确实存在，
+     * 避免"目录不存在所以找不到"又被当成通过。
      */
-    char dir[PATH_MAX + 32];
-    int dn = snprintf(dir, sizeof(dir), "%s/run", g_dir);
+    char run_dir[PATH_MAX + 16];
+    int dn = snprintf(run_dir, sizeof(run_dir), "%s/run", g_dir);
 
-    CHECK(dn > 0 && (size_t)dn < sizeof(dir), "路径合法");
+    CHECK(dn > 0 && (size_t)dn < sizeof(run_dir), "run 路径合法");
+    CHECK(access(run_dir, F_OK) == 0, "run 目录确实存在");
 
-    char cmd[PATH_MAX + 64];
+    char cmd[PATH_MAX + 96];
     int cn = snprintf(
         cmd, sizeof(cmd),
-        "ls '%s'/gateway.pid.tmp.* 2>/dev/null | wc -l", g_dir);
+        "ls '%s'/gateway.pid.tmp.* 2>/dev/null | wc -l",
+        run_dir);
 
     CHECK(cn > 0 && (size_t)cn < sizeof(cmd), "命令构造成功");
 
@@ -709,27 +726,321 @@ static void test_temp_file_isolation(void)
         (void)pclose(fp);
 
         CHECK(count == 0,
-              "无残留临时文件（实际 %d 个）", count);
+              "run/ 目录内无残留临时文件（实际 %d 个）", count);
     }
 
-    /* 并发写：两个不同 pid 的临时名不应冲突 */
-    ota_sup_identity_t a = { .pid = getpid(), .starttime = 111 };
-    ota_sup_identity_t b = { .pid = getpid(), .starttime = 222 };
+    /*
+     * 反向验证：手动放一个临时文件，确认上面的检查**能发现它**。
+     *
+     * 这一步很关键——只验证"没有残留"无法区分
+     * "确实没有"和"检查方法本身失效"。
+     */
+    char planted[PATH_MAX + 64];
+    int pn = snprintf(
+        planted, sizeof(planted),
+        "%s/gateway.pid.tmp.99999", run_dir);
+
+    if (pn > 0 && (size_t)pn < sizeof(planted)) {
+        FILE *pf = fopen(planted, "w");
+
+        if (pf != NULL) {
+            (void)fputs("planted\n", pf);
+            (void)fclose(pf);
+
+            fp = popen(cmd, "r");
+
+            if (fp != NULL) {
+                int count = -1;
+
+                if (fscanf(fp, "%d", &count) != 1)
+                    count = -1;
+
+                (void)pclose(fp);
+
+                CHECK(count == 1,
+                      "检查方法能发现人为残留（实际 %d 个）", count);
+            }
+
+            (void)unlink(planted);
+        }
+    }
+
+    /* 顺序写：后写者生效 */
+    ota_sup_identity_t a = {
+        .pid = getpid(), .starttime = 111, .boot_id = {0}
+    };
+    ota_sup_identity_t b = {
+        .pid = getpid(), .starttime = 222, .boot_id = {0}
+    };
 
     CHECK(ota_sup_pidfile_write(g_dir, &a) == 0, "写 A");
     CHECK(ota_sup_pidfile_write(g_dir, &b) == 0, "写 B");
 
     ota_sup_identity_t back;
 
-    CHECK(ota_sup_pidfile_read(g_dir, &back) == 0,
-          "读回成功");
+    CHECK(ota_sup_pidfile_read(g_dir, &back) == 0, "读回成功");
     CHECK(back.starttime == 222,
           "后写者生效（%llu）", back.starttime);
 }
 
+/*
+ * S2-R 新增：真正的并发写测试。
+ *
+ * 用 fork 让两个独立进程同时写同一个 pidfile，
+ * 验证最终文件格式完整、可被正确解析。
+ *
+ * 目的不是证明"并发安全"（那需要文件锁），
+ * 而是证明"不会产生半截或错乱内容"。
+ */
+static void test_concurrent_writers(void)
+{
+    printf("\n== 17. 并发写入不产生坏文件 ==\n");
+
+    /* 找到本进程的 starttime，让两个子进程用它构造不同记录 */
+    unsigned long long base = 0;
+
+    if (ota_sup_read_starttime(getpid(), &base) != 0) {
+        printf("  SKIP  无法读取 starttime\n");
+        return;
+    }
+
+    const int writers = 4;
+    const int rounds = 50;
+    pid_t pids[8];
+
+    if (writers > (int)(sizeof(pids) / sizeof(pids[0])))
+        return;
+
+    for (int i = 0; i < writers; i++) {
+        pid_t p = fork();
+
+        if (p == 0) {
+            /* 子进程：反复写 */
+            for (int r = 0; r < rounds; r++) {
+                ota_sup_identity_t id = {
+                    .pid = getpid(),
+                    .starttime = base + (unsigned long long)(i * 1000 + r),
+                    .boot_id = {0}
+                };
+
+                (void)ota_sup_pidfile_write(g_dir, &id);
+            }
+
+            _exit(0);
+        }
+
+        pids[i] = p;
+    }
+
+    for (int i = 0; i < writers; i++) {
+        if (pids[i] > 0)
+            (void)waitpid(pids[i], NULL, 0);
+    }
+
+    /*
+     * 并发写结束后，pidfile 必须是一个**完整可解析**的记录。
+     * 若临时文件名固定（旧实现），这里很可能读到半截内容。
+     */
+    ota_sup_identity_t final;
+
+    int rc = ota_sup_pidfile_read(g_dir, &final);
+
+    CHECK(rc == 0,
+          "并发写后 pidfile 仍可完整解析");
+
+    if (rc == 0) {
+        CHECK(final.pid > 1, "pid 合法（%ld）", (long)final.pid);
+        CHECK(final.starttime > 0,
+              "starttime 合法（%llu）", final.starttime);
+    }
+
+    /* 并发的临时文件也不应残留 */
+    char run_dir[PATH_MAX + 16];
+    snprintf(run_dir, sizeof(run_dir), "%s/run", g_dir);
+
+    char cmd[PATH_MAX + 96];
+    snprintf(
+        cmd, sizeof(cmd),
+        "ls '%s'/gateway.pid.tmp.* 2>/dev/null | wc -l",
+        run_dir);
+
+    FILE *fp = popen(cmd, "r");
+
+    if (fp != NULL) {
+        int count = -1;
+
+        if (fscanf(fp, "%d", &count) != 1)
+            count = -1;
+
+        (void)pclose(fp);
+
+        CHECK(count == 0,
+              "并发后无临时文件残留（实际 %d 个）", count);
+    }
+}
+
+/*
+ * S2-R 新增：boot_id 跨重启身份校验。
+ */
+static void test_boot_id(void)
+{
+    printf("\n== 18. boot_id 跨重启校验 ==\n");
+
+    char boot_id[OTA_SUP_BOOT_ID_MAX];
+
+    int rc = ota_sup_read_boot_id(boot_id, sizeof(boot_id));
+
+    CHECK(rc == 0, "能读取 boot_id");
+
+    if (rc != 0) {
+        printf("  NOTE  boot_id 不可用（%s），跨重启校验将退化\n",
+               strerror(errno));
+        return;
+    }
+
+    printf("  boot_id = %s\n", boot_id);
+    CHECK(strlen(boot_id) == 36,
+          "boot_id 长度为 36（实际 %zu）", strlen(boot_id));
+
+    /* 同一启动周期内，捕获的身份应带上 boot_id */
+    ota_sup_identity_t id;
+
+    CHECK(ota_sup_capture_identity(getpid(), &id) == 0,
+          "捕获身份");
+    CHECK(strcmp(id.boot_id, boot_id) == 0,
+          "身份中的 boot_id 与当前一致");
+
+    CHECK(ota_sup_pidfile_write(g_dir, &id) == 0,
+          "写入带 boot_id 的 pidfile");
+
+    ota_sup_identity_t back;
+
+    CHECK(ota_sup_pidfile_read(g_dir, &back) == 0,
+          "读回成功");
+    CHECK(strcmp(back.boot_id, boot_id) == 0,
+          "boot_id 往返一致");
+
+    ota_sup_state_t st = ota_sup_verify_identity(&back);
+
+    CHECK(st == OTA_SUP_RUNNING,
+          "同启动周期 -> RUNNING（实际 %s）",
+          ota_sup_state_name(st));
+
+    /*
+     * 模拟"来自上一次启动"的记录：
+     * 除 boot_id 外一切相同，必须判为 STOPPED。
+     */
+    ota_sup_identity_t stale = back;
+
+    for (size_t i = 0; i < sizeof(stale.boot_id); i++)
+        stale.boot_id[i] = '\0';
+
+    snprintf(stale.boot_id, sizeof(stale.boot_id),
+             "00000000-1111-2222-3333-444444444444");
+
+    st = ota_sup_verify_identity(&stale);
+
+    CHECK(st == OTA_SUP_STOPPED,
+          "boot_id 不同（模拟跨重启）-> STOPPED（实际 %s）",
+          ota_sup_state_name(st));
+
+    /* 兼容性：无 boot_id 的旧格式必须仍被接受 */
+    ota_sup_identity_t legacy = back;
+
+    memset(legacy.boot_id, 0, sizeof(legacy.boot_id));
+
+    st = ota_sup_verify_identity(&legacy);
+
+    CHECK(st == OTA_SUP_RUNNING,
+          "无 boot_id 的旧记录仍按 (pid,starttime) 判定 -> RUNNING");
+
+    /* 旧格式 pidfile 文本解析 */
+    write_raw_pidfile("4242 99999\n");
+
+    ota_sup_identity_t old_fmt;
+
+    CHECK(ota_sup_pidfile_read(g_dir, &old_fmt) == 0,
+          "两段式旧格式仍可解析");
+    CHECK(old_fmt.pid == 4242, "旧格式 pid 正确");
+    CHECK(old_fmt.starttime == 99999, "旧格式 starttime 正确");
+    CHECK(old_fmt.boot_id[0] == '\0', "旧格式 boot_id 为空");
+
+    /* 三段式新格式 */
+    write_raw_pidfile(
+        "4242 99999 1f2e3d4c-5b6a-7890-abcd-ef0123456789\n");
+
+    ota_sup_identity_t new_fmt;
+
+    CHECK(ota_sup_pidfile_read(g_dir, &new_fmt) == 0,
+          "三段式新格式可解析");
+    CHECK(strcmp(new_fmt.boot_id,
+                 "1f2e3d4c-5b6a-7890-abcd-ef0123456789") == 0,
+          "新格式 boot_id 正确");
+}
+
+/*
+ * S2-R 新增：一次读取的一致性。
+ *
+ * 验证 probe_process 返回的两个字段来自同一份 stat 内容：
+ * 对同一进程，probe 得到的 starttime 必须与单独 read_starttime 一致，
+ * state 必须与单独 read_state 一致。
+ */
+static void test_probe_consistency(void)
+{
+    printf("\n== 19. 单次读取快照一致性 ==\n");
+
+    char st_probe = '\0';
+    unsigned long long st_time = 0;
+
+    int rc = ota_sup_probe_process(
+        getpid(), &st_probe, &st_time);
+
+    CHECK(rc == 0, "probe_process 成功");
+
+    char st_single = '\0';
+    unsigned long long time_single = 0;
+
+    CHECK(ota_sup_read_state(getpid(), &st_single) == 0,
+          "read_state 成功");
+    CHECK(ota_sup_read_starttime(getpid(), &time_single) == 0,
+          "read_starttime 成功");
+
+    CHECK(st_probe == st_single,
+          "state 一致（'%c' vs '%c'）", st_probe, st_single);
+    CHECK(st_time == time_single,
+          "starttime 一致（%llu vs %llu）",
+          st_time, time_single);
+
+    /* 只取 state 时不应要求 starttime */
+    char only_state = '\0';
+
+    CHECK(ota_sup_read_state(getpid(), &only_state) == 0,
+          "仅取 state 也可成功");
+
+    /* 只取 starttime 时不应要求 state */
+    unsigned long long only_time = 0;
+
+    CHECK(ota_sup_read_starttime(getpid(), &only_time) == 0,
+          "仅取 starttime 也可成功");
+
+    /* 两个都不要求应被拒绝 */
+    errno = 0;
+
+    CHECK(ota_sup_probe_process(getpid(), NULL, NULL) == -1 &&
+          errno == EINVAL,
+          "两个输出都为 NULL 被拒绝");
+
+    /* 不存在的 pid */
+    errno = 0;
+
+    CHECK(ota_sup_probe_process(999999, &st_probe, &st_time) == -1 &&
+          errno == ENOENT,
+          "不存在的 pid -> ENOENT");
+}
+
 int main(void)
 {
-    printf("ota_supervisor 单元测试（D25-2 S1 + S1-R）\n");
+    printf("ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）\n");
 
     make_temp_dir();
     printf("临时目录: %s\n", g_dir);
@@ -750,6 +1061,9 @@ int main(void)
     test_zombie_process();
     test_state_char_classification();
     test_temp_file_isolation();
+    test_concurrent_writers();
+    test_boot_id();
+    test_probe_consistency();
 
     cleanup_temp_dir();
 
