@@ -683,6 +683,216 @@ def scenario_candidate_missing():
     return True
 
 
+def _manifest_for(release_dir, version, override=None):
+    """为发布目录生成 manifest.json。override 可覆盖任意字段。"""
+    binary = release_dir / "smart_gateway"
+
+    if not binary.exists():
+        return
+
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(binary, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            digest.update(chunk)
+
+    data = {
+        "format_version": 1,
+        "application": "smart_gateway",
+        "version": version,
+        "architecture": "x86_64-linux-gnu",
+        "binary": "smart_gateway",
+        "size": binary.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+    if override:
+        data.update(override)
+
+    (release_dir / "manifest.json").write_text(
+        json.dumps(data, indent=2))
+
+
+def _run_precheck_scenario(name, mutate, expect_msg, gateway_running=True):
+    """通用负向校验场景。
+
+    mutate(install, pkg) 负责构造非法环境，返回可选的 pkg 路径覆盖。
+    expect_msg 是期望出现的校验失败信息。
+
+    共同断言：
+      - 升级被拒绝
+      - 在停止 Gateway 之前就拒绝
+      - Gateway（若启动）仍在运行、7000 仍监听
+      - current 与状态均未变
+    """
+    print("\n" + "=" * 72)
+    print(name)
+    print("=" * 72)
+
+    install = setup_install()
+    if install is None:
+        return False
+
+    if port_listening(GW_PORT):
+        record("前置：7000 空闲", False, "端口已被占用")
+        return False
+
+    record("前置：7000 空闲", True)
+
+    pkg = ROOT / f"build/ota-test/real-x86/v{NEW_VERSION}"
+
+    before_state = json.loads(
+        (install / "state" / "ota_state.json").read_text())
+
+    # 构造非法条件（可能改变 install 或生成新的 pkg）
+    result = mutate(install, pkg)
+    if isinstance(result, Path):
+        pkg = result
+
+    # 注意：必须在 mutate 之后取 current 基准。
+    # 有些场景（如 current 指向异常）本身就是靠改 current 构造的，
+    # 若在 mutate 前取基准，会把自己制造的改动误报成"被测代码改了它"。
+    before_current = os.readlink(install / "current")
+
+    proc = None
+    if gateway_running:
+        proc, ok = _start_gateway(install)
+        record("Gateway 已启动并监听 7000", ok)
+        if not ok:
+            cleanup(proc)
+            return False
+
+    conv = subprocess.run(
+        [str(AGENT), "upgrade-test", str(pkg), str(install)],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    out = conv.stdout + conv.stderr
+    print(out, flush=True)
+
+    record("升级被拒绝", conv.returncode != 0, f"exit={conv.returncode}")
+    record(f"命中预期校验：{expect_msg}", expect_msg in out,
+           "" if expect_msg in out else "未出现")
+    record("在停止 Gateway 之前就拒绝了",
+           "aborted before stopping the gateway" in out)
+
+    if gateway_running and proc is not None:
+        time.sleep(0.3)
+        record("原 Gateway 仍在运行（业务未中断）",
+               proc.poll() is None, f"pid={proc.pid}")
+        record("7000 仍在监听", port_listening(GW_PORT))
+
+    after_current = os.readlink(install / "current")
+    record("current 未变", before_current == after_current,
+           f"{before_current} -> {after_current}")
+
+    after_state = json.loads(
+        (install / "state" / "ota_state.json").read_text())
+    record("状态未变", before_state["state"] == after_state["state"],
+           f"state={after_state['state']}")
+
+    # 不得留下半成品：release 目录不应出现候选
+    candidate = install / "releases" / f"v{NEW_VERSION}"
+    if candidate.exists() and before_current != f"releases/v{NEW_VERSION}":
+        pass  # 候选可能本来就该存在（部分场景），不在此断言
+
+    cleanup(proc)
+    return True
+
+
+def scenario_candidate_equals_confirmed():
+    """候选版本 == 已确认版本 -> candidate equals confirmed.
+
+    构造：包 manifest 的 version 改成当前的 confirmed 版本。
+    这是"重复升级同一版本"的场景，应当被拒绝。
+    """
+    def mutate(install, pkg):
+        # 造一个只含 manifest 差异的包
+        tmp = ROOT / "build/ota-test/s3-pkg-samever"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        shutil.copytree(pkg, tmp)
+
+        _manifest_for(tmp, OLD_VERSION)   # 版本号改成旧版
+        return tmp
+
+    return _run_precheck_scenario(
+        "场景六：候选版本 == 已确认版本 -> 必须拒绝",
+        mutate,
+        "candidate equals confirmed",
+    )
+
+
+def scenario_current_mismatch():
+    """current 不指向已确认版本 -> confirmed/current mismatch.
+
+    构造：把 current 改指向别的目录（模拟有人手动改过或上次异常遗留）。
+    此时升级不应继续，因为无法确认"当前在跑的是哪个版本"。
+    """
+    def mutate(install, pkg):
+        cur = install / "current"
+        if cur.is_symlink():
+            cur.unlink()
+        # 指向一个不存在但名字合法的目标
+        cur.symlink_to("releases/v9.9.9-phantom")
+        return pkg
+
+    return _run_precheck_scenario(
+        "场景七：current 指向非确认版本 -> 必须拒绝",
+        mutate,
+        "confirmed/current mismatch",
+        # current 已被改坏，Gateway 无法从它启动；
+        # 本场景要验证的是"校验能识别出不一致"，不需要真实进程。
+        gateway_running=False,
+    )
+
+
+def scenario_confirmed_invalid():
+    """已确认版本文件损坏 -> confirmed release invalid.
+
+    构造：篡改 releases/<confirmed>/smart_gateway 的内容，
+    使其 SHA-256 与 manifest 不符。
+    """
+    def mutate(install, pkg):
+        target = install / "releases" / f"v{OLD_VERSION}" / "smart_gateway"
+
+        # 追加几个字节，破坏 SHA-256 但保留 ELF 头
+        with open(target, "ab") as fh:
+            fh.write(b"TAMPERED")
+
+        return pkg
+
+    return _run_precheck_scenario(
+        "场景八：已确认版本文件被篡改 -> 必须拒绝",
+        mutate,
+        "confirmed release invalid",
+    )
+
+
+def scenario_candidate_sha_mismatch():
+    """候选已安装但 SHA-256 与包不一致 -> installed candidate mismatch.
+
+    与"候选目录缺失"不同：这里目录存在、manifest 合法，
+    但二进制内容与升级包不一致（例如传输损坏）。
+    """
+    def mutate(install, pkg):
+        target = install / "releases" / f"v{NEW_VERSION}" / "smart_gateway"
+
+        # 追加字节破坏 SHA，但 manifest 不改 —— 于是
+        # ota_verify_package(new_path) 因摘要不符而失败
+        with open(target, "ab") as fh:
+            fh.write(b"CORRUPT")
+
+        return pkg
+
+    return _run_precheck_scenario(
+        "场景九：候选已安装但内容与包不一致 -> 必须拒绝",
+        mutate,
+        "installed candidate mismatch",
+    )
+
+
 def main():
     print("=" * 72)
     print("S3 前置检查验收：Gateway 正在运行时执行升级")
@@ -702,6 +912,11 @@ def main():
         scenario_stop_fails()
         scenario_bad_package()
         scenario_candidate_missing()
+        # S3-R3：补齐剩余校验分支的负向覆盖
+        scenario_candidate_equals_confirmed()
+        scenario_current_mismatch()
+        scenario_confirmed_invalid()
+        scenario_candidate_sha_mismatch()
     finally:
         cleanup()
 

@@ -26,6 +26,8 @@
   - S3-R 复审修正：包校验前置（损坏包不再导致业务中断）
   - S3-R2 校验补全：前置校验扩展为 **activate 的全部只读条件**，
     两者**共用同一个 `activate_check()`**，避免规则分叉
+  - S3-R3 测试补强：负向用例覆盖 **7 个校验分支**（S3 前置 40 → 73 项）；
+    系统化说明 PID 身份与进程停止的**保证边界**
   - 修复的真实缺陷：僵尸误判、临时文件并发、假阳性测试、
     /proc 竞争窗口、缺 boot_id、无界 waitpid、端口检查顺序陷阱、
     损坏包导致业务中断、**候选未 stage 导致业务中断**、测试误杀无关进程
@@ -77,6 +79,7 @@
 - [D25-2 S3 Supervisor 接入升级流程](docs/D25-2-S3-supervisor-integration.md)
 - [D25-2 S3-R 复审问题修正](docs/D25-2-S3R-review-fixes.md)
 - [D25-2 S3-R2 前置校验补全](docs/D25-2-S3R2-preflight-completeness.md)
+- [D25-2 S3-R3 负向测试与 PID 身份边界](docs/D25-2-S3R3-negative-tests-and-pid-boundaries.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）
