@@ -172,6 +172,7 @@ mv "$TMP" "$INITTAB"
 sync
 
 say "已在 $INITTAB 注册 respawn 条目"
+say "（此后由 S99smartgateway start 添加、stop 移除）"
 
 # ------------------------------------------------------------
 # 5. 让新配置立即生效

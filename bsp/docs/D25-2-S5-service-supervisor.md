@@ -450,3 +450,129 @@ gateway: status: running pid=336 starttime=1562
   inittab `respawn`，板端 21/21 验收通过。
 - 原「S5 不做 G4a」的表述有误，已在 S5-R1 修正：`S99 start` 会启动 Gateway，
   开机后业务即可用。
+
+## 十二、S5-R2：stop/respawn 冲突、fallback 语义、领养 PID 复用
+
+S5-R1 引入 respawn 之后暴露了三个新问题。三者都必须真实注入才能验证，
+不能用"看起来对"代替。
+
+### 12.1 问题一：stop 与 respawn 冲突（stop 是假的）
+
+实测现象：
+
+```
+$ /etc/init.d/S99smartgateway stop
+Stopping smartgateway
+smartgateway stopped                    <- 报告成功
+$ /etc/init.d/S99smartgateway status
+supervisor: running pid=27859 ppid=1    <- 它又回来了
+```
+
+**根因不是"停不掉"**：单独测 SIGTERM，supervisor **500ms** 就退出了。
+真正的原因是 init 立刻按 respawn 拉起新实例，而 stop 的等待循环
+看到"还有进程"就判定超时，于是发 SIGKILL —— 打在了刚启动的新实例上，
+然后又是新一轮 respawn。
+
+试过四个方案，前三个都不收敛：
+
+| 方案 | 做法 | 结果 |
+|------|------|------|
+| A | stop 期间移除 inittab 条目，结束前恢复 + HUP | HUP 那一刻 init 立刻拉起，回到原点 |
+| B | 结束前恢复条目但不 HUP | stop 后崩溃时 init 用内存里的旧配置，**该窗口内自愈失效** |
+| C | 停止标记文件，supervisor 启动时读标记退出 | 能收敛，但删标记后 respawn 仍 armed，init 继续拉起 —— 实测 stop 报成功、3 秒后又出现 |
+| **D** | **移除条目 = 停止** | 收敛 |
+
+方案 D 的核心认识：**"停止一个被 respawn 的服务"的正确语义就是取消注册**。
+
+```
+stop  -> 移除 respawn 条目 + HUP + 停进程
+start -> 注册条目 + HUP + 等 init 拉起 + 启动 Gateway
+```
+
+这消除了一切拉锯：条目不存在时 init 不会重拉，stop 的结果是稳定状态。
+
+会不会让 G4b 永久失效？不会 —— `start` 会重新注册，而开机流程
+（`rcS`）总会调用 `start`。`status` 也会明确提示：
+
+```
+supervisor: stopped
+gateway: unknown (no supervisor)
+NOTICE: respawn 条目不存在，崩溃自愈当前不可用
+        执行 '/etc/init.d/S99smartgateway start' 恢复
+```
+
+### 12.2 问题二：fallback 掩盖真实故障
+
+原实现在 init 未按时拉起时自己 `nohup` fork 一个 supervisor。两个后果：
+
+1. 该进程不是 respawn 拉起的，崩溃后 init 不会重拉 —— **G4b 静默失效**
+2. init 稍后重载 inittab 时会再拉一个，两个实例争同一 socket
+
+改为：注册条目 + `kill -HUP 1` + 等待 + **失败即报错**。
+
+```
+FAIL: respawn 条目已注册，但 init 未能在 10s 内拉起 supervisor
+      检查：1) $BIN 可执行  2) $ROOT/service.conf 存在
+            3) $LOG 中的错误  4) /etc/inittab 是否可写
+```
+
+不提供掩盖故障的 fallback：那会让系统进入"服务在跑但不会自愈"的状态，
+而运维看到 start 成功就以为一切都好。
+
+验证方式：把二进制改名制造真实失败，断言 `S99 start` **失败**
+且没有留下一个不会自愈的伪 supervisor。
+
+### 12.3 问题三：领养进程的 PID 复用
+
+这个风险在两种归属关系下严重程度完全不同：
+
+| 归属 | 风险 | 原因 |
+|------|------|------|
+| 原生子进程 | **结构上不存在** | 已退出但未 wait 的子进程是僵尸，pid 不会被复用。在"未回收"期间 `self->child` 必然仍指向它或它的僵尸 |
+| 领养进程 | **真实存在** | 它退出后由它的实际父进程回收，pid 可立刻复用。没有"未回收"这层保护 |
+
+因此领养路径在每次发信号前重新读 `/proc` 复核 `(pid, starttime)`：
+
+```c
+if (self->adopted) {
+    if (read_stat(self->child, &st, &live) != 0 ||
+        !state_is_alive(st) ||
+        live != self->child_start) {
+        /* 目标已消失或身份已变：不能发信号 */
+        ...
+        return 0;
+    }
+}
+```
+
+SIGKILL 前也要复核 —— 从上次复核到那时已过 `stop_timeout_ms`（默认 5 秒），
+窗口比 SIGTERM 那次大得多。
+
+**局限（L13，不报告为 PASS）**：复核只能把窗口缩小到
+「`read_stat` 返回 与 `kill` 之间」，无法消除 —— 需要 pidfd
+（Linux 5.1+，板端 4.9.88 不可用）。因此领养路径的停止是**弱保证**。
+
+缓解办法是尽量不进入领养状态：正常情况下 respawn 拉起的 supervisor
+会发现 Gateway 已随上一代 supervisor 一起退出（它是其子进程，
+收到同一组信号），从而无需领养。
+
+### 12.4 验收
+
+`tests/test_s5r2_stop_respawn.py`，**27/27 PASS**（板端）：
+
+```
+问题一：stop 必须真正停止（不被 respawn 拉回）
+  stop 后 supervisor 确实不在了 / 等待 5 秒后仍无 supervisor
+  stop 后 respawn 条目已移除 / status 明确指出自愈不可用
+问题一补充：stop→start 之后崩溃自愈仍然有效
+  start 后 respawn 条目已恢复 / 崩溃后新 pid 出现
+问题一补充：status 与真实状态一致
+问题二：respawn 失败时显式报错（不静默 fallback）
+  start 在二进制不可用时失败 / 没有留下不会自愈的伪 supervisor
+问题三：领养进程停止时的身份复核
+  领养后能停止 / 无关进程未被误杀（试金石）
+  L13 已明确记录（不做假 PASS）
+```
+
+回归：L12 21/21、IPC 58/58、D23 27/27、S3 75/75、S3-R4 38/38、
+S4 67/67、S5 33/33、x86 单测全通过。

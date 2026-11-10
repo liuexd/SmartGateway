@@ -88,6 +88,7 @@
 | --- | --- | --- |
 | L10 | 「SIGKILL 也无效」分支无集成测试 | D 状态无法构造：x86 与板端均缺 FUSE 开发包、无 NFS、无 root |
 | L11 | 领养的 Gateway 管理能力弱于原生 | respawn 模式下新 supervisor 不是其父进程，`waitpid` 无效，只能 kill + 轮询 |
+| L13 | 领养路径的停止操作是弱保证 | 发信号前已复核 `(pid, starttime)`，但 `read_stat` 与 `kill` 之间仍有窗口 —— 需要 pidfd（Linux 5.1+），板端 4.9.88 不可用 |
 | — | 串口模式未板端验证 | 全部验收以 `--no-serial` 运行，`/dev/ttymxc2` 路径未实测 |
 | — | 真实北向云服务器未验证 | 上游为本地 Mock |
 | — | eMMC 坏块 / 只读挂载未验证 | 未做存储层故障注入 |

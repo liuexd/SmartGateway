@@ -809,6 +809,66 @@ static int stop_child(supervisor_t *self, service_ipc_reply_t *reply)
         return 0;
     }
 
+    /*
+     * ============================================================
+     * 发信号前的身份复核（S5-R2 问题三）
+     * ============================================================
+     *
+     * 上面的 child_gone() 与下面的 kill() 之间有一个窗口：
+     * 进程可能恰好在这几微秒内退出，pid 被内核重新分配。
+     * 若不复核，信号会打到一个完全无关的进程上。
+     *
+     * 这个风险在两种归属关系下严重程度不同：
+     *
+     *   原生子进程：
+     *     风险**结构上不存在**。已退出但未被 wait 的子进程
+     *     处于僵尸态，pid 不会被复用。因此在"未回收"期间，
+     *     self->child 必然仍指向那个进程或它的僵尸。
+     *     kill 它最多是"给僵尸发信号"（无害，返回 ESRCH）。
+     *
+     *   领养进程（adopted=1）：
+     *     风险**真实存在**。它退出后由 init 或它的实际父进程
+     *     回收，pid 可以立刻被复用。我们没有"未回收"这层保护。
+     *
+     * 因此领养路径必须每次发信号前重新读 /proc 复核身份。
+     * 这不是"更仔细"，而是补上一条本来就缺失的不变量。
+     *
+     * 局限（必须明确，记为 L13）：
+     *   复核只能把窗口缩小到"read_stat 返回 与 kill 之间"，
+     *   无法彻底消除 —— 那需要 pidfd（Linux 5.1+，板端 4.9.88
+     *   不可用）。因此领养路径的停止操作是**弱保证**：
+     *   极小概率下仍可能误伤无关进程。
+     *   缓解办法是尽量让 supervisor 不进入领养状态：正常情况下
+     *   respawn 拉起的 supervisor 会发现 Gateway 已随上一代
+     *   supervisor 一起退出（因为它是其子进程，收到同一组信号），
+     *   从而无需领养。
+     */
+    if (self->adopted) {
+        char st = 0;
+        unsigned long long live = 0;
+
+        if (read_stat(self->child, &st, &live) != 0 ||
+            !state_is_alive(st) ||
+            live != self->child_start) {
+            /*
+             * 目标已消失或身份已变：不能发信号。
+             * 按"已退出"处理 —— 我们本来就是要让它停，
+             * 它已经不在了，目标达成。
+             */
+            self->child = 0;
+            self->adopted = 0;
+            remove_pidfile(self);
+
+            if (reply != NULL) {
+                reply->result = SERVICE_IPC_OK;
+                snprintf(reply->detail, sizeof(reply->detail),
+                         "already exited (identity changed)");
+            }
+
+            return 0;
+        }
+    }
+
     if (kill(self->child, SIGTERM) != 0 && errno != ESRCH) {
         int saved = errno;
         errno = saved;
@@ -824,7 +884,25 @@ static int stop_child(supervisor_t *self, service_ipc_reply_t *reply)
 
         if (now_ms() >= deadline) {
             if (!forced) {
-                /* SIGTERM 未生效：升级为 SIGKILL */
+                /*
+                 * SIGTERM 未生效：升级为 SIGKILL。
+                 *
+                 * 领养路径同样需要复核 —— 从上次复核到这里
+                 * 已经过了 stop_timeout_ms（默认 5 秒），
+                 * 窗口比 SIGTERM 那次大得多。
+                 */
+                if (self->adopted) {
+                    char st = 0;
+                    unsigned long long live = 0;
+
+                    if (read_stat(self->child, &st, &live) != 0 ||
+                        !state_is_alive(st) ||
+                        live != self->child_start) {
+                        /* 目标已消失：停止目标已达成 */
+                        break;
+                    }
+                }
+
                 if (kill(self->child, SIGKILL) != 0 &&
                     errno != ESRCH)
                     return -1;
