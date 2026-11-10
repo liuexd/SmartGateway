@@ -171,6 +171,18 @@ make test-tcp        # 需要 nc 等依赖的 TCP 集成测试
 make tests-bin       # 构建单测、集成测试及手动联调工具
 make test-asan       # AddressSanitizer + UBSan
 make test-tsan       # ThreadSanitizer
+
+# OTA 与服务管理（D23 / D25-2）
+sh tests/setup_ota_test_env.sh                     # 一次性准备 OTA 测试产物
+python3 tests/test_ota_northbound_fault.py --prepare   # 北向故障与回滚
+python3 tests/test_s3_preflight_running.py             # 前置校验完整性
+python3 tests/test_s3r4_recovery.py                    # 激活前失败恢复
+python3 tests/test_s4_fault_matrix.py                  # 故障矩阵 F1–F10
+python3 tests/test_s5_supervisor_e2e.py                # 服务监督进程
+
+make supervisor        # 构建 Service Supervisor
+make supervisor-test   # IPC 协议 + supervisor 单元测试
+make supervisor-arm    # ARM 交叉编译
 ~~~
 
 M7-7 提交说明记录了单测与 Sanitizer 通过，但 GitHub 仓库目前未配置可供公开查阅的 CI 工作流运行记录。实际测试结果以当前机器与环境中的运行输出为准；部分 Sanitizer 对系统环境有要求。
@@ -190,6 +202,55 @@ M7-7 提交说明记录了单测与 Sanitizer 通过，但 GitHub 仓库目前�
 | M7-8 | 真实 STM32 + ESP8266 光敏节点、双节点最终联调 | **计划中 / 未验收** |
 
 完整 Commit、提交时间和每阶段关键变化请查看 [CHANGELOG.md](CHANGELOG.md)。M7-8 完成后还需要回归测试、断线重连与长期稳定性验收，才能正式结项。
+
+## BSP 与 OTA 里程碑（i.MX6ULL）
+
+板端：100ASK i.MX6ULL Pro / Linux 4.9.88 / Buildroot 2020.02 / glibc 2.30 / BusyBox init。
+
+| 阶段 | 内容 | 验证环境 | 状态 |
+| --- | --- | --- | --- |
+| D25-1 | ARM 交叉编译与板端兼容性 | 板端 | 通过 |
+| D25-2 S1–S2 | 进程身份（pidfile + starttime + boot_id） | x86 | 通过 |
+| D25-2 S3 | 升级流程插入前置检查 | x86 | 通过 |
+| D25-2 S3-R~R4 | 安全复审修正、前置校验完整性、激活前恢复 | x86 | 通过 |
+| D25-2 S4 | 故障注入矩阵 F1–F10 | x86 | 通过（67 项） |
+| D25-2 S5 | Service Supervisor + BusyBox init | **x86 + 板端** | 通过 |
+| D25-2 S6 | 板端正常升级与故障回滚 | **板端** | 通过 |
+| D25-2 S7 | 板端掉电恢复 | **板端（真实断电）** | 通过 |
+
+### OTA 与服务管理解决的问题
+
+| 问题 | 原状 | 现状 |
+| --- | --- | --- |
+| L3 前置校验依赖 pidfile | Gateway 由别的方式启动时 pidfile 不存在，OTA 会启动第二个实例 | **已解决**：所有权在 supervisor 内存中，板端实测「删掉 pidfile 仍正确」 |
+| L6 停止外部进程的 TOCTOU | pidfd 需 Linux 5.1+，板端 4.9.88 无法消除 | **已解决**：supervisor 停止自己的子进程，pid 不可能被复用 |
+
+两者通过**转移所有权**解决，而非更仔细的检查。
+
+部署结构：
+
+```
+/opt/smartgateway/
+├── bin/{ota_agent,service_supervisor}
+├── current -> releases/v0.x.0
+├── releases/v0.x.0/{smart_gateway,manifest.json}
+├── run/          supervisor.sock, service.pid
+├── state/ota_state.json
+└── service.conf
+/etc/init.d/S99smartgateway
+```
+
+### 已知限制（不报告为 PASS）
+
+| 编号 | 内容 |
+| --- | --- |
+| L10 | SIGKILL 也无效（D 状态）分支无集成测试 —— x86 与板端均无法构造 |
+| L12 | supervisor 崩溃自愈（G4b）未实现，需 `/etc/inittab` 的 `respawn`，与现有 `start-stop-daemon` pidfile 管理冲突 |
+| — | 串口模式：全部验证以 `--no-serial` 运行，真实 `/dev/ttymxc2` 路径未板端验证 |
+| — | 真实北向云平台、eMMC 坏块/只读挂载未做故障注入 |
+| L5 | 无 CI，所有 PASS 均为手工执行 |
+
+详细设计见 `bsp/docs/D25-2-*.md`。
 
 ## 后续方向（非 M7 必选）
 
