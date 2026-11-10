@@ -7,6 +7,7 @@
 #include "ota_process.h"
 #include "ota_health.h"
 #include "ota_supervisor.h"
+#include "ota_oplog.h"
 #include "ota_state_io.h"
 #include "ota_verify.h"
 
@@ -33,6 +34,20 @@
 #define L1_TIMEOUT_MS 3000
 #define L2_TIMEOUT_MS 5000
 #define STOP_TIMEOUT_MS 3000
+
+/*
+ * SIGKILL 之后的等待上限（S4/F1）。
+ *
+ * 为什么需要单独一个超时：
+ *   SIGKILL 无法被捕获或忽略，进程**一定**会在内核调度到的
+ *   下一时刻终止——除非它卡在不可中断睡眠（D 状态），
+ *   那种情况下信号会一直挂起。
+ *
+ *   因此 SIGKILL 之后的等待应显著短于 SIGTERM：正常情况
+ *   几百毫秒内就消失，等到 2 秒还没消失只能是在 I/O 里。
+ *   多等无益，只会拖长失败路径。
+ */
+#define KILL_TIMEOUT_MS 2000
 
 static long long now_ms(void)
 {
@@ -609,7 +624,59 @@ static int preflight_package(
 }
 
 /*
- * S3：升级前置检查（设计文档 5.2 节的 0a–0c 步骤）。
+ * wait_for_exit - 有界轮询等待 Gateway 退出
+ *
+ * 用 ota_sup_query 判断，因为它基于 (pid, starttime) 身份校验，
+ * 能正确区分"还是同一个进程"与"pid 被复用"。
+ *
+ * 返回：
+ *   OTA_SUP_STOPPED  已退出（含等待期间自行退出）
+ *   OTA_SUP_RUNNING  超时仍存活
+ *   OTA_SUP_UNKNOWN  过程中身份变为无法判定
+ *
+ * elapsed_ms 输出实际等待时长，供日志判断故障类型。
+ */
+static ota_sup_state_t wait_for_exit(
+    const char *install_dir,
+    int timeout_ms,
+    int *elapsed_ms)
+{
+    const int step_ms = 50;
+    int waited = 0;
+
+    if (elapsed_ms != NULL)
+        *elapsed_ms = 0;
+
+    for (;;) {
+        ota_sup_state_t state =
+            ota_sup_query(install_dir, NULL);
+
+        if (state != OTA_SUP_RUNNING) {
+            if (elapsed_ms != NULL)
+                *elapsed_ms = waited;
+            return state;
+        }
+
+        if (waited >= timeout_ms) {
+            if (elapsed_ms != NULL)
+                *elapsed_ms = waited;
+            return OTA_SUP_RUNNING;
+        }
+
+        struct timespec ts = {
+            .tv_sec = 0,
+            .tv_nsec = step_ms * 1000000L
+        };
+
+        while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+        }
+
+        waited += step_ms;
+    }
+}
+
+/*
+ * prepare_existing_gateway - 升级前置检查（设计文档 5.2 节 0a–0c）
  *
  * 正式部署中 Gateway 可能正在运行，而 D23 的测试形态假设它没在跑。
  * 这里补齐"升级前必须先确认并处理既有实例"的逻辑。
@@ -774,53 +841,109 @@ static int prepare_existing_gateway(const char *install_dir)
      * 因为它基于 (pid, starttime) 身份校验，
      * 能正确区分"还是同一个进程"与"pid 被复用"。
      */
-    const int step_ms = 50;
-    const int timeout_ms = STOP_TIMEOUT_MS;
     int waited = 0;
 
-    for (;;) {
-        state = ota_sup_query(install_dir, NULL);
+    if (wait_for_exit(
+            install_dir, STOP_TIMEOUT_MS, &waited) !=
+        OTA_SUP_STOPPED) {
+        /*
+         * SIGTERM 未生效。
+         *
+         * S4/F1：这里必须升级为 SIGKILL，而不是直接放弃。
+         *
+         * S3 阶段的原实现选择"超时即中止、不发 SIGKILL"，
+         * 理由写的是"若卡在 D 状态 SIGKILL 也无效"。这个理由
+         * 只对 **不可中断睡眠（D）** 成立，但把两种情况混同了：
+         *
+         *   情况一：进程在用户态忽略了 SIGTERM（信号被 sigaction
+         *           设成 SIG_IGN，或 handler 里死循环）。
+         *           -> SIGKILL 一定有效，内核直接终止。
+         *   情况二：进程卡在 D 状态（磁盘/NFS I/O）。
+         *           -> SIGKILL 挂起，进程不会立刻消失。
+         *
+         * 原实现按情况二处理情况一，把一个**可自动恢复**的故障
+         * 变成了"必须人工介入"。实测证据（F1，/tmp/stubborn
+         * 忽略 SIGTERM）：
+         *   FAIL: gateway pid=... did not exit within 3000 ms
+         *   而该进程此后仍然存活，完全可以被 SIGKILL 杀掉。
+         *
+         * 正确顺序：SIGKILL 是"确认无法优雅退出"后的标准降级，
+         * 用**等待结果**来区分两种情况，而不是靠猜：
+         *   SIGKILL 后退出     -> 情况一，升级可以继续
+         *   SIGKILL 后仍不退出 -> 情况二，必须中止并人工介入
+         */
+        puts("NOTICE: SIGTERM ignored; escalating to SIGKILL");
 
-        if (state == OTA_SUP_STOPPED) {
+        /*
+         * 发 SIGKILL 之前**再次**校验身份。
+         *
+         * 理由与 SIGTERM 前那次一致：从上次 query 到现在又过了
+         * 3 秒，期间进程可能已退出、pid 可能已被复用。
+         * 对身份不明的 pid 发信号是禁止的（要求 4.2）。
+         */
+        ota_sup_state_t before_kill =
+            ota_sup_query(install_dir, &running_pid);
+
+        if (before_kill == OTA_SUP_STOPPED) {
             printf(
-                "PASS: gateway stopped after %d ms\n", waited);
+                "PASS: gateway exited after %d ms\n", waited);
             return 0;
         }
 
-        if (state == OTA_SUP_UNKNOWN) {
-            /*
-             * 等待过程中变成 UNKNOWN：无法确认是否已退出。
-             * 这是危险状态，必须中止而不是继续。
-             */
-            puts("FAIL: gateway state became UNKNOWN while stopping");
-            return -1;
-        }
-
-        if (waited >= timeout_ms) {
-            /*
-             * 超时仍未退出。
-             *
-             * 不再发 SIGKILL 硬杀：如果它卡在 D 状态，
-             * SIGKILL 也无效；如果不是，只会让它来不及清理资源。
-             * 更重要的是：**绝不能**在这种情况下继续切换版本。
-             */
-            printf(
-                "FAIL: gateway pid=%ld did not exit within %d ms\n",
-                (long)running_pid, timeout_ms);
+        if (before_kill != OTA_SUP_RUNNING) {
+            puts("FAIL: gateway identity unknown before SIGKILL");
             puts("      aborting upgrade; current release unchanged");
             return -1;
         }
 
-        struct timespec ts = {
-            .tv_sec = 0,
-            .tv_nsec = step_ms * 1000000L
-        };
-
-        while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+        if (kill(running_pid, SIGKILL) != 0 && errno != ESRCH) {
+            printf(
+                "FAIL: cannot SIGKILL gateway pid=%ld: %s\n",
+                (long)running_pid, strerror(errno));
+            return -1;
         }
 
-        waited += step_ms;
+        int kill_waited = 0;
+
+        if (wait_for_exit(
+                install_dir, KILL_TIMEOUT_MS,
+                &kill_waited) == OTA_SUP_STOPPED) {
+            printf(
+                "PASS: gateway killed after %d ms "
+                "(SIGTERM ignored)\n",
+                waited + kill_waited);
+
+            /*
+             * 到这里进程已被 SIGKILL 终止，但 pidfile 仍在
+             * （ota_sup_pidfile_remove 只在 stop_managed 路径调用）。
+             * 这里手工清掉，否则后续 query 会一直返回 STOPPED
+             * 却留下陈旧记录，干扰下一次启动的 legacy 判断。
+             */
+            if (ota_sup_pidfile_remove(install_dir) != 0) {
+                printf(
+                    "WARN: cannot remove pidfile (%s)\n",
+                    strerror(errno));
+            }
+
+            return 0;
+        }
+
+        /*
+         * SIGKILL 都无效 —— 这才是真正的 D 状态。
+         *
+         * 此时进程可能仍持有文件、端口与内存中的状态，
+         * 绝不能继续切换 current。
+         */
+        printf(
+            "FAIL: gateway pid=%ld survived SIGKILL (%d ms)\n",
+            (long)running_pid, kill_waited);
+        puts("      process is likely in uninterruptible (D) state");
+        puts("      aborting upgrade; current release unchanged");
+        return -1;
     }
+
+    printf("PASS: gateway stopped after %d ms\n", waited);
+    return 0;
 }
 
 /*
@@ -1186,7 +1309,26 @@ static int abort_after_stop(
         puts(" Manual action required. After fixing the cause,");
         puts(" start the gateway again, then re-run the upgrade.");
         puts("==================================================");
+
+        /*
+         * S4/F2：恢复失败，**保留** last_operation。
+         *
+         * 这是唯一能让下次启动知道"上一次停在恢复了业务却没成功"
+         * 的证据。删掉它会让下次启动看到一个看起来正常的
+         * 安装目录，而实际业务是中断的。
+         */
+        return 1;
     }
+
+    /*
+     * 服务已恢复（或本来就不需要恢复），本次操作处理完毕。
+     *
+     * 注意这里连"本来就没在跑"的情况也一并收尾：
+     * 那种情况下 OTA 没有制造任何中断，残留记录只会
+     * 让下次升级被无故阻塞。
+     */
+    (void)ota_oplog_begin(install_dir, OTA_OPLOG_FAILED);
+    (void)ota_oplog_remove(install_dir);
 
     return 1;
 }
@@ -1242,11 +1384,118 @@ int ota_upgrade_run_test(
         return 1;
     }
 
+    /*
+     * S4/F2：检测上一次操作是否正常收尾。
+     *
+     * 判定依据是 last_operation.json 是否还留在安装目录里。
+     * 正常路径在结束时会把文件删掉，所以"它还在"就意味着
+     * 上一次升级没有走到 DONE/FAILED——可能是 kill -9、掉电，
+     * 也可能是机器被硬重启。
+     *
+     * 策略：**拒绝自动继续**，要求人工确认。
+     *
+     * 为什么不自动清理：残留可能来自"旧版已停、新版未起"这种
+     * 业务中断状态。自动清理等于替运维宣称"上次的残留无害"，
+     * 而我们无法证明这一点。
+     *
+     * 为什么不直接调用恢复逻辑：本阶段只做到"把静默的错误状态
+     * 变成显式的人工决策点"。自动恢复需要判断 current 是否
+     * 与磁盘一致、旧版是否还能启动，风险更高，留给后续阶段。
+     */
+    {
+        ota_oplog_record_t previous = {0};
+        int present = 0;
+
+        if (ota_oplog_read(
+                install_dir, &previous, &present) != 0) {
+            /*
+             * 文件存在但解析失败。
+             *
+             * 这不等于"没有记录"——损坏本身就说明写入被打断了，
+             * 属于同样的未完成情形。按未完成处理。
+             */
+            puts("FAIL: operation record exists but is corrupt");
+            puts("      a previous upgrade did not finish cleanly");
+            puts("");
+            puts("  Inspect the installation directory, then run:");
+            printf("    %s ack-operation %s\n",
+                   "ota_agent", install_dir);
+            return 1;
+        }
+
+        if (present && !ota_oplog_phase_is_terminal(previous.phase)) {
+            printf(
+                "FAIL: previous upgrade interrupted at phase %s\n",
+                ota_oplog_phase_name(previous.phase));
+
+            if (previous.pid > 0) {
+                printf(
+                    "      recorded pid=%ld, started_at=%lld\n",
+                    (long)previous.pid, previous.started_at);
+            }
+
+            /*
+             * boot_id 不一致说明记录来自**上一次开机**。
+             * 此时不可能有"还活着的 OTA 进程"，必然是掉电/硬重启。
+             * 打印出来帮助判断故障性质，但不改变处理策略。
+             */
+            {
+                char current_boot[40] = {0};
+                int fd = open(
+                    "/proc/sys/kernel/random/boot_id",
+                    O_RDONLY | O_CLOEXEC);
+
+                if (fd >= 0) {
+                    char buf[64];
+                    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+
+                    if (n > 0) {
+                        buf[n] = '\0';
+
+                        for (ssize_t i = 0; i < n; i++) {
+                            if (buf[i] == '\n' ||
+                                buf[i] == '\r') {
+                                buf[i] = '\0';
+                                break;
+                            }
+                        }
+
+                        if (strlen(buf) == 36)
+                            memcpy(current_boot, buf, 37);
+                    }
+
+                    (void)close(fd);
+                }
+
+                if (previous.boot_id[0] != '\0' &&
+                    current_boot[0] != '\0') {
+                    if (strcmp(
+                            previous.boot_id,
+                            current_boot) != 0) {
+                        puts("      record is from a previous boot "
+                             "(system restarted mid-upgrade)");
+                    } else {
+                        puts("      record is from this boot "
+                             "(OTA process was killed)");
+                    }
+                }
+            }
+
+            puts("");
+            puts("  The gateway may be stopped. Check whether it is");
+            puts("  running, then either restore service manually or");
+            puts("  acknowledge to allow further upgrades:");
+            printf("    %s ack-operation %s\n",
+                   "ota_agent", install_dir);
+            return 1;
+        }
+    }
     if (record.state != OTA_CONFIRMED &&
         record.state != OTA_ROLLED_BACK) {
         puts("FAIL: pending OTA transaction");
         return 1;
     }
+
 
     /*
      * S3-R：包前置校验必须在停止旧版**之前**完成。
@@ -1304,6 +1553,27 @@ int ota_upgrade_run_test(
         "Gateway before upgrade: %s\n",
         ctx.gateway_was_running ? "RUNNING" : "not running");
 
+    /*
+     * S4/F2：在产生任何副作用之前，先留下"我要开始改了"的记录。
+     *
+     * 为什么必须在这里而不是更晚：
+     *   prepare_existing_gateway() 会停掉正在运行的 Gateway。
+     *   如果 OTA 在这之后被 kill -9 或掉电，state 与 current
+     *   都还停留在"正常的旧版"，没有任何痕迹说明业务是被
+     *   升级动作停掉的。下次开机看起来一切正常，而服务其实是死的。
+     *
+     * 写入失败必须中止：留不下证据就等于放弃了中断检测能力，
+     * 这比"拒绝升级"更危险。
+     */
+    if (ota_oplog_begin(
+            install_dir, OTA_OPLOG_STOPPING_OLD) != 0) {
+        printf(
+            "FAIL: cannot write operation record (%s)\n",
+            strerror(errno));
+        puts("      refusing to upgrade without interruption tracking");
+        return 1;
+    }
+
     if (prepare_existing_gateway(install_dir) != 0)
         return 1;
 
@@ -1347,8 +1617,25 @@ int ota_upgrade_run_test(
             (unsigned)upstream_port);
     }
 
-    /* 进入变更阶段：此后失败需根据是否切换过 current 决定恢复方式 */
+    /*
+     * 进入变更阶段：此后失败需根据是否切换过 current 决定恢复方式。
+     *
+     * S4/F2：切换 current 是最关键的一步——从这一刻起
+     * "磁盘上的可用版本"与"正在运行的版本"可能不再一致。
+     * 必须在动手之前把 phase 推进到 SWITCHING。
+     */
     ctx.activation_started = 1;
+
+    if (ota_oplog_begin(
+            install_dir, OTA_OPLOG_SWITCHING) != 0) {
+        printf(
+            "FAIL: cannot update operation record (%s)\n",
+            strerror(errno));
+        return abort_after_stop(
+            install_dir, &ctx,
+            "operation record unwritable; aborting before "
+            "switching current");
+    }
 
     if (ota_activate_test(
             package_dir, install_dir) != 0)
@@ -1360,6 +1647,14 @@ int ota_upgrade_run_test(
         goto rollback;
     }
 
+    if (ota_oplog_begin(
+            install_dir, OTA_OPLOG_STARTING_NEW) != 0) {
+        printf(
+            "FAIL: cannot update operation record (%s)\n",
+            strerror(errno));
+        goto rollback;
+    }
+
     /* 外部上游意味着本次注入了北向故障，L2 应真实失败 */
     int expect_l2 = external_upstream ? 0 : 1;
 
@@ -1367,6 +1662,20 @@ int ota_upgrade_run_test(
             install_dir, listenfd,
             upstream_port, expect_l2) != 0)
         goto rollback;
+
+    /*
+     * S4/F2：健康检查已经通过，接下来只做状态持久化。
+     * 这一阶段如果再中断，重启后 state 可能停在 HEALTHY，
+     * 而 current 已指向新版——属于"实际上已成功但未确认"。
+     * 用独立 phase 标出来，便于人工判断无需回滚。
+     */
+    if (ota_oplog_begin(
+            install_dir, OTA_OPLOG_HEALTH_CHECK) != 0) {
+        printf(
+            "FAIL: cannot update operation record (%s)\n",
+            strerror(errno));
+        goto rollback;
+    }
 
     if (persist_next(
             state_dir, &record, OTA_HEALTHY) != 0) {
@@ -1389,11 +1698,35 @@ int ota_upgrade_run_test(
         "PASS: OTA upgrade CONFIRMED: %s\n",
         record.confirmed_version);
 
+    /*
+     * 成功收尾：把 phase 标为 DONE 后**删除**记录。
+     *
+     * 先写 DONE 再删，而不是直接删：
+     *   若在"写 DONE"与"删文件"之间掉电，留下的是 DONE，
+     *   下次启动判定为已正常收尾，可以直接继续；
+     *   若直接删而掉电，文件可能还在、phase 仍是旧值，
+     *   下次启动会误报"未完成"。
+     * 两者对比，前者是安全方向的失败。
+     */
+    (void)ota_oplog_begin(install_dir, OTA_OPLOG_DONE);
+    (void)ota_oplog_remove(install_dir);
+
     result = 0;
     goto out;
 
 rollback:
     puts("RECOVERY: attempting rollback");
+
+    /*
+     * S4/F2：回滚本身也可能中断，必须单独记一个 phase。
+     *
+     * 这一步的日志特别重要：回滚中掉电会留下
+     * "state=ROLLBACK_PENDING + current 指向新版"的组合，
+     * 与"旧版已停"叠加，是最难人工判断的状态。
+     * 有了 ROLLING_BACK 记录，运维至少知道上次做了什么。
+     */
+    (void)ota_oplog_begin(
+        install_dir, OTA_OPLOG_ROLLING_BACK);
 
     if (ota_recover_execute(install_dir) != 0) {
         puts("FAIL: filesystem rollback");
@@ -1402,6 +1735,9 @@ rollback:
          * 回滚都失败了：此时 current 可能指向新版或旧版，
          * 无法安全地自动重启任何一个。明确报告需要人工处理，
          * 绝不假装恢复成功。
+         *
+         * 注意：这里**故意不清理** last_operation。
+         * 保留记录是唯一能让下次启动知道"上次到了这一步"的证据。
          */
         puts("");
         puts("==================================================");
@@ -1437,7 +1773,19 @@ rollback:
             puts(" restarted. OTA state and release files are");
             puts(" unchanged. Manual action required.");
             puts("==================================================");
+
+            /* 恢复失败：同样保留记录，供下次启动识别 */
+            goto out;
         }
+
+        /*
+         * 服务已成功恢复，本次操作算处理完毕。
+         * 标记 FAILED 再删除 —— 与成功路径同理，
+         * FAILED 是"失败但已收尾"，不是"未完成"。
+         */
+        (void)ota_oplog_begin(
+            install_dir, OTA_OPLOG_FAILED);
+        (void)ota_oplog_remove(install_dir);
 
         goto out;
     }
@@ -1476,8 +1824,26 @@ rollback:
             upstream_port,
             1) == 0) {
         puts("PASS: old Gateway business recovered");
+
+        /* 回滚成功且服务可用：本次操作已收尾 */
+        (void)ota_oplog_begin(
+            install_dir, OTA_OPLOG_FAILED);
+        (void)ota_oplog_remove(install_dir);
     } else {
         puts("FAIL: old Gateway business not recovered");
+
+        /*
+         * 回滚后旧版起不来：等同于业务中断未解除。
+         * 保留记录，让下次启动能看到这条线索。
+         */
+        puts("");
+        puts("==================================================");
+        puts(" RECOVERY REQUIRED");
+        puts("==================================================");
+        puts(" Rolled back to the previous release, but it could");
+        puts(" not be started. Business is interrupted.");
+        puts(" Manual action required.");
+        puts("==================================================");
     }
 
 

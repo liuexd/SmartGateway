@@ -2,7 +2,9 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "ota_verify.h"
+#include "ota_supervisor.h"
 #include "ota_state_io.h"
+#include "ota_oplog.h"
 #include "ota_recover.h"
 #include "ota_lock.h"
 #include "ota_release.h"
@@ -127,8 +129,66 @@ static void print_usage(const char *program)
             "  %s status INSTALL_DIR\n"
             "  %s recover INSTALL_DIR\n"
             "  %s stage PACKAGE_DIR INSTALL_DIR\n"
+            "  %s ack-operation INSTALL_DIR\n"
             "  %s PACKAGE_DIR INSTALL_DIR\n",
-            program, program, program, program, program);
+            program, program, program, program, program, program);
+}
+
+/*
+ * ack-operation - 人工确认上次未完成的升级已被处理（S4/F2）
+ *
+ * 为什么需要这条命令
+ * ------------------
+ * ota_upgrade_run_test() 检测到 last_operation.json 表示"上次没有
+ * 正常收尾"时，会拒绝继续升级。这是**有意**的：残留可能来自
+ * "旧版已停、新版未起"这种业务中断状态，OTA 无权替运维判定它无害。
+ *
+ * 但拒绝之后必须有一条**显式**路径让人解除阻塞，否则遗留文件会
+ * 让安装目录永久无法升级，最终逼着人手写 rm——那比不做检查更糟。
+ *
+ * 这条命令只做一件事：删除记录。它**不**启动 Gateway、**不**改
+ * 状态、**不**动任何版本文件。语义上等同于运维说：
+ * "我看过了，可以继续。"
+ */
+static int ack_operation_command(const char *install_dir)
+{
+    ota_oplog_record_t record = {0};
+    int present = 0;
+    int corrupt = 0;
+
+    if (ota_oplog_read(
+            install_dir, &record, &present) != 0) {
+        /*
+         * 解析失败同样应允许解除：记录已经不可读，
+         * 再拦住升级只会把人逼向手工 rm。
+         */
+        corrupt = 1;
+    }
+
+    if (present && !corrupt) {
+        printf(
+            "Acknowledging interrupted operation:\n"
+            "  phase      : %s\n"
+            "  pid        : %ld\n"
+            "  started_at : %lld\n",
+            ota_oplog_phase_name(record.phase),
+            (long)record.pid,
+            record.started_at);
+    } else if (corrupt) {
+        puts("Acknowledging corrupt operation record");
+    } else {
+        puts("No pending operation record");
+    }
+
+    if (ota_oplog_remove(install_dir) != 0) {
+        fprintf(stderr,
+                "FAIL: cannot remove operation record: %s\n",
+                strerror(errno));
+        return 1;
+    }
+
+    puts("PASS: operation record cleared; upgrades are allowed");
+    return 0;
 }
 
 /*
@@ -207,7 +267,29 @@ static int upgrade_test_command(
     int lockfd = ota_lock_acquire(install_dir, 1);
 
     if (lockfd < 0) {
-        perror("OTA upgrade lock");
+        /*
+         * S4/F10：锁冲突必须给出可读的原因，而不是裸 errno。
+         *
+         * 原实现用 perror("OTA upgrade lock")，输出是
+         *   OTA upgrade lock: Resource temporarily unavailable
+         * 运维看到这句无法判断是"另一个 OTA 正在跑"还是
+         * "磁盘/权限问题"，也无从知道该怎么办。
+         *
+         * 并发升级是**预期会发生的**情形（定时任务 + 人工触发），
+         * 因此它的提示必须明确到"等前一个结束再试"。
+         */
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            fprintf(stderr,
+                    "FAIL: another OTA operation is already in progress\n"
+                    "      another process holds .ota.lock in %s\n"
+                    "      wait for it to finish, then retry\n",
+                    install_dir);
+        } else {
+            fprintf(stderr,
+                    "FAIL: cannot acquire OTA lock: %s\n",
+                    strerror(errno));
+        }
+
         return 1;
     }
 
@@ -221,6 +303,12 @@ static int upgrade_test_command(
 
 int main(int argc, char **argv)
 {
+    if (argc == 3 &&
+        strcmp(argv[1], "ack-operation") == 0) {
+        return run_locked(
+            argv[2], 1, ack_operation_command);
+    }
+
     if (argc == 4 &&
         strcmp(argv[1], "stage") == 0) {
         return stage_command(argv[2], argv[3]);

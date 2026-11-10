@@ -419,14 +419,30 @@ def scenario_unknown_state():
 
 
 def scenario_stop_fails():
-    """场景三：Gateway 无法被停止 -> 必须中止，绝不能切换版本.
+    """场景三：停不掉旧版时，绝不能切换版本.
 
-    这是 S3 最重要的安全约束。若此时继续切换 current，
-    会变成"旧版还在跑，但磁盘上的文件已被换掉"，
-    这个状态无法自动收敛。
+    这条约束是 S3 的核心安全性质：若在旧进程仍存活时切换
+    current，会变成"旧版还在跑，但磁盘上的文件已被换掉"，
+    该状态无法自动收敛。
+
+    S4/F1 带来的行为变更（重要）
+    ----------------------------
+    本场景原先用"忽略 SIGTERM"的进程，并断言"不再发 SIGKILL"。
+    S4 阶段修正了该策略：忽略 SIGTERM 是**用户态**行为，
+    SIGKILL 一定有效，把它和不可中断睡眠（D）混为一谈会让
+    本可自动恢复的故障变成必须人工介入。
+
+    因此本场景改为验证不变的那部分：
+      **无论走 SIGTERM 还是 SIGKILL，都必须等旧进程确认退出，
+        才允许切换 current。**
+
+    真实构造"杀不掉"（D 状态）在本机无法完成：
+    FUSE 开发头文件缺失、pip 不可用、无 NFS、无 root，
+    因此 `survived SIGKILL` 分支**未做集成测试**。
+    按项目规则，该分支不得报告为 PASS，列为已知未验证项。
     """
     print("\n" + "=" * 72)
-    print("场景三：Gateway 无法停止 -> 必须中止，不得切换版本")
+    print("场景三：停不掉旧版时不得切换版本（含 SIGKILL 升级路径）")
     print("=" * 72)
 
     install = setup_install()
@@ -437,7 +453,7 @@ def scenario_stop_fails():
         record("前置：7000 空闲", False, "端口已被占用")
         return False
 
-    # 启动一个进程并让它忽略 SIGTERM，模拟"停不下来"
+    # 忽略 SIGTERM：产品必须自行升级到 SIGKILL 才能继续
     script = "trap '' TERM; while :; do sleep 1; done"
     proc = own_process(subprocess.Popen(
         ["/bin/sh", "-c", script],
@@ -454,8 +470,6 @@ def scenario_stop_fails():
         return False
 
     before_current = os.readlink(install / "current")
-    before_state = json.loads(
-        (install / "state" / "ota_state.json").read_text())
 
     conv = subprocess.run(
         [str(AGENT), "upgrade-test",
@@ -469,24 +483,38 @@ def scenario_stop_fails():
 
     record("检测到运行中的实例",
            "Pre-upgrade gateway state: RUNNING" in out)
-    record("升级被中止", conv.returncode != 0,
-           f"exit={conv.returncode}")
 
-    # 核心断言：绝不能切换版本
+    # 产品必须显式声明它升级了信号强度
+    record("SIGTERM 无效时升级为 SIGKILL",
+           "escalating to SIGKILL" in out,
+           "" if "escalating to SIGKILL" in out else "未升级")
+
+    #
+    # 核心安全断言（顺序性）：
+    # 进程确认退出必须**先于**切换 current。
+    #
+    # 只断言"最终进程死了"是不够的 —— 一个先切版本、
+    # 再补杀进程的实现同样满足"进程死了"，但它已经
+    # 制造了"旧版在跑、文件被换"的破损状态。
+    #
+    exited_idx = out.find("PASS: gateway killed")
+    if exited_idx < 0:
+        exited_idx = out.find("PASS: gateway stopped")
+
+    activated_idx = out.find("candidate activated")
+
+    record("确认退出发生在切换版本之前（关键安全约束）",
+           exited_idx >= 0 and activated_idx >= 0
+           and exited_idx < activated_idx,
+           f"exit_pos={exited_idx}, activate_pos={activated_idx}")
+
+    record("旧进程确实已终止", proc.poll() is not None,
+           f"poll={proc.poll()}")
+
     after_current = os.readlink(install / "current")
-    record("current 未被切换（关键安全约束）",
-           before_current == after_current,
+    record("current 已切到新版（升级成功）",
+           after_current == f"releases/v{NEW_VERSION}",
            f"{before_current} -> {after_current}")
-
-    after_state = json.loads(
-        (install / "state" / "ota_state.json").read_text())
-    record("状态文件未被推进",
-           before_state["state"] == after_state["state"],
-           f"state={after_state['state']}")
-
-    # 顽固进程应仍在（我们没杀它，只是中止升级）
-    record("顽固进程未被硬杀（无 SIGKILL）",
-           proc.poll() is None, f"pid={proc.pid}")
 
     cleanup(proc)
     return True

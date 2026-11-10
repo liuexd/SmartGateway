@@ -78,6 +78,7 @@ OTA_SRCS := \
 	ota_process.c \
 	ota_health.c \
 	ota_supervisor.c \
+	ota_oplog.c \
 	ota_upgrade_run.c
 
 
@@ -96,6 +97,7 @@ OTA_HEADERS := \
 	ota_process.h \
 	ota_health.h \
 	ota_supervisor.h \
+	ota_oplog.h \
 	ota_upgrade_run.h \
 	ota_json_compat.h
 
