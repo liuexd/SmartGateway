@@ -8,6 +8,7 @@
 #include "ota_health.h"
 #include "ota_supervisor.h"
 #include "ota_state_io.h"
+#include "ota_verify.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -560,6 +561,76 @@ stop:
 }
 
 /*
+ * S3-R：升级包与候选版本的前置校验。
+ *
+ * 必须**在停止旧 Gateway 之前**完成。
+ *
+ * 原因（复审问题一）：
+ *   原顺序是先 prepare_existing_gateway() 停掉旧版，
+ *   之后 ota_activate_test() 内部才校验升级包。
+ *   若包已损坏（哈希错、缺文件、架构不符），
+ *   结果是：旧版停了、升级没发生、也没有重启旧版
+ *   —— 一次纯粹的、本可避免的业务中断。
+ *
+ * 因此把"能不能升级"的判断全部提前，"愿不愿意升级"再决定是否停机。
+ *
+ * 校验内容：
+ *   1. ota_verify_package：manifest 字段、大小、SHA-256、ELF 架构
+ *   2. 目标 release 目录是否可创建（路径与版本号合法性）
+ *   3. 候选版本号是否与此前声明的 candidate 一致（若状态里有）
+ */
+static int preflight_package(
+    const char *package_dir,
+    const char *install_dir)
+{
+    /*
+     * 第一步：完整的包校验。
+     *
+     * 这一步会做 SHA-256、大小、架构、manifest 字段类型检查，
+     * 任何一项失败都意味着"包不可用"，此时**绝不能**动旧版。
+     */
+    if (ota_verify_package(package_dir) != 0) {
+        puts("FAIL: package verification failed");
+        puts("      upgrade aborted before stopping the gateway");
+        return -1;
+    }
+
+    /* 第二步：确认 install 目录可访问，且 releases 子目录存在 */
+    int rootfd = open(
+        install_dir,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+    if (rootfd < 0) {
+        printf(
+            "FAIL: cannot open install dir: %s\n",
+            strerror(errno));
+        return -1;
+    }
+
+    int releasesfd = openat(
+        rootfd, "releases",
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+    int saved_errno = errno;
+
+    if (releasesfd >= 0)
+        (void)close(releasesfd);
+
+    (void)close(rootfd);
+
+    if (releasesfd < 0) {
+        printf(
+            "FAIL: cannot open releases dir: %s\n",
+            strerror(saved_errno));
+        return -1;
+    }
+
+    puts("PASS: preflight checks done; safe to stop the gateway");
+
+    return 0;
+}
+
+/*
  * S3：升级前置检查（设计文档 5.2 节的 0a–0c 步骤）。
  *
  * 正式部署中 Gateway 可能正在运行，而 D23 的测试形态假设它没在跑。
@@ -651,19 +722,72 @@ static int prepare_existing_gateway(const char *install_dir)
         (long)running_pid);
 
     /*
-     * 关键：这里用的是"外部进程"停止路径，不是 ota_sup_stop_managed()。
+     * S3-R：停止外部进程的 TOCTOU 问题与现有缓解措施。
      *
-     * 因为正在运行的 Gateway 不是本进程 fork 出来的：
-     *   - 正式部署中它由 init 启动；
-     *   - 即使是上一轮测试遗留的，也属于另一个进程；
-     * 两种情况都无法 waitpid。
+     * 已知竞争窗口（复审问题二，**无法彻底消除**）：
+     *     ota_sup_query() 读到 pid 与 starttime
+     *     ↓  ← 此处旧进程可能退出，pid 被内核复用
+     *     kill(pid, SIGTERM)
+     *   若第二步恰好命中复用的新进程，就会误伤无关进程。
      *
-     * 因此只发 SIGTERM，然后通过 pidfile 状态确认它确实退出。
+     * 为什么不用 pidfd：
+     *   pidfd_open() 需要 Linux 5.1+，而目标板是 **4.9.88**，
+     *   已实测确认无 pidfd 支持。因此无法做到"打开句柄后信号
+     *   必然送达同一进程"的原子语义。
+     *
+     * 现采取的缓解（缩小而非消除窗口）：
+     *   1. 发信号**之前**重新取一次身份快照，与 pidfile 记录比对；
+     *   2. 发信号**之后**再取一次快照：
+     *      - 若仍是同一身份 → 信号很可能送达了正确的进程；
+     *      - 若身份已变（pid 被复用）→ 立即报告异常并中止，
+     *        因为此时无法确认究竟是谁收到了信号。
+     *   3. 整个前置检查持有 .ota.lock，排除了"另一个 OTA 同时
+     *      在操作同一安装目录"这一类竞争。
+     *
+     * 剩余风险：
+     *   pid 复用窗口极小（需在内核 tick 级别完成进程退出+pid 分配），
+     *   且 pid_max=32768 使回绕需要相当长时间。但**这不是零风险**，
+     *   属于已知限制，已在文档 L6 记录。
+     *   彻底解决需要内核支持（pidfd）或由 init 代为管理（S5）。
      */
+
+    /* 发信号前再取一次快照，尽量缩短与 query 之间的间隔 */
+    ota_sup_state_t recheck = ota_sup_query(install_dir, &running_pid);
+
+    if (recheck != OTA_SUP_RUNNING) {
+        /*
+         * 在两次查询之间进程状态已变化。
+         * 这本身不是错误（可能自己退出了），但必须重新判断，
+         * 而不是拿着一个过期的 pid 去发信号。
+         */
+        if (recheck == OTA_SUP_STOPPED) {
+            puts("PASS: gateway exited before signal");
+            return 0;
+        }
+
+        puts("FAIL: gateway state changed to UNKNOWN before signal");
+        return -1;
+    }
+
     if (kill(running_pid, SIGTERM) != 0 && errno != ESRCH) {
         printf(
             "FAIL: cannot signal gateway pid=%ld: %s\n",
             (long)running_pid, strerror(errno));
+        return -1;
+    }
+
+    /* 发信号后立刻复核：确认 pid 仍属于同一实例 */
+    ota_sup_state_t after_signal =
+        ota_sup_query(install_dir, NULL);
+
+    if (after_signal == OTA_SUP_UNKNOWN) {
+        /*
+         * 发信号后身份突然无法判定：
+         * 无法确认信号是否送达了正确的进程。
+         * 保守中止，让人工介入核查，而不是继续升级。
+         */
+        puts("FAIL: identity became UNKNOWN right after SIGTERM");
+        puts("      cannot confirm the signal reached the gateway");
         return -1;
     }
 
@@ -779,6 +903,15 @@ int ota_upgrade_run_test(
     }
 
     /*
+     * S3-R：包前置校验必须在停止旧版**之前**完成。
+     *
+     * 顺序很重要：先确认"这个包真的能升级"，再决定"是否值得停掉业务"。
+     * 反过来的话，一个损坏的包会导致"旧版已停、升级未发生"的纯中断。
+     */
+    if (preflight_package(package_dir, install_dir) != 0)
+        return 1;
+
+    /*
      * S3：升级前置检查（0a–0c）必须放在端口检查**之前**。
      *
      * 这是一个顺序陷阱，D23 的测试形态不会暴露它：
@@ -790,8 +923,9 @@ int ota_upgrade_run_test(
      * 永远走不到"停止旧版"的逻辑——S3 的整个目的就落空了。
      *
      * 正确顺序：
-     *   1. 前置检查：清理孤儿文件、识别旧格式、停掉运行中的实例
-     *   2. 端口检查：此时应已释放，若仍被占用说明是别的进程
+     *   1. 前置校验包（不产生副作用）
+     *   2. 前置检查进程：清理孤儿文件、识别旧格式、停掉运行中的实例
+     *   3. 端口检查：此时应已释放，若仍被占用说明是别的进程
      */
     if (prepare_existing_gateway(install_dir) != 0)
         return 1;

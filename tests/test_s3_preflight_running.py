@@ -19,6 +19,7 @@ D23 的测试形态假设升级开始前 Gateway 没在运行，
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -162,7 +163,38 @@ def setup_install():
     return WORK
 
 
-def cleanup(proc=None):
+# 本测试自己启动的进程，只允许清理这些。
+# 记录 (pid, starttime) 二元组，避免 pid 复用后误杀无关进程。
+_owned_procs = []
+
+
+def own_process(proc):
+    """登记一个由本测试启动的进程。"""
+    st = read_starttime(proc.pid)
+    _owned_procs.append((proc.pid, st))
+    return proc
+
+
+def is_same_process(pid, starttime):
+    """校验 pid 是否仍是当初那个进程（防 pid 复用）。"""
+    cur = read_starttime(pid)
+    return cur is not None and cur == starttime
+
+
+def cleanup(proc=None, work=True):
+    """只清理本测试启动的进程。
+
+    复审问题三指出：原实现用 gateway_procs() 扫描整个 /proc，
+    把所有 executable 以 /smart_gateway 结尾的进程全部 SIGTERM。
+    如果开发机本机还跑着另一个 SmartGateway（例如手工调试的实例），
+    测试收尾会把它一起杀掉 —— 这是明确的误伤。
+
+    改为：
+      1. 只处理显式传入的 proc；
+      2. 只处理本测试登记过的 _owned_procs；
+      3. 每次都先用 (pid, starttime) 复核身份，pid 被复用则跳过；
+      4. **绝不**全局扫描 /proc 后批量发信号。
+    """
     if proc is not None:
         try:
             proc.terminate()
@@ -173,16 +205,55 @@ def cleanup(proc=None):
             except Exception:
                 pass
 
-    # 兜底：杀掉任何遗留的 Gateway
-    for pid in gateway_procs():
+    for pid, starttime in _owned_procs:
+        if starttime is None:
+            continue
+
+        if not is_same_process(pid, starttime):
+            # pid 已被复用或进程已消失：不是我们启动的那个，跳过
+            continue
+
         try:
-            os.kill(pid, 15)
+            os.kill(pid, signal.SIGTERM)
         except OSError:
             pass
+
+    _owned_procs.clear()
+
     time.sleep(0.5)
 
-    if WORK.exists():
+    if work and WORK.exists():
         shutil.rmtree(WORK, ignore_errors=True)
+
+
+def leftover_in_work_dir():
+    """只检查与本次测试目录相关的残留进程。
+
+    通过 /proc/<pid>/exe 是否指向 WORK 目录来判断，
+    而不是用文件名后缀匹配 —— 后者会命中无关实例。
+    """
+    if not WORK.exists():
+        return []
+
+    work_real = str(WORK.resolve())
+    found = []
+
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+
+        try:
+            exe = os.readlink(entry / "exe")
+        except OSError:
+            continue
+
+        # 已删除的可执行文件会带 " (deleted)" 后缀
+        base = exe.replace(" (deleted)", "")
+
+        if base.startswith(work_real):
+            found.append(int(entry.name))
+
+    return found
 
 
 def scenario_running_gateway():
@@ -203,11 +274,11 @@ def scenario_running_gateway():
 
     # 启动真实 Gateway
     gw_bin = install / "current" / "smart_gateway"
-    proc = subprocess.Popen(
+    proc = own_process(subprocess.Popen(
         [str(gw_bin), "--no-serial",
          "--server", HOST, "--port", "19999"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    ))
 
     ok = wait_port(GW_PORT, True)
     record("Gateway 已启动并监听 7000", ok)
@@ -286,9 +357,9 @@ def scenario_running_gateway():
     # 清理
     cleanup(proc)
 
-    record("结束后无遗留 Gateway 进程",
-           len(gateway_procs()) == 0,
-           f"found={gateway_procs()}")
+    record("结束后无本目录遗留进程",
+           len(leftover_in_work_dir()) == 0,
+           f"found={leftover_in_work_dir()}")
 
     return True
 
@@ -338,10 +409,10 @@ def scenario_unknown_state():
            before_state["state"] == after_state["state"],
            f"state={after_state['state']}")
 
-    # 不得留下任何 Gateway 进程
-    record("无 Gateway 进程被启动",
-           len(gateway_procs()) == 0,
-           f"found={gateway_procs()}")
+    # 不得留下任何 Gateway 进程（限定在本次测试目录内）
+    record("无本目录遗留进程被启动",
+           len(leftover_in_work_dir()) == 0,
+           f"found={leftover_in_work_dir()}")
 
     cleanup()
     return True
@@ -368,10 +439,10 @@ def scenario_stop_fails():
 
     # 启动一个进程并让它忽略 SIGTERM，模拟"停不下来"
     script = "trap '' TERM; while :; do sleep 1; done"
-    proc = subprocess.Popen(
+    proc = own_process(subprocess.Popen(
         ["/bin/sh", "-c", script],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    ))
 
     time.sleep(0.5)
 
@@ -421,6 +492,106 @@ def scenario_stop_fails():
     return True
 
 
+def scenario_bad_package():
+    """场景四：Gateway 正常运行 + 损坏升级包 -> 升级失败但业务不中断.
+
+    复审问题一的核心场景。
+
+    原实现顺序是先停旧版、后校验包，于是：
+      损坏包 -> 旧版已停 -> 校验失败 -> 回滚无实质动作 ->
+      状态不是 ROLLED_BACK -> 直接退出
+    结果：什么都没升级，但业务已经停了，且不会自动恢复。
+
+    修复后：包校验前置，不合格就不碰旧版。
+    """
+    print("\n" + "=" * 72)
+    print("场景四：损坏升级包 -> 升级失败但旧版必须继续运行")
+    print("=" * 72)
+
+    install = setup_install()
+    if install is None:
+        return False
+
+    if port_listening(GW_PORT):
+        record("前置：7000 空闲", False, "端口已被占用")
+        return False
+
+    # 启动真实 Gateway
+    gw_bin = install / "current" / "smart_gateway"
+    proc = own_process(subprocess.Popen(
+        [str(gw_bin), "--no-serial", "--server", HOST, "--port", "19999"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ))
+
+    ok = wait_port(GW_PORT, True)
+    record("Gateway 已启动并监听 7000", ok)
+
+    if not ok:
+        cleanup(proc)
+        return False
+
+    written = write_pidfile(install, proc.pid)
+    record("已写入 pidfile", written)
+
+    if not written:
+        cleanup(proc)
+        return False
+
+    # 构造损坏的升级包：哈希故意写错
+    bad_pkg = WORK.parent / "s3-bad-package"
+    if bad_pkg.exists():
+        shutil.rmtree(bad_pkg)
+    bad_pkg.mkdir()
+
+    shutil.copy(install / "current" / "smart_gateway",
+                bad_pkg / "smart_gateway")
+
+    (bad_pkg / "manifest.json").write_text(json.dumps({
+        "format_version": 1,
+        "application": "smart_gateway",
+        "version": "0.9.9-bad",
+        "architecture": "x86_64-linux-gnu",
+        "binary": "smart_gateway",
+        "size": (bad_pkg / "smart_gateway").stat().st_size,
+        "sha256": "0" * 64,          # 故意错误
+    }, indent=2))
+
+    conv = subprocess.run(
+        [str(AGENT), "upgrade-test", str(bad_pkg), str(install)],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    out = conv.stdout + conv.stderr
+    print(out, flush=True)
+
+    record("升级被拒绝", conv.returncode != 0,
+           f"exit={conv.returncode}")
+
+    record("在停止 Gateway 之前就拒绝了",
+           "aborted before stopping the gateway" in out)
+
+    # 核心断言：旧版必须仍在运行
+    time.sleep(0.3)
+    still_alive = proc.poll() is None
+    record("原 Gateway 仍在运行（业务未中断）", still_alive,
+           f"pid={proc.pid}")
+
+    record("7000 仍在监听", port_listening(GW_PORT))
+
+    # 版本与状态都不得改变
+    cur = os.readlink(install / "current")
+    record("current 未变", cur == f"releases/v{OLD_VERSION}",
+           f"current={cur}")
+
+    state = json.loads((install / "state" / "ota_state.json").read_text())
+    record("状态未变", state.get("state") == "CONFIRMED",
+           f"state={state.get('state')}")
+
+    cleanup(proc)
+    shutil.rmtree(bad_pkg, ignore_errors=True)
+    return True
+
+
 def main():
     print("=" * 72)
     print("S3 前置检查验收：Gateway 正在运行时执行升级")
@@ -438,6 +609,7 @@ def main():
         scenario_running_gateway()
         scenario_unknown_state()
         scenario_stop_fails()
+        scenario_bad_package()
     finally:
         cleanup()
 

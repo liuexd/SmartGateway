@@ -18,18 +18,22 @@
 - **D25-1 ARM 交叉编译：通过**。Buildroot 2020.02 SDK 工具链（glibc 2.30、OpenSSL 1.1.1g、json-c 4.0.0）产出 ARM EABI5 hard-float ELF；产物与板端库版本逐项一致。
 - **D25-1B 板端实测：四项验收通过**。串口 @115200 / SSH / ADB 三通道可用；ARM Gateway 与 OTA Agent 在板端真实执行，OTA 包校验及 4 个负向用例正确；隔离启动（19000 端口）生命周期完整、无残留；`/opt` 跨重启持久（inode/md5 一致）。
   - **未验证**：Gateway 运行资源占用曾未采集，已于 D25-2 S1 阶段补齐（见 D25-1B 第 5.5 节）。
-- **D25-2 进程生命周期管理：S1 / S1-R / S2 / S2-R / S2-R2 / S3 已完成**。
+- **D25-2 进程生命周期管理：S1 / S1-R / S2 / S2-R / S2-R2 / S3 / S3-R 已完成**。
   - 设计：[D25-2 方案](docs/D25-2-process-lifecycle-design.md)
   - S1 + 两轮安全修正（pidfile 身份校验）：**145 项**单元测试
   - S2 自管 Supervisor：44 项单测 + 真实 ARM Gateway 端到端
-  - **S3 升级流程接入**：D23 回归 **27/27** + 前置检查 **23/23**，板端实测通过
-  - 修复的真实缺陷：僵尸误判、临时文件并发、**假阳性测试**、
-    /proc 竞争窗口、缺 boot_id、无界 waitpid、**端口检查顺序陷阱**
-  - D23 测试环境已**脚本化**（`tests/setup_ota_test_env.sh`），不再丢失
+  - S3 升级流程接入：D23 回归 **27/27** + 前置检查 **31/31**
+  - S3-R 复审修正：**包校验前置**（损坏包不再导致业务中断）
+  - 修复的真实缺陷：僵尸误判、临时文件并发、假阳性测试、
+    /proc 竞争窗口、缺 boot_id、无界 waitpid、端口检查顺序陷阱、
+    **损坏包导致业务中断**、**测试误杀无关进程**
+  - D23 测试环境已**脚本化**（`tests/setup_ota_test_env.sh`）
   - 详见 [S1-R+S2](docs/D25-2-S1R-S2-supervisor.md)、[S2-R](docs/D25-2-S2R-review-fixes.md)、
-    [S2-R2](docs/D25-2-S2R2-review-fixes.md)、[S3](docs/D25-2-S3-supervisor-integration.md)
+    [S2-R2](docs/D25-2-S2R2-review-fixes.md)、[S3](docs/D25-2-S3-supervisor-integration.md)、
+    [S3-R](docs/D25-2-S3R-review-fixes.md)
   - **未完成**：S4（故障注入矩阵）、S5（init 集成）、S6–S7（板端完整升级）
-  - **S5 关键点**：必须让 init 脚本写 pidfile，否则前置检查会被绕过
+  - **S5 关键点**：init 脚本必须写 pidfile；并应改为“经由 init 停止”，
+    以从架构上移走外部停止的 TOCTOU 风险（L6）
   - **注意：本项目无 CI**，所有 PASS 均为本地/板端手工执行结果
 
 ## 下一阶段顺序（用户确认）
@@ -69,6 +73,7 @@
 - [D25-2 S2-R 复审问题修正](docs/D25-2-S2R-review-fixes.md)
 - [D25-2 S2-R2 第二轮复审修正](docs/D25-2-S2R2-review-fixes.md)
 - [D25-2 S3 Supervisor 接入升级流程](docs/D25-2-S3-supervisor-integration.md)
+- [D25-2 S3-R 复审问题修正](docs/D25-2-S3R-review-fixes.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）
