@@ -18,26 +18,26 @@
 - **D25-1 ARM 交叉编译：通过**。Buildroot 2020.02 SDK 工具链（glibc 2.30、OpenSSL 1.1.1g、json-c 4.0.0）产出 ARM EABI5 hard-float ELF；产物与板端库版本逐项一致。
 - **D25-1B 板端实测：四项验收通过**。串口 @115200 / SSH / ADB 三通道可用；ARM Gateway 与 OTA Agent 在板端真实执行，OTA 包校验及 4 个负向用例正确；隔离启动（19000 端口）生命周期完整、无残留；`/opt` 跨重启持久（inode/md5 一致）。
   - **未验证**：Gateway 运行资源占用曾未采集，已于 D25-2 S1 阶段补齐（见 D25-1B 第 5.5 节）。
-- **D25-2 进程生命周期管理：设计完成，S1 / S1-R / S2 / S2-R / S2-R2 已完成**。
+- **D25-2 进程生命周期管理：S1 / S1-R / S2 / S2-R / S2-R2 / S3 已完成**。
   - 设计：[D25-2 方案](docs/D25-2-process-lifecycle-design.md)
-  - S1 + S1-R + S2-R2（pidfile 身份校验）：**145 项**单元测试，x86 与板端均 PASS
-  - S1-R / S2-R2 修复的真实缺陷：
-    僵尸进程误判、临时文件并发冲突、**假阳性测试**、
-    两次读 /proc 的竞争窗口、缺 boot_id 跨重启校验、无界 waitpid
-  - S2（自管 Supervisor）：44 项单测 + 真实 ARM Gateway 端到端验证
-  - 详见 [S1-R + S2](docs/D25-2-S1R-S2-supervisor.md)、[S2-R](docs/D25-2-S2R-review-fixes.md)、[S2-R2](docs/D25-2-S2R2-review-fixes.md)
-  - **未完成**：S3（接入升级流程）、S4（故障注入）、S5（init 集成）、S6–S7（板端完整升级）
-  - **S3 准入条件**：必须包在 `.ota.lock` 内、处理旧格式记录、
-    清理孤儿临时文件，且**先恢复 D23 测试链路**
+  - S1 + 两轮安全修正（pidfile 身份校验）：**145 项**单元测试
+  - S2 自管 Supervisor：44 项单测 + 真实 ARM Gateway 端到端
+  - **S3 升级流程接入**：D23 回归 **27/27** + 前置检查 **23/23**，板端实测通过
+  - 修复的真实缺陷：僵尸误判、临时文件并发、**假阳性测试**、
+    /proc 竞争窗口、缺 boot_id、无界 waitpid、**端口检查顺序陷阱**
+  - D23 测试环境已**脚本化**（`tests/setup_ota_test_env.sh`），不再丢失
+  - 详见 [S1-R+S2](docs/D25-2-S1R-S2-supervisor.md)、[S2-R](docs/D25-2-S2R-review-fixes.md)、
+    [S2-R2](docs/D25-2-S2R2-review-fixes.md)、[S3](docs/D25-2-S3-supervisor-integration.md)
+  - **未完成**：S4（故障注入矩阵）、S5（init 集成）、S6–S7（板端完整升级）
+  - **S5 关键点**：必须让 init 脚本写 pidfile，否则前置检查会被绕过
   - **注意：本项目无 CI**，所有 PASS 均为本地/板端手工执行结果
 
 ## 下一阶段顺序（用户确认）
 
-1. **D25-2 剩余阶段**：S3 升级流程接入 → S4 故障注入 → S5 init 集成。
+1. **D25-2 剩余阶段**：S4 故障注入 → S5 init 集成。
    - 已确认：板端为 **BusyBox init**，Gateway **当前无人启动且无 init 脚本**，`/opt` 持久。
    - 未确认：`start-stop-daemon` 是否存在（S5 前必须核实）。
-   - **S3 是首个会改动 D23 已验证代码的阶段**，改动后必须重跑 D23 全用例；
-     注意 D23 集成测试依赖 `build/ota-test/` 下的手工构建工具，需先补齐。
+   - **S5 关键点**：init 脚本必须写 pidfile，否则 S3 的前置检查会被绕过。
 2. **OTA 完整板端验收**：x86 已完成北向故障注入与回滚验证，但**板端完整升级 / 健康检查 / 回滚流程尚未执行**，须在 D25-2 完成后补做。
 3. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成 UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
 4. **D35–D42：综合回归与交付**——稳定性、Perf、GDB 案例、文档和候选版本。
@@ -68,6 +68,7 @@
 - [D25-2 S1-R + S2 安全修正与自管 Supervisor](docs/D25-2-S1R-S2-supervisor.md)
 - [D25-2 S2-R 复审问题修正](docs/D25-2-S2R-review-fixes.md)
 - [D25-2 S2-R2 第二轮复审修正](docs/D25-2-S2R2-review-fixes.md)
+- [D25-2 S3 Supervisor 接入升级流程](docs/D25-2-S3-supervisor-integration.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）

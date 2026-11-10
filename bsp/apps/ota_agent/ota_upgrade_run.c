@@ -6,6 +6,7 @@
 #include "ota_recover.h"
 #include "ota_process.h"
 #include "ota_health.h"
+#include "ota_supervisor.h"
 #include "ota_state_io.h"
 
 #include <arpa/inet.h>
@@ -13,6 +14,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -454,14 +456,27 @@ static int run_gateway_health(
         NULL
     };
 
-    pid_t pid = -1;
+    ota_sup_managed_t managed = {0};
     int result = -1;
 
-    if (ota_process_start(
-            executable, argv, &pid) != 0) {
-        perror("FAIL: Gateway exec");
+    /*
+     * S3：改用 supervisor 启动，从而登记 pidfile 身份。
+     *
+     * 与原先直接 ota_process_start 的区别：
+     *   - 启动前会检查是否已有 RUNNING 实例（EALREADY）
+     *   - 启动后写入 <install>/run/gateway.pid
+     *   - 停止时走 ota_sup_stop_managed（含所有者校验与 pidfile 清理）
+     *
+     * 这样升级过程中存在一个可被外部查询的权威记录，
+     * 而不是"进程在跑但没人知道它的身份"。
+     */
+    if (ota_sup_start_managed(
+            install_dir, executable, argv, &managed) != 0) {
+        perror("FAIL: Gateway start");
         return -1;
     }
+
+    pid_t pid = managed.pid;
 
     printf("Gateway started: pid=%ld\n", (long)pid);
 
@@ -516,8 +531,17 @@ stop:
         int wait_status = 0;
         long long elapsed = 0;
 
-        int stop_rc = ota_process_stop(
-            pid, STOP_TIMEOUT_MS,
+        /*
+         * S3：走 supervisor 停止，它会：
+         *   - 校验 owner_pid（只能停自己启动的进程）
+         *   - 确认退出后清理 pidfile
+         *
+         * 若 stop 失败，pidfile 会被保留 —— 这是正确行为，
+         * 因为进程可能仍在运行，删掉记录会让后续 query 误判。
+         */
+        int stop_rc = ota_sup_stop_managed(
+            install_dir, &managed,
+            STOP_TIMEOUT_MS,
             &wait_status, &elapsed);
 
         printf(
@@ -533,6 +557,168 @@ stop:
     }
 
     return result;
+}
+
+/*
+ * S3：升级前置检查（设计文档 5.2 节的 0a–0c 步骤）。
+ *
+ * 正式部署中 Gateway 可能正在运行，而 D23 的测试形态假设它没在跑。
+ * 这里补齐"升级前必须先确认并处理既有实例"的逻辑。
+ *
+ * 三件事：
+ *   0a. 查状态：UNKNOWN 一律中止（状态不明时不能操作）
+ *   0b. 旧格式记录：说明来源不明或来自旧版本，按策略处理
+ *   0c. 若 RUNNING：必须停止并**确认退出**，否则中止
+ *
+ * 返回 0 可以继续升级；-1 必须中止。
+ *
+ * 特别强调 0c：如果旧版停不下来（例如卡在 D 状态），
+ * 绝不能继续切换 current。否则会变成"旧版还在跑，但文件已被换掉"
+ * 的破损状态，且无法自动收敛。
+ */
+static int prepare_existing_gateway(const char *install_dir)
+{
+    /*
+     * A3：清理崩溃遗留的孤儿临时文件。
+     *
+     * 必须在持有 .ota.lock 时调用（调用方 main.c 已持有）。
+     * 60 秒阈值：写一个 pidfile 是毫秒级操作，
+     * 一分钟前的临时文件必然是崩溃遗留。
+     */
+    int removed = ota_sup_cleanup_stale_temp(install_dir, 60);
+
+    if (removed > 0) {
+        printf(
+            "NOTICE: cleaned %d stale temp file(s)\n",
+            removed);
+    } else if (removed < 0) {
+        /* 清理失败不阻断升级，但要如实报告 */
+        printf(
+            "WARN: stale temp cleanup failed (%s)\n",
+            strerror(errno));
+    }
+
+    /*
+     * A2：旧格式 pidfile 检查。
+     *
+     * 旧格式无 boot_id，跨重启时可能把无关进程误认为 Gateway。
+     * 这里采取"允许一次、明确告知"的策略：
+     *   - 不直接拒绝，否则遗留记录会让升级被永久阻塞，
+     *     需要人工删文件才能恢复；
+     *   - 但要打印明显提示，便于事后追溯。
+     *
+     * 后续升级成功会写入带 boot_id 的新格式，自然完成迁移。
+     */
+    int is_legacy = 0;
+
+    if (ota_sup_identity_is_legacy(install_dir, &is_legacy) == 0 &&
+        is_legacy) {
+        puts("NOTICE: legacy pidfile (no boot_id); "
+             "cross-reboot identity check is weakened");
+        puts("NOTICE: it will be migrated on the next successful start");
+    }
+
+    /* 0a. 查询当前状态 */
+    pid_t running_pid = -1;
+    ota_sup_state_t state =
+        ota_sup_query(install_dir, &running_pid);
+
+    printf(
+        "Pre-upgrade gateway state: %s\n",
+        ota_sup_state_name(state));
+
+    if (state == OTA_SUP_UNKNOWN) {
+        /*
+         * 状态不确定时绝不能继续。
+         *
+         * 可能的成因：pidfile 损坏、符号链接、权限问题。
+         * 无论哪种，都无法排除"已有一个 Gateway 在跑"，
+         * 此时切换版本会造成不可预期的并发。
+         */
+        puts("FAIL: gateway state UNKNOWN; abort upgrade");
+        puts("      resolve the pidfile issue before retrying");
+        return -1;
+    }
+
+    if (state == OTA_SUP_STOPPED) {
+        puts("PASS: no running gateway");
+        return 0;
+    }
+
+    /* 0c. RUNNING：必须停干净 */
+    printf(
+        "NOTICE: stopping running gateway (pid=%ld)\n",
+        (long)running_pid);
+
+    /*
+     * 关键：这里用的是"外部进程"停止路径，不是 ota_sup_stop_managed()。
+     *
+     * 因为正在运行的 Gateway 不是本进程 fork 出来的：
+     *   - 正式部署中它由 init 启动；
+     *   - 即使是上一轮测试遗留的，也属于另一个进程；
+     * 两种情况都无法 waitpid。
+     *
+     * 因此只发 SIGTERM，然后通过 pidfile 状态确认它确实退出。
+     */
+    if (kill(running_pid, SIGTERM) != 0 && errno != ESRCH) {
+        printf(
+            "FAIL: cannot signal gateway pid=%ld: %s\n",
+            (long)running_pid, strerror(errno));
+        return -1;
+    }
+
+    /*
+     * 轮询等待退出。用 ota_sup_query 判断，
+     * 因为它基于 (pid, starttime) 身份校验，
+     * 能正确区分"还是同一个进程"与"pid 被复用"。
+     */
+    const int step_ms = 50;
+    const int timeout_ms = STOP_TIMEOUT_MS;
+    int waited = 0;
+
+    for (;;) {
+        state = ota_sup_query(install_dir, NULL);
+
+        if (state == OTA_SUP_STOPPED) {
+            printf(
+                "PASS: gateway stopped after %d ms\n", waited);
+            return 0;
+        }
+
+        if (state == OTA_SUP_UNKNOWN) {
+            /*
+             * 等待过程中变成 UNKNOWN：无法确认是否已退出。
+             * 这是危险状态，必须中止而不是继续。
+             */
+            puts("FAIL: gateway state became UNKNOWN while stopping");
+            return -1;
+        }
+
+        if (waited >= timeout_ms) {
+            /*
+             * 超时仍未退出。
+             *
+             * 不再发 SIGKILL 硬杀：如果它卡在 D 状态，
+             * SIGKILL 也无效；如果不是，只会让它来不及清理资源。
+             * 更重要的是：**绝不能**在这种情况下继续切换版本。
+             */
+            printf(
+                "FAIL: gateway pid=%ld did not exit within %d ms\n",
+                (long)running_pid, timeout_ms);
+            puts("      aborting upgrade; current release unchanged");
+            return -1;
+        }
+
+        struct timespec ts = {
+            .tv_sec = 0,
+            .tv_nsec = step_ms * 1000000L
+        };
+
+        while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+        }
+
+        waited += step_ms;
+    }
 }
 
 static int persist_next(
@@ -592,8 +778,27 @@ int ota_upgrade_run_test(
         return 1;
     }
 
+    /*
+     * S3：升级前置检查（0a–0c）必须放在端口检查**之前**。
+     *
+     * 这是一个顺序陷阱，D23 的测试形态不会暴露它：
+     *   D23 假设升级开始时 Gateway 没在运行，所以
+     *   "先检查 7000 是否被占用"是合理的。
+     *
+     * 但正式部署中 Gateway **正在运行**，它必然占着 7000。
+     * 若先做端口检查，会在"发现是自己占的"之前就拒绝升级，
+     * 永远走不到"停止旧版"的逻辑——S3 的整个目的就落空了。
+     *
+     * 正确顺序：
+     *   1. 前置检查：清理孤儿文件、识别旧格式、停掉运行中的实例
+     *   2. 端口检查：此时应已释放，若仍被占用说明是别的进程
+     */
+    if (prepare_existing_gateway(install_dir) != 0)
+        return 1;
+
     if (wifi_port_busy()) {
-        puts("FAIL: TCP 7000 already occupied or unavailable");
+        puts("FAIL: TCP 7000 still occupied after stopping gateway");
+        puts("      another process may be using the port");
         return 1;
     }
 
