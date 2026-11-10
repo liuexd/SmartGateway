@@ -592,6 +592,97 @@ def scenario_bad_package():
     return True
 
 
+def _start_gateway(install):
+    """启动 Gateway 并写入 pidfile，返回 (proc, ok)。"""
+    gw_bin = install / "current" / "smart_gateway"
+    proc = own_process(subprocess.Popen(
+        [str(gw_bin), "--no-serial", "--server", HOST, "--port", "19999"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ))
+
+    if not wait_port(GW_PORT, True):
+        return proc, False
+
+    st = read_starttime(proc.pid)
+    if st is None or not write_pidfile(install, proc.pid):
+        return proc, False
+
+    return proc, True
+
+
+def scenario_candidate_missing():
+    """场景五：包合法但候选版本未 stage -> 必须在停 Gateway 之前拒绝.
+
+    复审 S3-R2 指出的遗漏：preflight_package() 原先只检查
+    releases 目录存在，未检查 releases/<candidate> 是否真的在那里。
+    于是"包合法但没 stage"会走到 ota_activate_test() 才失败，
+    而此时旧 Gateway 已经被停掉 —— 又一次白白中断。
+
+    正确的做法是把 activate 的全部只读校验前置。
+    """
+    print("\n" + "=" * 72)
+    print("场景五：候选版本未安装 -> 必须在停止 Gateway 之前拒绝")
+    print("=" * 72)
+
+    install = setup_install()
+    if install is None:
+        return False
+
+    if port_listening(GW_PORT):
+        record("前置：7000 空闲", False, "端口已被占用")
+        return False
+
+    # 删掉已安装的候选版本，模拟"未 stage"
+    candidate = install / "releases" / f"v{NEW_VERSION}"
+    if candidate.exists():
+        shutil.rmtree(candidate)
+
+    record("候选版本目录已删除（模拟未 stage）",
+           not candidate.exists())
+
+    proc, ok = _start_gateway(install)
+    record("Gateway 已启动并监听 7000", ok)
+
+    if not ok:
+        cleanup(proc)
+        return False
+
+    # 升级包本身是合法完整的
+    pkg = ROOT / f"build/ota-test/real-x86/v{NEW_VERSION}"
+    record("升级包本身合法", (pkg / "manifest.json").exists())
+
+    conv = subprocess.run(
+        [str(AGENT), "upgrade-test", str(pkg), str(install)],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    out = conv.stdout + conv.stderr
+    print(out, flush=True)
+
+    record("升级被拒绝", conv.returncode != 0,
+           f"exit={conv.returncode}")
+
+    record("在停止 Gateway 之前就拒绝了",
+           "aborted before stopping the gateway" in out)
+
+    # 核心断言：业务不受影响
+    time.sleep(0.3)
+    record("原 Gateway 仍在运行（业务未中断）",
+           proc.poll() is None, f"pid={proc.pid}")
+    record("7000 仍在监听", port_listening(GW_PORT))
+
+    cur = os.readlink(install / "current")
+    record("current 未变", cur == f"releases/v{OLD_VERSION}",
+           f"current={cur}")
+
+    state = json.loads((install / "state" / "ota_state.json").read_text())
+    record("状态未变", state.get("state") == "CONFIRMED",
+           f"state={state.get('state')}")
+
+    cleanup(proc)
+    return True
+
+
 def main():
     print("=" * 72)
     print("S3 前置检查验收：Gateway 正在运行时执行升级")
@@ -610,6 +701,7 @@ def main():
         scenario_unknown_state()
         scenario_stop_fails()
         scenario_bad_package()
+        scenario_candidate_missing()
     finally:
         cleanup()
 

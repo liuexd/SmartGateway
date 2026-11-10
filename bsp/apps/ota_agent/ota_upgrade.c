@@ -249,15 +249,40 @@ static int activate_current(
     return strcmp(existing, target) == 0 ? 0 : -1;
 }
 
-int ota_activate_test(
+/*
+ * activate_check - 激活前的**全部只读校验**（S3-R2）
+ *
+ * 这个函数不修改任何状态：不写状态文件、不切换 current、不删文件。
+ * 它只回答一个问题："这次激活能否成功？"
+ *
+ * 为什么必须独立出来：
+ *   ota_activate_test() 原本把校验和变更混在一起，导致调用方
+ *   无法在"产生副作用之前"判断能否升级。典型后果是：
+ *   升级包合法但 releases/<ver> 不存在（未 stage），
+ *   旧 Gateway 已被停掉，activate 才发现候选缺失 —— 业务白白中断。
+ *
+ * 校验清单（与 ota_activate_test 的要求一一对应）：
+ *   1. 状态必须是 CONFIRMED 或 ROLLED_BACK（无进行中的事务）
+ *   2. current 必须指向 confirmed 版本
+ *   3. 升级包本身合法（ota_verify_package：manifest/size/SHA-256/ELF）
+ *   4. 候选版本不能等于已确认版本
+ *   5. 已确认版本的文件完整、版本号自洽
+ *   6. 候选版本**已经安装**且与升级包 SHA-256 一致
+ *
+ * source_out 非空时输出从升级包读到的身份，供调用方复用，
+ * 避免重复解析同一份 manifest。
+ *
+ * 返回 0 表示可以安全进入变更阶段；-1 表示不可升级。
+ */
+static int activate_check(
     const char *package_dir,
-    const char *install_dir)
+    const char *install_dir,
+    package_identity_t *source_out)
 {
     char state_dir[PATH_MAX];
     char old_path[PATH_MAX];
     char new_path[PATH_MAX];
     char old_target[128];
-    char new_target[128];
     char current[128];
 
     package_identity_t source = {0};
@@ -289,12 +314,14 @@ int ota_activate_test(
     if (ota_state_load(state_dir, &record) != 0)
         goto out;
 
+    /* 检查 1：不得有进行中的事务 */
     if (record.state != OTA_CONFIRMED &&
         record.state != OTA_ROLLED_BACK) {
         fprintf(stderr, "FAIL: OTA transaction already active\n");
         goto out;
     }
 
+    /* 检查 2：current 必须指向已确认版本 */
     if (release_target(
             record.confirmed_version,
             old_target, sizeof(old_target)) != 0 ||
@@ -304,7 +331,7 @@ int ota_activate_test(
         goto out;
     }
 
-    /* 校验原始升级包，读取其真实版本身份 */
+    /* 检查 3+4：包合法，且候选不等于已确认版本 */
     if (ota_verify_package(package_dir) != 0 ||
         read_identity(package_dir, &source) != 0)
         goto out;
@@ -320,13 +347,10 @@ int ota_activate_test(
             old_path, sizeof(old_path)) != 0 ||
         release_path(
             install_dir, source.version,
-            new_path, sizeof(new_path)) != 0 ||
-        release_target(
-            source.version,
-            new_target, sizeof(new_target)) != 0)
+            new_path, sizeof(new_path)) != 0)
         goto out;
 
-    /* 核验旧版本身份与文件完整性 */
+    /* 检查 5：已确认版本的完整性与自洽 */
     if (ota_verify_package(old_path) != 0 ||
         read_identity(old_path, &confirmed) != 0 ||
         strcmp(
@@ -336,7 +360,12 @@ int ota_activate_test(
         goto out;
     }
 
-    /* 核验候选版本已经安装，且与源升级包一致 */
+    /*
+     * 检查 6：候选版本**必须已经安装**（已 stage），且与升级包一致。
+     *
+     * 这一条正是本次复审指出的遗漏：只检查 releases 目录存在
+     * 是不够的，必须确认 releases/<candidate> 真的在那里且内容相符。
+     */
     if (ota_verify_package(new_path) != 0 ||
         read_identity(new_path, &installed) != 0 ||
         strcmp(source.version, installed.version) != 0 ||
@@ -344,6 +373,85 @@ int ota_activate_test(
         fprintf(stderr, "FAIL: installed candidate mismatch\n");
         goto out;
     }
+
+    if (source_out != NULL)
+        *source_out = source;
+
+    result = 0;
+
+out:
+    if (dirfd >= 0)
+        close(dirfd);
+
+    return result;
+}
+
+int ota_activate_precheck(
+    const char *package_dir,
+    const char *install_dir)
+{
+    /*
+     * 对外暴露的只读校验入口。
+     *
+     * 调用方（ota_upgrade_run.c 的 preflight_package）用它
+     * 在**停止旧 Gateway 之前**确认升级能否成功。
+     *
+     * 注意：必须与 ota_activate_test() 使用同一份校验实现，
+     * 否则两处会随时间分叉——precheck 放行的包可能在 activate
+     * 阶段被拒，业务中断的问题就会重新出现。
+     */
+    return activate_check(package_dir, install_dir, NULL);
+}
+
+int ota_activate_test(
+    const char *package_dir,
+    const char *install_dir)
+{
+    char state_dir[PATH_MAX];
+    char new_target[128];
+
+    package_identity_t source = {0};
+    ota_state_record_t record = {0};
+
+    int dirfd = -1;
+    int result = -1;
+
+    if (!package_dir || !install_dir)
+        return -1;
+
+    int n = snprintf(
+        state_dir, sizeof(state_dir),
+        "%s/state", install_dir);
+
+    if (n < 0 || (size_t)n >= sizeof(state_dir))
+        return -1;
+
+    /*
+     * 第一步：完整只读校验。
+     *
+     * 与 ota_activate_precheck() 是同一个函数，
+     * 因此"预检通过但激活失败"不可能由校验规则差异导致。
+     */
+    if (activate_check(package_dir, install_dir, &source) != 0)
+        goto out;
+
+    dirfd = open(
+        install_dir,
+        O_RDONLY | O_DIRECTORY |
+        O_NOFOLLOW | O_CLOEXEC);
+
+    if (dirfd < 0)
+        goto out;
+
+    if (ota_state_load(state_dir, &record) != 0)
+        goto out;
+
+    if (release_target(
+            source.version,
+            new_target, sizeof(new_target)) != 0)
+        goto out;
+
+    /* 以下才是变更阶段：从这里开始会产生持久化副作用 */
 
     /* 保存 DOWNLOADED，保留 confirmed_version */
     if (ota_state_begin_upgrade(

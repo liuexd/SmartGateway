@@ -561,67 +561,44 @@ stop:
 }
 
 /*
- * S3-R：升级包与候选版本的前置校验。
+ * S3：升级包与候选版本的前置校验。
  *
  * 必须**在停止旧 Gateway 之前**完成。
  *
- * 原因（复审问题一）：
+ * 原因（复审问题一 + S3-R2 补充）：
  *   原顺序是先 prepare_existing_gateway() 停掉旧版，
  *   之后 ota_activate_test() 内部才校验升级包。
  *   若包已损坏（哈希错、缺文件、架构不符），
  *   结果是：旧版停了、升级没发生、也没有重启旧版
  *   —— 一次纯粹的、本可避免的业务中断。
  *
- * 因此把"能不能升级"的判断全部提前，"愿不愿意升级"再决定是否停机。
+ * S3-R2 进一步发现：只校验包本身还不够。
+ * ota_activate_test() 还会检查一系列**与安装目录状态相关**
+ * 的条件，任何一条不满足都会导致激活失败：
+ *   - current 是否指向已确认版本
+ *   - 候选版本是否已经 stage 到 releases/<ver>
+ *   - 已安装候选与升级包的 SHA-256 是否一致
+ *   - 候选版本是否等于已确认版本
+ *   - 已确认版本自身文件是否完整
  *
- * 校验内容：
- *   1. ota_verify_package：manifest 字段、大小、SHA-256、ELF 架构
- *   2. 目标 release 目录是否可创建（路径与版本号合法性）
- *   3. 候选版本号是否与此前声明的 candidate 一致（若状态里有）
+ * 因此这里直接调用 ota_activate_precheck()，它是 ota_activate_test()
+ * 使用**同一份校验实现**的只读入口。这样保证：
+ *   "预检放行的，activate 一定能进入变更阶段"
+ * 不会因两处规则分叉而出现"预检通过、激活被拒、业务已中断"。
  */
 static int preflight_package(
     const char *package_dir,
     const char *install_dir)
 {
     /*
-     * 第一步：完整的包校验。
+     * 完整的只读校验（不产生任何副作用）。
      *
-     * 这一步会做 SHA-256、大小、架构、manifest 字段类型检查，
-     * 任何一项失败都意味着"包不可用"，此时**绝不能**动旧版。
+     * 覆盖：状态可用性、current 一致性、包合法性、
+     *       候选版本已安装且内容一致、已确认版本完整。
      */
-    if (ota_verify_package(package_dir) != 0) {
-        puts("FAIL: package verification failed");
+    if (ota_activate_precheck(package_dir, install_dir) != 0) {
+        puts("FAIL: upgrade precheck failed");
         puts("      upgrade aborted before stopping the gateway");
-        return -1;
-    }
-
-    /* 第二步：确认 install 目录可访问，且 releases 子目录存在 */
-    int rootfd = open(
-        install_dir,
-        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-
-    if (rootfd < 0) {
-        printf(
-            "FAIL: cannot open install dir: %s\n",
-            strerror(errno));
-        return -1;
-    }
-
-    int releasesfd = openat(
-        rootfd, "releases",
-        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-
-    int saved_errno = errno;
-
-    if (releasesfd >= 0)
-        (void)close(releasesfd);
-
-    (void)close(rootfd);
-
-    if (releasesfd < 0) {
-        printf(
-            "FAIL: cannot open releases dir: %s\n",
-            strerror(saved_errno));
         return -1;
     }
 

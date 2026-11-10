@@ -23,14 +23,16 @@
   - S1 + 两轮安全修正（pidfile 身份校验）：**145 项**单元测试
   - S2 自管 Supervisor：44 项单测 + 真实 ARM Gateway 端到端
   - S3 升级流程接入：D23 回归 **27/27** + 前置检查 **31/31**
-  - S3-R 复审修正：**包校验前置**（损坏包不再导致业务中断）
+  - S3-R 复审修正：包校验前置（损坏包不再导致业务中断）
+  - S3-R2 校验补全：前置校验扩展为 **activate 的全部只读条件**，
+    两者**共用同一个 `activate_check()`**，避免规则分叉
   - 修复的真实缺陷：僵尸误判、临时文件并发、假阳性测试、
     /proc 竞争窗口、缺 boot_id、无界 waitpid、端口检查顺序陷阱、
-    **损坏包导致业务中断**、**测试误杀无关进程**
+    损坏包导致业务中断、**候选未 stage 导致业务中断**、测试误杀无关进程
   - D23 测试环境已**脚本化**（`tests/setup_ota_test_env.sh`）
   - 详见 [S1-R+S2](docs/D25-2-S1R-S2-supervisor.md)、[S2-R](docs/D25-2-S2R-review-fixes.md)、
     [S2-R2](docs/D25-2-S2R2-review-fixes.md)、[S3](docs/D25-2-S3-supervisor-integration.md)、
-    [S3-R](docs/D25-2-S3R-review-fixes.md)
+    [S3-R](docs/D25-2-S3R-review-fixes.md)、[S3-R2](docs/D25-2-S3R2-preflight-completeness.md)
   - **未完成**：S4（故障注入矩阵）、S5（init 集成）、S6–S7（板端完整升级）
   - **S5 关键点**：init 脚本必须写 pidfile；并应改为“经由 init 停止”，
     以从架构上移走外部停止的 TOCTOU 风险（L6）
@@ -74,6 +76,7 @@
 - [D25-2 S2-R2 第二轮复审修正](docs/D25-2-S2R2-review-fixes.md)
 - [D25-2 S3 Supervisor 接入升级流程](docs/D25-2-S3-supervisor-integration.md)
 - [D25-2 S3-R 复审问题修正](docs/D25-2-S3R-review-fixes.md)
+- [D25-2 S3-R2 前置校验补全](docs/D25-2-S3R2-preflight-completeness.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
 ### 硬件与软件基线（已记录）
