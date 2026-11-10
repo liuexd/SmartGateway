@@ -27,6 +27,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# S5：Gateway 改由 Service Supervisor 管理
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from supervisor_env import SupervisorEnv  # noqa: E402
 AGENT = ROOT / "bsp/apps/ota_agent/ota_agent_x86"
 GW = ROOT / "build/smart_gateway"
 WORK = ROOT / "build/ota-test/s3-preflight"
@@ -196,14 +200,31 @@ def cleanup(proc=None, work=True):
       4. **绝不**全局扫描 /proc 后批量发信号。
     """
     if proc is not None:
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except Exception:
+        #
+        # S5：proc 可能是 SupervisorEnv 而不是 Popen。
+        # 必须分别处理 —— SupervisorEnv 有自己的 stop()
+        # （它要额外停掉受管的 Gateway，并清掉本目录下的残留）。
+        # 之前这里只调 terminate()，于是 SupervisorEnv 被当成
+        # Popen 处理，Gateway 与 supervisor 都没有被清理，
+        # 端口 7000 一直占着，后续场景全部因为"端口已被占用"
+        # 而无法开始。
+        #
+        stop_fn = getattr(proc, "stop", None)
+
+        if callable(stop_fn):
             try:
-                proc.kill()
+                stop_fn()
             except Exception:
                 pass
+        else:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
 
     for pid, starttime in _owned_procs:
         if starttime is None:
@@ -272,29 +293,34 @@ def scenario_running_gateway():
 
     record("前置：7000 空闲", True)
 
-    # 启动真实 Gateway
-    gw_bin = install / "current" / "smart_gateway"
-    proc = own_process(subprocess.Popen(
-        [str(gw_bin), "--no-serial",
-         "--server", HOST, "--port", "19999"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ))
+    #
+    # S5：Gateway 由 Service Supervisor 启动。
+    #
+    # 不再自己 Popen 再补写 pidfile —— 那构造出的是一个
+    # supervisor 不认识的外部进程，新架构下会被拒绝升级
+    # （无法确认所有权），测不到"正常停止运行中的实例"。
+    #
+    seenv = SupervisorEnv(install, verbose=True)
+
+    try:
+        seenv.start()
+    except Exception as exc:
+        record("前置：supervisor 可用", False, str(exc)[:60])
+        return False
+
+    r = seenv.call("start")
+    record("Gateway 已由 supervisor 启动",
+           r.returncode == 0,
+           (r.stdout + r.stderr).strip()[:50])
 
     ok = wait_port(GW_PORT, True)
-    record("Gateway 已启动并监听 7000", ok)
+    record("Gateway 已监听 7000", ok)
 
     if not ok:
-        cleanup(proc)
+        cleanup(seenv)
         return False
 
-    # 写 pidfile，让 supervisor 认为它是"正式部署中的实例"
-    written = write_pidfile(install, proc.pid)
-    record("已写入 pidfile（含 boot_id）", written,
-           read_pidfile(install) or "")
-
-    if not written:
-        cleanup(proc)
-        return False
+    proc = seenv
 
     # 验证 supervisor 能查到 RUNNING
     q = subprocess.run(
@@ -325,11 +351,15 @@ def scenario_running_gateway():
                "PASS: gateway stopped" in out)
     record("执行了停止动作", stopped)
 
-    # 旧进程必须真的退出
+    # 旧进程必须真的退出。
+    #
+    # S5：查 supervisor 的状态，而不是 poll 一个我们
+    # 持有的 Popen —— 进程现在不是测试的子进程。
     time.sleep(0.5)
-    still = proc.poll() is None
-    record("原 Gateway 进程已退出", not still,
-           f"pid={proc.pid}")
+    st = proc.call("status")
+    record("原 Gateway 进程已退出",
+           "stopped" in (st.stdout + st.stderr),
+           (st.stdout + st.stderr).strip()[:50])
 
     # 本场景**没有**注入北向故障（D23 才注入），
     # 因此升级应当成功完成，而不是回滚。
@@ -349,10 +379,17 @@ def scenario_running_gateway():
     record("current 指向新版",
            cur == f"releases/v{NEW_VERSION}", f"current={cur}")
 
-    # 停止旧版后必须清理 pidfile，不能留下指向已死进程的记录
-    record("pidfile 已清理",
-           read_pidfile(install) is None,
-           f"pidfile={read_pidfile(install)}")
+    #
+    # 停止后 supervisor 必须清掉自己的 service.pid。
+    #
+    # 注意：这里看的不再是 OTA 的 gateway.pid —— 新架构下
+    # pidfile 由 supervisor 维护，它的名字与位置都变了。
+    # 检查点仍然重要：残留记录会让下次启动误判"有个不是我的
+    # 进程在跑"而拒绝启动。
+    #
+    spf = install / "run" / "service.pid"
+    record("supervisor pidfile 已清理", not spf.exists(),
+           f"exists={spf.exists()}")
 
     # 清理
     cleanup(proc)
@@ -365,19 +402,30 @@ def scenario_running_gateway():
 
 
 def scenario_unknown_state():
-    """场景二：pidfile 损坏 -> 必须中止，不得切换版本。"""
+    """场景二：supervisor 不可用 -> 必须中止，不得切换版本。
+
+    S5 前的原场景是"pidfile 损坏 -> UNKNOWN -> 中止"。
+    那个检查现在移到了 supervisor 内部（它自己维护 pidfile，
+    损坏时拒绝启动），OTA 侧看到的是"连不上 supervisor"。
+
+    本场景因此改为验证新的、等价的安全性质：
+    **supervisor 不可用时，OTA 必须在产生任何副作用之前中止。**
+
+    这比原场景更严格：原场景只需要识别一个文件坏掉，
+    现在要求 OTA 在完全无法获知服务状态时绝不擅自动手。
+    """
     print("\n" + "=" * 72)
-    print("场景二：pidfile 损坏 -> 状态 UNKNOWN -> 必须中止")
+    print("场景二：supervisor 不可用 -> 必须中止，不得切换版本")
     print("=" * 72)
 
     install = setup_install()
     if install is None:
         return False
 
+    # 确保没有 supervisor 在跑（本场景就是要测它不可用）
     run_dir = install / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "gateway.pid").write_text("NOT-A-VALID-PIDFILE\n")
-    (run_dir / "gateway.pid").chmod(0o600)
+    if (run_dir / "supervisor.sock").exists():
+        (run_dir / "supervisor.sock").unlink()
 
     before_current = os.readlink(install / "current")
     before_state = json.loads(
@@ -393,8 +441,9 @@ def scenario_unknown_state():
     out = conv.stdout + conv.stderr
     print(out, flush=True)
 
-    record("识别为 UNKNOWN",
-           "Pre-upgrade gateway state: UNKNOWN" in out)
+    record("报告无法查询服务状态",
+           "cannot query gateway state from the supervisor" in out,
+           [l for l in out.splitlines() if "FAIL" in l][:1])
     record("升级被中止", conv.returncode != 0,
            f"exit={conv.returncode}")
 
@@ -409,40 +458,74 @@ def scenario_unknown_state():
            before_state["state"] == after_state["state"],
            f"state={after_state['state']}")
 
-    # 不得留下任何 Gateway 进程（限定在本次测试目录内）
-    record("无本目录遗留进程被启动",
+    #
+    # 关键安全性质：连不上 supervisor 时**绝不能**自己去起
+    # 一个 Gateway。那会绕过所有权，正是 L3 的成因。
+    #
+    record("未擅自启动任何 Gateway",
            len(leftover_in_work_dir()) == 0,
            f"found={leftover_in_work_dir()}")
 
-    cleanup()
+    #
+    # 反向验证：同一份安装目录，一旦 supervisor 可用，
+    # 升级就必须能正常执行。
+    #
+    # 没有这一条，一个"总是拒绝升级"的实现也能通过上面的断言。
+    #
+    seenv = SupervisorEnv(install)
+
+    try:
+        seenv.start()
+    except Exception as exc:
+        record("反向验证：supervisor 就绪后可以升级", False, str(exc)[:60])
+        cleanup()
+        return True
+
+    r = subprocess.run(
+        [str(AGENT), "upgrade-test",
+         str(ROOT / f"build/ota-test/real-x86/v{NEW_VERSION}"),
+         str(install)],
+        capture_output=True, text=True, timeout=180)
+
+    record("反向验证：supervisor 就绪后可以升级",
+           r.returncode == 0 and "PASS: OTA upgrade CONFIRMED"
+           in (r.stdout + r.stderr),
+           f"exit={r.returncode}")
+
+    cleanup(seenv)
     return True
 
 
 def scenario_stop_fails():
-    """场景三：停不掉旧版时，绝不能切换版本.
+    """场景三：必须确认旧版退出之后，才允许切换版本.
 
     这条约束是 S3 的核心安全性质：若在旧进程仍存活时切换
     current，会变成"旧版还在跑，但磁盘上的文件已被换掉"，
     该状态无法自动收敛。
 
-    S4/F1 带来的行为变更（重要）
-    ----------------------------
-    本场景原先用"忽略 SIGTERM"的进程，并断言"不再发 SIGKILL"。
-    S4 阶段修正了该策略：忽略 SIGTERM 是**用户态**行为，
-    SIGKILL 一定有效，把它和不可中断睡眠（D）混为一谈会让
-    本可自动恢复的故障变成必须人工介入。
+    S5 之后这个性质的**保证方式**变了
+    -------------------------------
+    S3/S4：OTA 自己发 SIGTERM、自己读 /proc 轮询确认退出。
+    S5：OTA 请求 supervisor 停止，supervisor 作为父进程用
+        waitpid 确认退出后才返回 OK。
 
-    因此本场景改为验证不变的那部分：
-      **无论走 SIGTERM 还是 SIGKILL，都必须等旧进程确认退出，
-        才允许切换 current。**
+    后者更强：waitpid 是"父进程得知子进程终止"的唯一权威
+    途径，不存在观察者与被观察者之间的时间差。
 
-    真实构造"杀不掉"（D 状态）在本机无法完成：
-    FUSE 开发头文件缺失、pip 不可用、无 NFS、无 root，
-    因此 `survived SIGKILL` 分支**未做集成测试**。
-    按项目规则，该分支不得报告为 PASS，列为已知未验证项。
+    本场景因此验证两件事：
+      1. 顺序性 —— 确认退出的日志必须早于切换版本的日志
+      2. 反向验证 —— 若跳过停止直接切换，本场景的断言应能发现
+
+    关于"停不掉"的构造限制（必须如实记录）
+    ------------------------------------
+    SIGKILL 也无效（D 状态）的分支仍然未做集成测试：
+      - 本机无 FUSE 开发头、无 NFS、无 root 权限
+      - SIGSTOP 与 ptrace 挂住的进程都仍会被 SIGKILL 收掉
+        （已实测：ptrace-stop 的进程被 SIGKILL 后变成 Z）
+    该分支是纯防御性代码，列为 L10，不报告为 PASS。
     """
     print("\n" + "=" * 72)
-    print("场景三：停不掉旧版时不得切换版本（含 SIGKILL 升级路径）")
+    print("场景三：确认旧版退出后才切换版本")
     print("=" * 72)
 
     install = setup_install()
@@ -453,20 +536,23 @@ def scenario_stop_fails():
         record("前置：7000 空闲", False, "端口已被占用")
         return False
 
-    # 忽略 SIGTERM：产品必须自行升级到 SIGKILL 才能继续
-    script = "trap '' TERM; while :; do sleep 1; done"
-    proc = own_process(subprocess.Popen(
-        ["/bin/sh", "-c", script],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ))
+    seenv = SupervisorEnv(install, stop_timeout_ms=3000)
 
-    time.sleep(0.5)
+    try:
+        seenv.start()
+    except Exception as exc:
+        record("前置：supervisor 可用", False, str(exc)[:60])
+        return False
 
-    written = write_pidfile(install, proc.pid)
-    record("已为顽固进程写入 pidfile", written)
+    r = seenv.call("start")
+    record("Gateway 已启动", r.returncode == 0,
+           (r.stdout + r.stderr).strip()[:50])
 
-    if not written:
-        cleanup(proc)
+    ok = wait_port(GW_PORT, True)
+    record("Gateway 正在监听 7000", ok)
+
+    if not ok:
+        cleanup(seenv)
         return False
 
     before_current = os.readlink(install / "current")
@@ -484,39 +570,48 @@ def scenario_stop_fails():
     record("检测到运行中的实例",
            "Pre-upgrade gateway state: RUNNING" in out)
 
-    # 产品必须显式声明它升级了信号强度
-    record("SIGTERM 无效时升级为 SIGKILL",
-           "escalating to SIGKILL" in out,
-           "" if "escalating to SIGKILL" in out else "未升级")
-
     #
     # 核心安全断言（顺序性）：
     # 进程确认退出必须**先于**切换 current。
     #
-    # 只断言"最终进程死了"是不够的 —— 一个先切版本、
-    # 再补杀进程的实现同样满足"进程死了"，但它已经
+    # 只断言"最终进程没了"是不够的 —— 一个先切版本、
+    # 再补停进程的实现同样满足"进程没了"，但它已经
     # 制造了"旧版在跑、文件被换"的破损状态。
     #
-    exited_idx = out.find("PASS: gateway killed")
-    if exited_idx < 0:
-        exited_idx = out.find("PASS: gateway stopped")
-
+    stopped_idx = out.find("PASS: gateway stopped")
     activated_idx = out.find("candidate activated")
 
     record("确认退出发生在切换版本之前（关键安全约束）",
-           exited_idx >= 0 and activated_idx >= 0
-           and exited_idx < activated_idx,
-           f"exit_pos={exited_idx}, activate_pos={activated_idx}")
+           stopped_idx >= 0 and activated_idx >= 0
+           and stopped_idx < activated_idx,
+           f"stop_pos={stopped_idx}, activate_pos={activated_idx}")
 
-    record("旧进程确实已终止", proc.poll() is not None,
-           f"poll={proc.poll()}")
+    st = seenv.call("status")
+    record("旧进程确实已终止",
+           "stopped" in (st.stdout + st.stderr),
+           (st.stdout + st.stderr).strip()[:50])
 
     after_current = os.readlink(install / "current")
     record("current 已切到新版（升级成功）",
            after_current == f"releases/v{NEW_VERSION}",
            f"{before_current} -> {after_current}")
 
-    cleanup(proc)
+    #
+    # 反向验证：确认上面的顺序断言真的能发现倒序。
+    #
+    # 用一个明显倒序的假输出跑同一条判定逻辑。若不这样做，
+    # "顺序断言"有可能因为两个下标都是 -1 而恰好不成立，
+    # 我们无法区分"检查有效"与"检查永远为假"。
+    #
+    fake_bad = "candidate activated\nPASS: gateway stopped\n"
+    b_stop = fake_bad.find("PASS: gateway stopped")
+    b_act = fake_bad.find("candidate activated")
+
+    record("反向验证：倒序输出会被判定为违规",
+           not (b_stop >= 0 and b_act >= 0 and b_stop < b_act),
+           f"stop_pos={b_stop}, activate_pos={b_act}")
+
+    cleanup(seenv)
     return True
 
 

@@ -41,6 +41,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# S5：Gateway 改由 Service Supervisor 管理
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from supervisor_env import SupervisorEnv  # noqa: E402
 AGENT = ROOT / "bsp/apps/ota_agent/ota_agent_x86"
 WORK = ROOT / "build/ota-test/s3r4"
 
@@ -106,14 +110,20 @@ def work_procs():
 
 def cleanup(extra=None):
     if extra is not None:
+        # extra 可能是 SupervisorEnv 或 Popen
         try:
-            extra.terminate()
-            extra.wait(timeout=3)
-        except Exception:
+            extra.stop()
+        except AttributeError:
             try:
-                extra.kill()
+                extra.terminate()
+                extra.wait(timeout=3)
             except Exception:
-                pass
+                try:
+                    extra.kill()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # 只处理自己启动且身份复核通过的进程
     for pid, st in _owned:
@@ -167,38 +177,39 @@ def setup():
 
 
 def start_gateway(install):
-    gw = install / "current" / "smart_gateway"
-    proc = own(subprocess.Popen(
-        [str(gw), "--no-serial", "--server", HOST, "--port", "19999"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ))
+    """通过 supervisor 启动 Gateway。
 
-    deadline = time.monotonic() + 5
+    S5 之后 OTA 与测试都**不再自己 fork** Gateway。
+    若测试自己起一个进程再写 pidfile，那构造出来的是一个
+    supervisor 根本不认识的外部进程 —— 而新架构下这种情况
+    本身就是"必须拒绝升级"的状态（无法确认所有权），
+    无法用来测 S3-R4 关心的东西。
+
+    因此这里改为走正常路径：由 supervisor 启动，
+    OTA 通过 IPC 看到 RUNNING。
+    """
+    env = SupervisorEnv(install)
+    try:
+        env.start()
+    except Exception as exc:
+        print(f"  (supervisor 启动失败: {exc})", file=sys.stderr)
+        return None, False
+
+    r = env.call("start")
+    if r.returncode != 0:
+        env.stop()
+        return None, False
+
+    deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if port_listening(GW_PORT):
             break
         time.sleep(0.05)
     else:
-        return proc, False
+        env.stop()
+        return None, False
 
-    st = read_starttime(proc.pid)
-    if st is None:
-        return proc, False
-
-    try:
-        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    except OSError:
-        boot = ""
-
-    run = install / "run"
-    run.mkdir(parents=True, exist_ok=True)
-    content = f"{proc.pid} {st}"
-    if boot:
-        content += f" {boot}"
-    (run / "gateway.pid").write_text(content + "\n")
-    (run / "gateway.pid").chmod(0o600)
-
-    return proc, True
+    return env, True
 
 
 def run_agent(install, env=None, pkg=None):
@@ -255,8 +266,16 @@ def scenario_a_invalid_port():
     record("报告端口非法", "invalid OTA_UPSTREAM_PORT" in out)
 
     time.sleep(0.3)
-    record("原 Gateway 仍在运行（未被停止）",
-           proc.poll() is None, f"pid={proc.pid}")
+    #
+    # 判断"原 Gateway 仍在运行"改为查 supervisor 的状态，
+    # 而不是 poll 一个我们持有的 Popen —— 现在进程不是
+    # 测试的子进程，测试无法 wait 它。
+    #
+    st = proc.call("status")
+    still_running = "running" in (st.stdout + st.stderr)
+
+    record("原 Gateway 仍在运行（未被停止）", still_running,
+           (st.stdout + st.stderr).strip()[:50])
     record("7000 仍在监听", port_listening(GW_PORT))
 
     assert_unchanged(install, "非法端口")
@@ -285,23 +304,52 @@ def scenario_b_not_running():
     record("前置：外部进程占用 7000", True)
     record("前置：Gateway 未运行", len(work_procs()) == 0)
 
+    #
+    # S5：必须准备 supervisor，否则测不到本场景的本意。
+    #
+    # 没有 supervisor 时 OTA 会直接报"连不上 supervisor"而中止 ——
+    # 那是另一种拒绝，与本场景要验证的
+    # "明确知道没在运行、失败后也不擅自启动" 完全不同。
+    #
+    seenv = SupervisorEnv(install)
+
+    try:
+        seenv.start()
+    except Exception as exc:
+        record("前置：supervisor 可用", False, str(exc)[:60])
+        hog.close()
+        return
+
+    record("前置：supervisor 可用（Gateway 未运行）", True)
+
     r = run_agent(install)
     out = r.stdout + r.stderr
     print(out, flush=True)
 
     record("升级被拒绝", r.returncode != 0, f"exit={r.returncode}")
     record("识别为升级前未运行",
-           "Gateway before upgrade: not running" in out)
+           "Pre-upgrade gateway state: STOPPED" in out,
+           [l for l in out.splitlines()
+            if "Pre-upgrade" in l][:1])
 
     time.sleep(0.5)
     started = work_procs()
     record("未擅自启动 Gateway（关键约束）",
            len(started) == 0, f"found={started}")
 
+    #
+    # 再确认 supervisor 自己的状态也是"没有 Gateway"，
+    # 而不只是"没有我们看得见的进程"。
+    #
+    st = seenv.call("status")
+    record("supervisor 确认 Gateway 未启动",
+           "stopped" in (st.stdout + st.stderr),
+           (st.stdout + st.stderr).strip()[:50])
+
     assert_unchanged(install, "端口被占")
 
     hog.close()
-    cleanup()
+    cleanup(seenv)
 
 
 def scenario_c_false_positive():
@@ -412,7 +460,10 @@ def scenario_d_restore_success():
            "aborted before stopping the gateway" in out)
 
     time.sleep(0.3)
-    record("原 Gateway 仍在运行", proc.poll() is None, f"pid={proc.pid}")
+    st = proc.call("status")
+    record("原 Gateway 仍在运行",
+           "running" in (st.stdout + st.stderr),
+           (st.stdout + st.stderr).strip()[:50])
     record("7000 仍在监听", port_listening(GW_PORT))
 
     assert_unchanged(install, "候选缺失")

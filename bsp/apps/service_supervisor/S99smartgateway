@@ -1,0 +1,183 @@
+#!/bin/sh
+#
+# S99smartgateway - BusyBox init 启动脚本（S5）
+#
+# 部署位置：/etc/init.d/S99smartgateway
+#
+# 为什么需要它
+# ------------
+# G4a（开机启动）与 G4b（崩溃自愈）是两件不同的事，必须分开实现：
+#
+#   G4a 开机启动：rcS 遍历 /etc/init.d/S* 执行一次
+#   G4b 崩溃自愈：需要**持续监控**，没有任何脚本会自动做这件事
+#
+# 本脚本负责 G4a，并把 supervisor 注册到 inittab 的 respawn 中
+# 来实现 G4b（见安装说明）。
+#
+# 为什么用 start-stop-daemon
+# --------------------------
+# 板端 BusyBox 未内置该命令，但 /sbin/start-stop-daemon 是独立
+# 二进制（dpkg 版本），已实测存在且支持 --make-pidfile/--retry。
+# 用它而不是手写 pidfile 逻辑，是因为启停竞态已经被它处理过。
+#
+# 重要：本脚本管理的是 **supervisor**，不是 Gateway。
+# Gateway 由 supervisor 管理。两层分开的原因：
+#   - supervisor 崩溃时由 init 拉起（respawn / 本脚本）
+#   - Gateway 的启停必须由 coordinator（OTA）决定，不能让 init
+#     在升级中途把它拉起来
+#
+set -e
+
+NAME=smartgateway
+ROOT=${SMARTGATEWAY_ROOT:-/opt/smartgateway}
+BIN="$ROOT/bin/service_supervisor"
+RUN_DIR="$ROOT/run"
+PIDFILE="$RUN_DIR/supervisor-init.pid"
+LOG="$ROOT/logs/supervisor.log"
+
+# start-stop-daemon 的位置在不同构建里可能不同
+SSD=/sbin/start-stop-daemon
+[ -x "$SSD" ] || SSD=/usr/sbin/start-stop-daemon
+
+say() { printf '%s\n' "$*"; }
+
+fail() {
+    printf 'FAIL: %s\n' "$*" >&2
+    exit 1
+}
+
+mkdir -p "$RUN_DIR" "$ROOT/logs"
+
+case "$1" in
+start)
+    say "Starting $NAME"
+
+    #
+    # 二次启动保护。
+    #
+    # rcS 只会执行一次，但运维可能手工再跑一次；S99 也可能被
+    # 别的脚本 source。重复启动会创建第二个 supervisor，
+    # 而它会因为 socket 已存在而失败——那个失败会污染日志，
+    # 让人误以为服务有问题。
+    #
+    if [ -f "$PIDFILE" ]; then
+        if "$SSD" --pidfile "$PIDFILE" --status >/dev/null 2>&1; then
+            say "$NAME is already running"
+            exit 0
+        fi
+
+        # pidfile 存在但进程不在：清掉陈旧记录
+        rm -f "$PIDFILE"
+    fi
+
+    [ -x "$BIN" ] || fail "$BIN not found or not executable"
+    [ -f "$ROOT/service.conf" ] || fail "$ROOT/service.conf not found"
+
+    #
+    # --make-pidfile 让 start-stop-daemon 在 --background 模式
+    # 下写入它自己 fork 出的进程 pid。
+    #
+    # 注意：这个 pidfile 是 init 层用来判断"supervisor 是否在跑"
+    # 的，与 supervisor 自己的 service.pid（记录 Gateway）是
+    # 两个不同的文件，不能混用。
+    #
+    "$SSD" --start \
+        --background \
+        --make-pidfile \
+        --pidfile "$PIDFILE" \
+        --chdir "$ROOT" \
+        --exec "$BIN" \
+        -- \
+        run --root "$ROOT" \
+        >>"$LOG" 2>&1
+
+    #
+    # 必须等 socket 真的出现才算启动成功。
+    #
+    # 只检查 fork 是否成功是不够的：supervisor 可能因为配置错误、
+    # 端口冲突、或"有残留 Gateway 不是它的"而立即退出，
+    # 那时 fork 已经成功，但服务是死的。
+    #
+    i=0
+    while [ $i -lt 50 ]; do
+        if [ -S "$RUN_DIR/supervisor.sock" ]; then
+            say "$NAME started"
+            exit 0
+        fi
+
+        #
+        # 如果进程已经退出，没必要再等满 5 秒。
+        #
+        if [ -f "$PIDFILE" ] && \
+           ! "$SSD" --pidfile "$PIDFILE" --status >/dev/null 2>&1; then
+            rm -f "$PIDFILE"
+            fail "$NAME exited immediately; see $LOG"
+        fi
+
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    fail "$NAME did not create socket within 5s; see $LOG"
+    ;;
+
+stop)
+    say "Stopping $NAME"
+
+    #
+    # 停止顺序很重要：先让 supervisor 停掉 Gateway，再停 supervisor。
+    #
+    # 如果直接 kill supervisor，它会在收到 SIGTERM 时走自己的
+    # 退出路径停掉 Gateway（见 service_supervisor_run 的收尾），
+    # 所以这里其实可以不显式调用 stop。但显式调用更好：
+    # 它会把"Gateway 是否成功停止"记录到日志里。
+    #
+    if [ -S "$RUN_DIR/supervisor.sock" ]; then
+        "$BIN" stop --root "$ROOT" >>"$LOG" 2>&1 || true
+    fi
+
+    if [ -f "$PIDFILE" ]; then
+        "$SSD" --stop \
+            --pidfile "$PIDFILE" \
+            --retry TERM/5/KILL/3 \
+            >>"$LOG" 2>&1 || true
+
+        rm -f "$PIDFILE"
+    fi
+
+    say "$NAME stopped"
+    ;;
+
+restart)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+
+status)
+    #
+    # 两层状态都要报。
+    #
+    # 只报 supervisor 会掩盖"supervisor 活着但 Gateway 死了"
+    # 这种最常见也最需要被发现的状态。
+    #
+    if [ -f "$PIDFILE" ] && \
+       "$SSD" --pidfile "$PIDFILE" --status >/dev/null 2>&1; then
+        say "supervisor: running"
+    else
+        say "supervisor: stopped"
+    fi
+
+    if [ -S "$RUN_DIR/supervisor.sock" ]; then
+        "$BIN" status --root "$ROOT" 2>/dev/null | \
+            sed 's/^/gateway: /' || say "gateway: unknown"
+    else
+        say "gateway: unknown (no supervisor)"
+    fi
+    ;;
+
+*)
+    echo "Usage: $0 {start|stop|restart|status}" >&2
+    exit 1
+    ;;
+esac

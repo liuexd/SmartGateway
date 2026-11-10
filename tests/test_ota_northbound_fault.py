@@ -29,6 +29,10 @@ GW_PORT = 7000
 LOG_DIR = Path("build/ota-test")
 AGENT = "./bsp/apps/ota_agent/ota_agent_x86"
 
+# S5：Gateway 改由 Service Supervisor 管理，集成测试必须先准备它
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from supervisor_env import SupervisorEnv  # noqa: E402
+
 OLD_VERSION = "0.1.0-test1"
 NEW_VERSION = "0.1.1-test1"
 
@@ -325,6 +329,25 @@ def main():
 
     log_path = LOG_DIR / "d23-6-8-northbound-fault.log"
 
+    #
+    # S5：升级前必须准备好 Service Supervisor。
+    #
+    # OTA 不再自己 fork Gateway，而是请求 supervisor 启动/停止。
+    # 这解决了 S3/S4 遗留的两个缺陷：
+    #   L3  若 Gateway 由别的方式启动，pidfile 不存在，
+    #       OTA 会判定 STOPPED 并启动第二个实例。
+    #   L6  OTA 停止外部进程时存在 pid 复用窗口（pidfd 需 5.1+，
+    #       板端是 4.9.88，无法消除）。
+    #
+    seenv = SupervisorEnv(install, verbose=True)
+
+    try:
+        seenv.start()
+    except Exception as exc:
+        print(f"FAIL: 无法启动 supervisor: {exc}", flush=True)
+        holder.close()
+        return 2
+
     try:
         code, output, elapsed = run(
             [
@@ -339,6 +362,7 @@ def main():
     finally:
         # 协调器立即释放端口, 让回滚后的旧版能重新连接真实 Server
         holder.close()
+        seenv.stop()
 
     log_path.write_text(output)
     print(f"\n完整日志: {log_path}", flush=True)
@@ -382,9 +406,18 @@ def main():
     )
     record(
         "新版进程停止并回收",
-        "Gateway stop result=0" in output
-        and has("PASS: L1 TCP ready"),
-        "SIGTERM 后正常回收",
+        #
+        # S5 之前这里断言的是 "Gateway stop result=0"，
+        # 那是 OTA 自己 stop_managed 时打印的、包含子进程退出码的行。
+        #
+        # 现在停止由 supervisor 完成：它作为父进程调用 waitpid，
+        # 能用返回值直接证明"进程已确认退出"，而不是靠 OTA
+        # 读 /proc 去猜。日志也随之变成 "PASS: Gateway stopped"。
+        #
+        # 这个改动不是放宽断言，而是收紧了语义来源：
+        # 从"我自己观察到它没了"变成"它的父进程确认它退出了"。
+        has("PASS: Gateway stopped"),
+        "supervisor 确认退出",
     )
     record(
         "文件系统回滚 PASS",

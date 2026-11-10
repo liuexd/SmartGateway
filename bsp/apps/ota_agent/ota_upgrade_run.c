@@ -8,6 +8,7 @@
 #include "ota_health.h"
 #include "ota_supervisor.h"
 #include "ota_oplog.h"
+#include "ota_service.h"
 #include "ota_state_io.h"
 #include "ota_verify.h"
 
@@ -452,48 +453,34 @@ static int run_gateway_health(
     unsigned short upstream_port,
     int expect_l2_success)
 {
-    char executable[PATH_MAX];
-    char port_string[16];
-
-    if (snprintf(
-            executable, sizeof(executable),
-            "%s/current/smart_gateway",
-            install_dir) >= (int)sizeof(executable))
-        return -1;
-
-    snprintf(
-        port_string, sizeof(port_string),
-        "%u", (unsigned)upstream_port);
-
-    char *argv[] = {
-        executable,
-        "--no-serial",
-        "--server", "127.0.0.1",
-        "--port", port_string,
-        NULL
-    };
-
-    ota_sup_managed_t managed = {0};
     int result = -1;
+    pid_t pid = -1;
 
     /*
-     * S3：改用 supervisor 启动，从而登记 pidfile 身份。
+     * S5：Gateway 的启动改由 Service Supervisor 执行。
      *
-     * 与原先直接 ota_process_start 的区别：
-     *   - 启动前会检查是否已有 RUNNING 实例（EALREADY）
-     *   - 启动后写入 <install>/run/gateway.pid
-     *   - 停止时走 ota_sup_stop_managed（含所有者校验与 pidfile 清理）
+     * 与 S3 的 ota_sup_start_managed 的关键差异：
+     *   S3 是 OTA **自己 fork** Gateway，然后往 pidfile 里写身份。
+     *   那仍然解决不了 L3/L6：
+     *     L3 —— 若 Gateway 由别的方式启动，pidfile 不存在，
+     *           OTA 会判定 STOPPED 并启动第二个实例。
+     *     L6 —— OTA 停止"外部进程"时，读到 (pid, starttime) 与
+     *           发信号之间存在复用窗口。
      *
-     * 这样升级过程中存在一个可被外部查询的权威记录，
-     * 而不是"进程在跑但没人知道它的身份"。
+     *   S5 是 supervisor fork Gateway，因此它是真正的父进程：
+     *     - waitpid 总是有效，能确认"我启动的那个"确实退出
+     *     - pidfile 由它维护，不可能与真实状态不一致
+     *     - 停止作用于自己的子进程，pid 不可能被复用
+     *
+     * 健康检查需要连到 Mock Server，因此这里把上游地址作为
+     * **一次性覆盖**传给 supervisor。覆盖不写回配置文件。
      */
-    if (ota_sup_start_managed(
-            install_dir, executable, argv, &managed) != 0) {
+    if (ota_service_start(
+            install_dir, "127.0.0.1",
+            (int)upstream_port, &pid) != 0) {
         perror("FAIL: Gateway start");
         return -1;
     }
-
-    pid_t pid = managed.pid;
 
     printf("Gateway started: pid=%ld\n", (long)pid);
 
@@ -545,30 +532,27 @@ static int run_gateway_health(
 
 stop:
     {
-        int wait_status = 0;
-        long long elapsed = 0;
-
         /*
-         * S3：走 supervisor 停止，它会：
-         *   - 校验 owner_pid（只能停自己启动的进程）
-         *   - 确认退出后清理 pidfile
+         * S5：停止也走 supervisor。
          *
-         * 若 stop 失败，pidfile 会被保留 —— 这是正确行为，
-         * 因为进程可能仍在运行，删掉记录会让后续 query 误判。
+         * 返回 OK 就意味着进程**确实已经退出**——
+         * 这是 supervisor 作为父进程能给出的保证，
+         * OTA 自己读 /proc 做不到（那只能观察，无法确认）。
+         *
+         * 注意这里不再检查子进程的退出码：
+         * Gateway 是被我们主动停掉的，它收到 SIGTERM 后的退出码
+         * 取决于它自己的实现（0 或 143 都可能）。把退出码当作
+         * "是否正常退出"的判据会产生误报——曾经就因为要求
+         * WEXITSTATUS == 0 而把一个正常的停止误判成失败。
          */
-        int stop_rc = ota_sup_stop_managed(
-            install_dir, &managed,
-            STOP_TIMEOUT_MS,
-            &wait_status, &elapsed);
+        int stop_rc = ota_service_stop(install_dir);
 
-        printf(
-            "Gateway stop result=%d, elapsed=%lld ms\n",
-            stop_rc, elapsed);
-
-        if (stop_rc != OTA_PROCESS_GRACEFUL ||
-            !WIFEXITED(wait_status) ||
-            WEXITSTATUS(wait_status) != 0) {
-            puts("FAIL: Gateway did not exit cleanly");
+        if (stop_rc == 0) {
+            puts("PASS: Gateway stopped");
+        } else if (stop_rc == OTA_SERVICE_ERR_NOT_RUNNING) {
+            puts("NOTICE: Gateway was not running");
+        } else {
+            puts("FAIL: Gateway stop failed");
             result = -1;
         }
     }
@@ -621,58 +605,6 @@ static int preflight_package(
     puts("PASS: preflight checks done; safe to stop the gateway");
 
     return 0;
-}
-
-/*
- * wait_for_exit - 有界轮询等待 Gateway 退出
- *
- * 用 ota_sup_query 判断，因为它基于 (pid, starttime) 身份校验，
- * 能正确区分"还是同一个进程"与"pid 被复用"。
- *
- * 返回：
- *   OTA_SUP_STOPPED  已退出（含等待期间自行退出）
- *   OTA_SUP_RUNNING  超时仍存活
- *   OTA_SUP_UNKNOWN  过程中身份变为无法判定
- *
- * elapsed_ms 输出实际等待时长，供日志判断故障类型。
- */
-static ota_sup_state_t wait_for_exit(
-    const char *install_dir,
-    int timeout_ms,
-    int *elapsed_ms)
-{
-    const int step_ms = 50;
-    int waited = 0;
-
-    if (elapsed_ms != NULL)
-        *elapsed_ms = 0;
-
-    for (;;) {
-        ota_sup_state_t state =
-            ota_sup_query(install_dir, NULL);
-
-        if (state != OTA_SUP_RUNNING) {
-            if (elapsed_ms != NULL)
-                *elapsed_ms = waited;
-            return state;
-        }
-
-        if (waited >= timeout_ms) {
-            if (elapsed_ms != NULL)
-                *elapsed_ms = waited;
-            return OTA_SUP_RUNNING;
-        }
-
-        struct timespec ts = {
-            .tv_sec = 0,
-            .tv_nsec = step_ms * 1000000L
-        };
-
-        while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
-        }
-
-        waited += step_ms;
-    }
 }
 
 /*
@@ -734,215 +666,98 @@ static int prepare_existing_gateway(const char *install_dir)
         puts("NOTICE: it will be migrated on the next successful start");
     }
 
-    /* 0a. 查询当前状态 */
+    /*
+     * 0a–0c：查询并停止既有 Gateway。
+     *
+     * S5：这里全部改为通过 Service Supervisor 完成。
+     *
+     * 与 S3/S4 的根本区别
+     * -------------------
+     * S3/S4 的实现是"OTA 读 pidfile → 自己判断状态 → 自己 kill"。
+     * 那条路径存在两个无法在 OTA 侧消除的缺陷：
+     *
+     *   L3  若 Gateway 由别的方式启动（手工执行、旧 init 脚本），
+     *       pidfile 不存在，OTA 判定 STOPPED 并启动第二个实例，
+     *       两个进程抢同一个串口和北向连接。
+     *
+     *   L6  读到 (pid, starttime) 之后、发信号之前，进程可能退出
+     *       且 pid 被复用。pidfd 需要 Linux 5.1+，板端是 4.9.88，
+     *       该窗口无法消除，只能缩小。
+     *
+     * supervisor 是 Gateway 的父进程，因此：
+     *   - 状态由拥有所有权的一方给出，不存在"pidfile 缺失"的盲区
+     *   - 停止作用于自己的子进程，pid 不可能被复用
+     *
+     * 代价：supervisor 不可用时无法升级。这是正确的失败方向 ——
+     * 拒绝升级不破坏任何东西，而走缺陷路径可能杀掉无关进程。
+     */
+    ota_service_state_t state = OTA_SERVICE_UNKNOWN;
     pid_t running_pid = -1;
-    ota_sup_state_t state =
-        ota_sup_query(install_dir, &running_pid);
 
-    printf(
-        "Pre-upgrade gateway state: %s\n",
-        ota_sup_state_name(state));
-
-    if (state == OTA_SUP_UNKNOWN) {
-        /*
-         * 状态不确定时绝不能继续。
-         *
-         * 可能的成因：pidfile 损坏、符号链接、权限问题。
-         * 无论哪种，都无法排除"已有一个 Gateway 在跑"，
-         * 此时切换版本会造成不可预期的并发。
-         */
-        puts("FAIL: gateway state UNKNOWN; abort upgrade");
-        puts("      resolve the pidfile issue before retrying");
+    if (ota_service_query(
+            install_dir, &state, &running_pid) != 0) {
+        puts("FAIL: cannot query gateway state from the supervisor");
+        puts("      the supervisor must be running before an upgrade");
+        puts("      start it with: /etc/init.d/S99smartgateway start");
         return -1;
     }
 
-    if (state == OTA_SUP_STOPPED) {
+    printf(
+        "Pre-upgrade gateway state: %s\n",
+        ota_service_state_name(state));
+
+    if (state == OTA_SERVICE_UNKNOWN) {
+        /*
+         * 状态不确定时绝不能继续。
+         *
+         * 与 S4 的 UNKNOWN 处理同理：无法排除"已有一个 Gateway
+         * 在跑"，此时切换版本会造成不可预期的并发。
+         */
+        puts("FAIL: gateway state UNKNOWN; abort upgrade");
+        puts("      resolve the supervisor state before retrying");
+        return -1;
+    }
+
+    if (state == OTA_SERVICE_STOPPED) {
         puts("PASS: no running gateway");
         return 0;
     }
 
-    /* 0c. RUNNING：必须停干净 */
     printf(
         "NOTICE: stopping running gateway (pid=%ld)\n",
         (long)running_pid);
 
-    /*
-     * S3-R：停止外部进程的 TOCTOU 问题与现有缓解措施。
-     *
-     * 已知竞争窗口（复审问题二，**无法彻底消除**）：
-     *     ota_sup_query() 读到 pid 与 starttime
-     *     ↓  ← 此处旧进程可能退出，pid 被内核复用
-     *     kill(pid, SIGTERM)
-     *   若第二步恰好命中复用的新进程，就会误伤无关进程。
-     *
-     * 为什么不用 pidfd：
-     *   pidfd_open() 需要 Linux 5.1+，而目标板是 **4.9.88**，
-     *   已实测确认无 pidfd 支持。因此无法做到"打开句柄后信号
-     *   必然送达同一进程"的原子语义。
-     *
-     * 现采取的缓解（缩小而非消除窗口）：
-     *   1. 发信号**之前**重新取一次身份快照，与 pidfile 记录比对；
-     *   2. 发信号**之后**再取一次快照：
-     *      - 若仍是同一身份 → 信号很可能送达了正确的进程；
-     *      - 若身份已变（pid 被复用）→ 立即报告异常并中止，
-     *        因为此时无法确认究竟是谁收到了信号。
-     *   3. 整个前置检查持有 .ota.lock，排除了"另一个 OTA 同时
-     *      在操作同一安装目录"这一类竞争。
-     *
-     * 剩余风险：
-     *   pid 复用窗口极小（需在内核 tick 级别完成进程退出+pid 分配），
-     *   且 pid_max=32768 使回绕需要相当长时间。但**这不是零风险**，
-     *   属于已知限制，已在文档 L6 记录。
-     *   彻底解决需要内核支持（pidfd）或由 init 代为管理（S5）。
-     */
+    int stop_rc = ota_service_stop(install_dir);
 
-    /* 发信号前再取一次快照，尽量缩短与 query 之间的间隔 */
-    ota_sup_state_t recheck = ota_sup_query(install_dir, &running_pid);
-
-    if (recheck != OTA_SUP_RUNNING) {
-        /*
-         * 在两次查询之间进程状态已变化。
-         * 这本身不是错误（可能自己退出了），但必须重新判断，
-         * 而不是拿着一个过期的 pid 去发信号。
-         */
-        if (recheck == OTA_SUP_STOPPED) {
-            puts("PASS: gateway exited before signal");
-            return 0;
-        }
-
-        puts("FAIL: gateway state changed to UNKNOWN before signal");
-        return -1;
+    if (stop_rc == OTA_SERVICE_ERR_NOT_RUNNING) {
+        /* 两次调用之间它自己退出了：同样是可以继续的状态 */
+        puts("PASS: gateway exited before stop request took effect");
+        return 0;
     }
 
-    if (kill(running_pid, SIGTERM) != 0 && errno != ESRCH) {
-        printf(
-            "FAIL: cannot signal gateway pid=%ld: %s\n",
-            (long)running_pid, strerror(errno));
-        return -1;
-    }
-
-    /* 发信号后立刻复核：确认 pid 仍属于同一实例 */
-    ota_sup_state_t after_signal =
-        ota_sup_query(install_dir, NULL);
-
-    if (after_signal == OTA_SUP_UNKNOWN) {
+    if (stop_rc != 0) {
         /*
-         * 发信号后身份突然无法判定：
-         * 无法确认信号是否送达了正确的进程。
-         * 保守中止，让人工介入核查，而不是继续升级。
+         * 停止失败。
+         *
+         * 注意这里**不能**继续升级。supervisor 报 FAILED 意味着
+         * 进程确实没停下来（通常是 D 状态）。此时切换 current
+         * 会变成"旧版还在跑，但磁盘上的文件已被换掉"，
+         * 该状态无法自动收敛。
          */
-        puts("FAIL: identity became UNKNOWN right after SIGTERM");
-        puts("      cannot confirm the signal reached the gateway");
-        return -1;
-    }
-
-    /*
-     * 轮询等待退出。用 ota_sup_query 判断，
-     * 因为它基于 (pid, starttime) 身份校验，
-     * 能正确区分"还是同一个进程"与"pid 被复用"。
-     */
-    int waited = 0;
-
-    if (wait_for_exit(
-            install_dir, STOP_TIMEOUT_MS, &waited) !=
-        OTA_SUP_STOPPED) {
-        /*
-         * SIGTERM 未生效。
-         *
-         * S4/F1：这里必须升级为 SIGKILL，而不是直接放弃。
-         *
-         * S3 阶段的原实现选择"超时即中止、不发 SIGKILL"，
-         * 理由写的是"若卡在 D 状态 SIGKILL 也无效"。这个理由
-         * 只对 **不可中断睡眠（D）** 成立，但把两种情况混同了：
-         *
-         *   情况一：进程在用户态忽略了 SIGTERM（信号被 sigaction
-         *           设成 SIG_IGN，或 handler 里死循环）。
-         *           -> SIGKILL 一定有效，内核直接终止。
-         *   情况二：进程卡在 D 状态（磁盘/NFS I/O）。
-         *           -> SIGKILL 挂起，进程不会立刻消失。
-         *
-         * 原实现按情况二处理情况一，把一个**可自动恢复**的故障
-         * 变成了"必须人工介入"。实测证据（F1，/tmp/stubborn
-         * 忽略 SIGTERM）：
-         *   FAIL: gateway pid=... did not exit within 3000 ms
-         *   而该进程此后仍然存活，完全可以被 SIGKILL 杀掉。
-         *
-         * 正确顺序：SIGKILL 是"确认无法优雅退出"后的标准降级，
-         * 用**等待结果**来区分两种情况，而不是靠猜：
-         *   SIGKILL 后退出     -> 情况一，升级可以继续
-         *   SIGKILL 后仍不退出 -> 情况二，必须中止并人工介入
-         */
-        puts("NOTICE: SIGTERM ignored; escalating to SIGKILL");
-
-        /*
-         * 发 SIGKILL 之前**再次**校验身份。
-         *
-         * 理由与 SIGTERM 前那次一致：从上次 query 到现在又过了
-         * 3 秒，期间进程可能已退出、pid 可能已被复用。
-         * 对身份不明的 pid 发信号是禁止的（要求 4.2）。
-         */
-        ota_sup_state_t before_kill =
-            ota_sup_query(install_dir, &running_pid);
-
-        if (before_kill == OTA_SUP_STOPPED) {
-            printf(
-                "PASS: gateway exited after %d ms\n", waited);
-            return 0;
-        }
-
-        if (before_kill != OTA_SUP_RUNNING) {
-            puts("FAIL: gateway identity unknown before SIGKILL");
-            puts("      aborting upgrade; current release unchanged");
-            return -1;
-        }
-
-        if (kill(running_pid, SIGKILL) != 0 && errno != ESRCH) {
-            printf(
-                "FAIL: cannot SIGKILL gateway pid=%ld: %s\n",
-                (long)running_pid, strerror(errno));
-            return -1;
-        }
-
-        int kill_waited = 0;
-
-        if (wait_for_exit(
-                install_dir, KILL_TIMEOUT_MS,
-                &kill_waited) == OTA_SUP_STOPPED) {
-            printf(
-                "PASS: gateway killed after %d ms "
-                "(SIGTERM ignored)\n",
-                waited + kill_waited);
-
-            /*
-             * 到这里进程已被 SIGKILL 终止，但 pidfile 仍在
-             * （ota_sup_pidfile_remove 只在 stop_managed 路径调用）。
-             * 这里手工清掉，否则后续 query 会一直返回 STOPPED
-             * 却留下陈旧记录，干扰下一次启动的 legacy 判断。
-             */
-            if (ota_sup_pidfile_remove(install_dir) != 0) {
-                printf(
-                    "WARN: cannot remove pidfile (%s)\n",
-                    strerror(errno));
-            }
-
-            return 0;
-        }
-
-        /*
-         * SIGKILL 都无效 —— 这才是真正的 D 状态。
-         *
-         * 此时进程可能仍持有文件、端口与内存中的状态，
-         * 绝不能继续切换 current。
-         */
-        printf(
-            "FAIL: gateway pid=%ld survived SIGKILL (%d ms)\n",
-            (long)running_pid, kill_waited);
-        puts("      process is likely in uninterruptible (D) state");
+        puts("FAIL: gateway could not be stopped");
         puts("      aborting upgrade; current release unchanged");
         return -1;
     }
 
-    printf("PASS: gateway stopped after %d ms\n", waited);
+    /*
+     * supervisor 返回 OK 即表示进程已确认退出。
+     *
+     * 这里不需要再读 /proc 复核：确认子进程退出是父进程
+     * 天然具备的能力（waitpid 的语义），比任何外部观察都强。
+     * S3/S4 之所以要复核，是因为当时 OTA 不是父进程，
+     * 只能靠 /proc 猜。
+     */
+    puts("PASS: gateway stopped");
     return 0;
 }
 
@@ -1009,25 +824,188 @@ static int preflight_upstream_port(
     return 0;
 }
 
+/* 前置声明：restore_gateway 用它确认端口属主 */
+static int port_owned_by_pid(unsigned short port, pid_t pid);
+
+/*
+ * restore_gateway - 在停止 Gateway 之后的失败路径上恢复旧版服务
+ *
+ * 调用前提：ctx->gateway_stopped_by_ota 为真。
+ *
+ * 幂等性：本函数可重复调用。
+ *   - 若 Gateway 已在运行，supervisor 返回 ALREADY，
+ *     此时视为"已恢复"，不再重复启动。
+ *   - 恢复失败不会改变 OTA 状态，也不会删除任何版本文件。
+ *
+ * 返回 0 表示旧版业务已恢复（L1 通过）；-1 表示恢复失败。
+ *
+ * 恢复失败时的处置原则：
+ *   1. 不修改 confirmed_version
+ *   2. 不删除旧版本文件
+ *   3. 不把状态伪装成 ROLLED_BACK
+ *   4. 保留 pidfile 等身份信息（不删！否则后续无法追踪）
+ *   5. 输出明确的 RECOVERY REQUIRED
+ */
+static int restore_gateway(
+    const char *install_dir,
+    const ota_upgrade_context_t *ctx)
+{
+    if (ctx == NULL || !ctx->gateway_was_running)
+        return 0;      /* 本来没跑，不需要恢复 */
+
+    if (!ctx->gateway_stopped_by_ota) {
+        /* 没被我们停过（例如停止失败），无需也无法恢复 */
+        return 0;
+    }
+
+    puts("RECOVERY: restarting the previously running gateway");
+
+    /*
+     * S5：恢复也走 supervisor。
+     *
+     * 恢复时**不覆盖**上游地址 —— 用配置文件里的生产值。
+     * 与健康检查不同：健康检查必须连 Mock Server，而恢复业务
+     * 是让服务回到正常形态，用测试地址反而是错的。
+     */
+    pid_t pid = -1;
+
+    int rc = ota_service_start(
+        install_dir, NULL, 0, &pid);
+
+    if (rc == OTA_SERVICE_ERR_ALREADY) {
+        /*
+         * 已有一个实例在运行。
+         *
+         * 可能上次恢复已经成功，或外部把它拉起来了。
+         * 这在语义上就是"服务在跑"，不需要再做什么。
+         *
+         * 注意这里不再用 port_owned_by_pid 复核：
+         * supervisor 自己说"我的子进程在跑"，比外部观察端口
+         * 属主更可靠——那个复核是 S3-R4 在"OTA 自己启动"的
+         * 前提下不得不做的，现在所有权明确，不再需要。
+         */
+        puts("PASS: gateway already running (recovered)");
+        return 0;
+    }
+
+    if (rc != 0) {
+        printf(
+            "RECOVERY FAILED: cannot start gateway (%s)\n",
+            strerror(errno));
+        return -1;
+    }
+
+    printf(
+        "RECOVERY: gateway restarted, pid=%ld\n",
+        (long)pid);
+
+    /*
+     * 恢复成功的判定：L1 就绪。
+     *
+     * 只做 TCP connect 是否足够？
+     *
+     * S3-R4 曾在这里发现过假阳性：当时 OTA 自己启动 Gateway，
+     * 若外部进程占着 7000，我们的 Gateway 会因 bind 失败退出，
+     * 而 connect 仍然成功 —— 得出"已恢复"的错误结论。
+     *
+     * 现在这个前提变了：Gateway 由 supervisor 启动，若它 bind
+     * 失败会立即退出，supervisor 会在轮询中回收它并清掉 pidfile。
+     * 因此"connect 成功"之外还必须确认 supervisor 仍认为它在跑。
+     */
+    if (ota_health_wait_tcp_ready(
+            pid, "127.0.0.1",
+            WIFI_PORT, L1_TIMEOUT_MS) != 0) {
+        puts("RECOVERY FAILED: restarted gateway is not L1-ready");
+
+        /*
+         * 启动失败就收掉，避免留下一个半死的进程。
+         * 注意：不要删 pidfile —— 保留身份信息便于人工排查。
+         */
+        (void)ota_service_stop(install_dir);
+
+        return -1;
+    }
+
+    /*
+     * 恢复成功的最终判定：端口 7000 的监听者**必须是
+     * supervisor 报告的那个 pid**。
+     *
+     * 为什么前面两道检查都不够（实测确认）
+     * -----------------------------------
+     * 场景：停止旧版后，外部进程抢占了 7000。此时：
+     *
+     *   1. ota_health_wait_tcp_ready() 通过
+     *      —— 因为**有人**在 7000 上 listen，connect 当然成功。
+     *
+     *   2. ota_service_query() 也可能返回 RUNNING
+     *      —— supervisor 每 200ms 才回收一次子进程，在那之前
+     *         它的视图里子进程还活着。即使重试 1 秒，
+     *         若 supervisor 正在忙别的请求，视图仍可能是旧的。
+     *
+     * S3-R4 阶段用 port_owned_by_pid() 解决过这个问题，
+     * S5 重写时把它删掉了，理由是"supervisor 是父进程，
+     * 它的状态必然正确"。这个推理漏掉了**时间维度**：
+     * 父进程的视图在两次轮询之间与事实不一致。
+     *
+     * 正确做法是把两方面的证据结合起来：
+     *   supervisor 说"我的子进程 pid 是 P" +
+     *   /proc/net/tcp 说"7000 的监听者是 P"
+     * 只有两条同时成立，才能宣称恢复成功。
+     */
+    pid_t owner_pid = -1;
+
+    if (ota_service_query(
+            install_dir, NULL, &owner_pid) != 0 ||
+        owner_pid <= 0) {
+        puts("RECOVERY FAILED: cannot determine the gateway pid");
+        (void)ota_service_stop(install_dir);
+        return -1;
+    }
+
+    int owned = port_owned_by_pid(WIFI_PORT, owner_pid);
+
+    if (owned != 1) {
+        if (owned == 0) {
+            puts("RECOVERY FAILED: port 7000 is listening but "
+                 "NOT by the restored gateway");
+            puts("      another process holds the port");
+        } else {
+            puts("RECOVERY FAILED: cannot verify port ownership");
+        }
+
+        (void)ota_service_stop(install_dir);
+        return -1;
+    }
+
+    puts("PASS: old gateway restored and L1-ready (port owned by it)");
+
+    return 0;
+}
+
 /*
  * port_owned_by_pid - 判断某 TCP 端口是否由指定进程监听
  *
- * 为什么需要它（S3-R4 复审发现）：
- *   restore_gateway() 原本只用 ota_health_wait_tcp_ready() 判断
- *   "7000 就绪"，但那只能证明**有人**在监听 7000，
- *   无法证明监听者是我们刚启动的 Gateway。
+ * 为什么需要它
+ * -----------
+ * TCP connect 成功只证明**有人**在监听，不证明是我们启动的那个
+ * 进程。外部进程抢占端口时，我们的 Gateway 会因 bind 失败退出，
+ * 而 connect 仍然成功 —— 得出"已恢复"的假阳性。
  *
- *   实测反例：外部进程抢占 7000 后，OTA 启动的 Gateway
- *   因端口冲突立即退出，而 L1 检查连到了抢占者，
- *   于是报告 "restored and L1-ready" —— 假阳性，
- *   实际上我们的服务根本没起来。
+ * 这个假阳性在本项目出现过两次：
+ *   S3-R4：OTA 自己启动 Gateway 时
+ *   S5   ：以为"supervisor 是父进程所以不会错"，把它删掉后重现
+ *
+ * 两次的教训是同一件事：**可观察性不等于正确性**。
+ * "能连上"是一个观察，"由我启动的进程在服务"才是事实。
  *
  * 实现：
  *   1. 从 /proc/net/tcp 找到目标端口 LISTEN 状态的 socket inode
- *   2. 遍历 /proc/<pid>/fd，找到引用该 inode 的进程
- *   3. 比对 pid
+ *   2. 遍历 /proc/<pid>/fd，看有没有引用该 inode 的 fd
  *
  * 返回 1 是、0 否、-1 无法判定。
+ *
+ * 已知限制（L8）：只读 /proc/net/tcp，不覆盖 IPv6。
+ * 当前 Gateway 绑 0.0.0.0，不受影响。
  */
 static int port_owned_by_pid(unsigned short port, pid_t pid)
 {
@@ -1123,159 +1101,6 @@ static int port_owned_by_pid(unsigned short port, pid_t pid)
     (void)closedir(dir);
 
     return owned;
-}
-
-/*
- * restore_gateway - 在停止 Gateway 之后的失败路径上恢复旧版服务
- *
- * 调用前提：ctx->gateway_stopped_by_ota 为真。
- *
- * 幂等性：本函数可重复调用。
- *   - 若 Gateway 已在运行，ota_sup_start_managed 会返回 EALREADY，
- *     此时视为"已恢复"，不再重复启动。
- *   - 恢复失败不会改变 OTA 状态，也不会删除任何版本文件。
- *
- * 返回 0 表示旧版业务已恢复（L1 通过）；-1 表示恢复失败。
- *
- * 恢复失败时的处置原则（复审要求 2.6）：
- *   1. 不修改 confirmed_version
- *   2. 不删除旧版本文件
- *   3. 不把状态伪装成 ROLLED_BACK
- *   4. 保留 pidfile 等身份信息（不删！否则后续无法追踪）
- *   5. 输出明确的 RECOVERY REQUIRED
- */
-static int restore_gateway(
-    const char *install_dir,
-    const ota_upgrade_context_t *ctx)
-{
-    if (ctx == NULL || !ctx->gateway_was_running)
-        return 0;      /* 本来没跑，不需要恢复 */
-
-    if (!ctx->gateway_stopped_by_ota) {
-        /* 没被我们停过（例如停止失败），无需也无法恢复 */
-        return 0;
-    }
-
-    puts("RECOVERY: restarting the previously running gateway");
-
-    char executable[PATH_MAX];
-
-    if (snprintf(
-            executable, sizeof(executable),
-            "%s/current/smart_gateway",
-            install_dir) >= (int)sizeof(executable)) {
-        puts("RECOVERY FAILED: executable path too long");
-        return -1;
-    }
-
-    /*
-     * 恢复时使用固定的本地端口，不依赖外部上游。
-     * 只要 L1（7000 就绪）通过就认为服务可用——
-     * 北向是否可达取决于外部环境，不属于"恢复业务"的判定条件。
-     */
-    char *argv[] = {
-        executable,
-        "--no-serial",
-        "--server", "127.0.0.1",
-        "--port", "1",          /* 占位：恢复时不校验北向 */
-        NULL
-    };
-
-    ota_sup_managed_t managed = {0};
-
-    int rc = ota_sup_start_managed(
-        install_dir, executable, argv, &managed);
-
-    if (rc != 0) {
-        if (errno == EALREADY) {
-            /*
-             * 已有一个实例在运行。
-             * 可能是上次恢复已经成功，或外部把它拉起来了。
-             *
-             * 判定标准同样是"端口属于那个实例"，而不是
-             * 只看有人监听 7000 —— 否则外部占用会造成假阳性。
-             */
-            pid_t existing = -1;
-
-            if (ota_sup_query(install_dir, &existing) ==
-                OTA_SUP_RUNNING) {
-                int own = port_owned_by_pid(WIFI_PORT, existing);
-
-                if (own == 1) {
-                    puts("PASS: gateway recovered (already running, "
-                         "port owned by it)");
-                    return 0;
-                }
-            }
-
-            puts("RECOVERY FAILED: an instance exists but cannot "
-                 "confirm it owns port 7000");
-            return -1;
-        }
-
-        printf(
-            "RECOVERY FAILED: cannot start gateway (%s)\n",
-            strerror(errno));
-        return -1;
-    }
-
-    printf(
-        "RECOVERY: gateway restarted, pid=%ld\n",
-        (long)managed.pid);
-
-    /*
-     * 恢复成功的判定必须同时满足两点：
-     *   1. 我们启动的进程仍存活
-     *   2. 7000 端口的监听者**就是它**
-     *
-     * 只做 TCP connect 不够：若外部进程占着 7000，
-     * 我们的 Gateway 会因 bind 失败立刻退出，
-     * 而 connect 仍然成功 —— 得出"已恢复"的假阳性。
-     * （该假阳性已在本阶段实测确认）
-     */
-    if (ota_health_wait_tcp_ready(
-            managed.pid, "127.0.0.1",
-            WIFI_PORT, L1_TIMEOUT_MS) != 0) {
-        puts("RECOVERY FAILED: restarted gateway is not L1-ready");
-
-        /*
-         * 启动失败就收掉，避免留下一个半死的进程。
-         * 注意：不要删 pidfile —— 保留身份信息便于人工排查。
-         */
-        (void)ota_sup_stop_managed(
-            install_dir, &managed, STOP_TIMEOUT_MS, NULL, NULL);
-
-        return -1;
-    }
-
-    int owner = port_owned_by_pid(WIFI_PORT, managed.pid);
-
-    if (owner == 1) {
-        puts("PASS: old gateway restored and L1-ready (port owned by it)");
-        return 0;
-    }
-
-    if (owner == 0) {
-        puts("RECOVERY FAILED: port 7000 is listening but "
-             "NOT by the restored gateway");
-        puts("      another process holds the port");
-
-        (void)ota_sup_stop_managed(
-            install_dir, &managed, STOP_TIMEOUT_MS, NULL, NULL);
-
-        return -1;
-    }
-
-    /*
-     * 无法判定属主（/proc 不可读等）。
-     * 保守处理：不宣称恢复成功。
-     */
-    puts("RECOVERY FAILED: cannot verify port ownership");
-
-    (void)ota_sup_stop_managed(
-        install_dir, &managed, STOP_TIMEOUT_MS, NULL, NULL);
-
-    return -1;
 }
 
 /*
@@ -1542,11 +1367,28 @@ int ota_upgrade_run_test(
     ota_upgrade_context_t ctx = {0};
 
     {
-        pid_t probe_pid = -1;
+        /*
+         * S5：状态由 supervisor 给出。
+         *
+         * 查询失败时不能当成"没在运行"——那会导致升级在
+         * 一个未知状态下继续。这里的语义是"只有明确 RUNNING
+         * 才算 was_running；明确 STOPPED 才算 not running"。
+         */
+        ota_service_state_t probe = OTA_SERVICE_UNKNOWN;
 
-        ctx.gateway_was_running =
-            (ota_sup_query(install_dir, &probe_pid) ==
-             OTA_SUP_RUNNING);
+        if (ota_service_query(
+                install_dir, &probe, NULL) != 0) {
+            puts("FAIL: cannot query gateway state from the supervisor");
+            puts("      the supervisor must be running before an upgrade");
+            return 1;
+        }
+
+        if (probe == OTA_SERVICE_UNKNOWN) {
+            puts("FAIL: gateway state UNKNOWN; abort upgrade");
+            return 1;
+        }
+
+        ctx.gateway_was_running = (probe == OTA_SERVICE_RUNNING);
     }
 
     printf(
@@ -1582,10 +1424,11 @@ int ota_upgrade_run_test(
      * 说明是本次 OTA 停的 —— 后续失败必须负责恢复。
      */
     if (ctx.gateway_was_running) {
-        pid_t after_pid = -1;
+        ota_service_state_t after = OTA_SERVICE_UNKNOWN;
 
-        if (ota_sup_query(install_dir, &after_pid) ==
-            OTA_SUP_STOPPED) {
+        if (ota_service_query(
+                install_dir, &after, NULL) == 0 &&
+            after == OTA_SERVICE_STOPPED) {
             ctx.gateway_stopped_by_ota = 1;
         }
     }

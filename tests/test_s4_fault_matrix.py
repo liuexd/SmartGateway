@@ -60,6 +60,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# S5：Gateway 由 Service Supervisor 管理
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from supervisor_env import SupervisorEnv  # noqa: E402
 AGENT = ROOT / "bsp/apps/ota_agent/ota_agent_x86"
 TEMPLATE = ROOT / "build/ota-test/install-x86-fault.2e0Csr"
 PKG_NEW = ROOT / "build/ota-test/real-x86/v0.1.1-test1"
@@ -222,86 +226,160 @@ def write_pidfile(install, pid, starttime, boot=None):
     return p
 
 
-def start_real_gateway(install):
-    gw = install / "current" / "smart_gateway"
-    proc = own(subprocess.Popen(
-        [str(gw), "--no-serial", "--server", HOST, "--port", "19999"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+def start_real_gateway(install, stop_timeout_ms=5000):
+    """通过 supervisor 启动 Gateway。
 
-    deadline = time.monotonic() + 5
+    S5 之后测试不能自己 Popen Gateway 再补写 pidfile ——
+    那构造的是 supervisor 不认识的外部进程，新架构下
+    OTA 会（正确地）拒绝升级，测不到任何故障路径。
+
+    返回 (SupervisorEnv, ok)。
+    """
+    env = SupervisorEnv(install, stop_timeout_ms=stop_timeout_ms)
+
+    try:
+        env.start()
+    except Exception as exc:
+        print(f"  (supervisor 启动失败: {exc})", file=sys.stderr)
+        return None, False
+
+    r = env.call("start")
+
+    if r.returncode != 0:
+        env.stop()
+        return None, False
+
+    deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if port_listening(GW_PORT):
             break
         time.sleep(0.05)
     else:
-        return proc, False
+        env.stop()
+        return None, False
 
-    st = read_starttime(proc.pid)
-    if st is None:
-        return proc, False
-
-    write_pidfile(install, proc.pid, st)
-    return proc, True
+    return env, True
 
 
 # ---------------------------------------------------------------- F1
 
 def fault_f1():
-    """Gateway 忽略 SIGTERM -> 必须升级为 SIGKILL 并继续升级。"""
+    """Gateway 忽略 SIGTERM -> 必须升级为 SIGKILL 并继续升级。
+
+    S5 之后谁负责 SIGKILL
+    --------------------
+    S4 时是 OTA 自己发 SIGTERM、超时后发 SIGKILL。
+    现在这一步移到了 supervisor（它是父进程，天然更适合做这件事）。
+
+    因此本场景改为验证完整的用户可见行为：
+      1. 顽固实例被真正停掉（不是"发完信号就返回"）
+      2. 升级因此得以继续并成功
+
+    关于"怎么构造一个顽固但能通过 ELF 校验的 Gateway"
+    ------------------------------------------------
+    旧版目录必须能通过 ota_verify 的 ELF/SHA 校验，所以不能放
+    sh 脚本。改为编译一个不响应 SIGTERM **且** 监听 7000 的
+    小程序：它 fork 出一个什么都不做的子进程占住端口不现实，
+    更简单的办法是让它自己 bind 7000 后死循环。
+    """
     print("\n" + "=" * 72)
     print("F1：Gateway 忽略 SIGTERM -> SIGKILL 后继续")
     print("=" * 72)
 
     install = fresh("f1")
 
-    src = WORKROOT / "stubborn.c"
+    #
+    # 顽固 Gateway：忽略 SIGTERM，自己监听 7000，然后死循环。
+    #
+    # 必须监听 7000，否则升级会在 L1 阶段失败，
+    # 那就测不到"停止阶段是否升级到 SIGKILL"了。
+    #
+    src = WORKROOT / "f1_stubborn.c"
+    src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text(
         "#include <signal.h>\n"
+        "#include <string.h>\n"
         "#include <unistd.h>\n"
-        "#include <stdio.h>\n"
-        "int main(void){signal(SIGTERM,SIG_IGN);"
-        "printf(\"ready\\n\");fflush(stdout);"
-        "for(;;)pause();return 0;}\n")
+        "#include <arpa/inet.h>\n"
+        "#include <sys/socket.h>\n"
+        "int main(void){\n"
+        "  signal(SIGTERM,SIG_IGN);\n"
+        "  int fd=socket(AF_INET,SOCK_STREAM,0);\n"
+        "  int on=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));\n"
+        "  struct sockaddr_in a;memset(&a,0,sizeof(a));\n"
+        "  a.sin_family=AF_INET;a.sin_port=htons(7000);\n"
+        "  a.sin_addr.s_addr=INADDR_ANY;\n"
+        "  if(bind(fd,(struct sockaddr*)&a,sizeof(a))!=0)return 2;\n"
+        "  listen(fd,4);\n"
+        "  for(;;)pause();\n"
+        "  return 0;}\n")
 
-    binpath = WORKROOT / "stubborn"
+    binpath = WORKROOT / "f1_stubborn"
     r = subprocess.run(
         ["gcc", "-O1", "-o", str(binpath), str(src)],
         capture_output=True)
+
     if r.returncode != 0:
-        record("F1：构造忽略 SIGTERM 的进程", False, r.stderr[:100])
+        record("F1：构造顽固 Gateway", False, r.stderr[:120])
         return
 
-    proc = own(subprocess.Popen(
-        [str(binpath)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    time.sleep(0.4)
+    record("F1：构造顽固 Gateway（忽略 SIGTERM + 监听 7000）", True)
 
-    st = read_starttime(proc.pid)
-    record("F1：顽固进程已启动", st is not None, f"pid={proc.pid}")
-    if st is None:
+    #
+    # 把它装进旧版发布目录，并同步 manifest 保持自洽。
+    # 不同步的话前置校验会拒绝升级（SHA 不符），
+    # 那样测的是 preflight 而不是停止路径。
+    #
+    import hashlib
+
+    rel = install / "releases" / f"v{OLD}"
+    gw = rel / "smart_gateway"
+
+    data = binpath.read_bytes()
+    staging = WORKROOT / "f1_staged"
+    staging.write_bytes(data)
+    staging.chmod(0o755)
+    os.replace(staging, gw)
+
+    mf = json.loads((rel / "manifest.json").read_text())
+    mf["size"] = len(data)
+    mf["sha256"] = hashlib.sha256(data).hexdigest()
+    (rel / "manifest.json").write_text(json.dumps(mf, indent=2))
+
+    seenv, ok = start_real_gateway(install, stop_timeout_ms=3000)
+
+    record("F1：顽固实例已启动并监听 7000", ok)
+
+    if not ok:
         return
-
-    write_pidfile(install, proc.pid, st)
 
     r = run_agent(install)
     out = r.stdout + r.stderr
     print(out, flush=True)
 
-    record("F1：识别 SIGTERM 无效并升级",
-           "escalating to SIGKILL" in out)
-    record("F1：SIGKILL 后进程消失", proc.poll() is not None,
-           f"poll={proc.poll()}")
-
-    # 关键：升级必须因此得以继续，而不是被卡死
+    #
+    # 关键断言：升级必须因此得以继续并成功。
+    #
+    # 不解断言 "escalating to SIGKILL" 这行日志：那是 supervisor
+    # 的内部实现细节，日志措辞变化不应让测试失败。真正要保证的是
+    # 可观察结果 —— 顽固实例被停掉、升级完成。
+    #
     record("F1：升级最终成功",
            r.returncode == 0 and "PASS: OTA upgrade CONFIRMED" in out,
            f"exit={r.returncode}")
-    record("F1：current 指向新版", current(install) == f"releases/v{NEW}",
+    record("F1：current 指向新版",
+           current(install) == f"releases/v{NEW}",
            current(install))
     record("F1：状态 CONFIRMED",
-           read_state(install)["state"] == "CONFIRMED")
+           read_state(install)["state"] == "CONFIRMED",
+           read_state(install)["state"])
 
-    proc.kill()
+    st = seenv.call("status")
+    record("F1：顽固实例已被停掉",
+           "stopped" in (st.stdout + st.stderr),
+           (st.stdout + st.stderr).strip()[:50])
+
+    seenv.stop()
 
 
 # ---------------------------------------------------------------- F2
@@ -314,8 +392,8 @@ def fault_f2():
 
     install = fresh("f2")
 
-    proc, ok = start_real_gateway(install)
-    record("F2：升级前 Gateway 在运行", ok, f"pid={proc.pid}")
+    seenv, ok = start_real_gateway(install)
+    record("F2：升级前 Gateway 在运行", ok)
     if not ok:
         return
 
@@ -436,6 +514,8 @@ def fault_f2():
     record("F2：current 指向存在的目录",
            (install / current(install)).is_dir(), current(install))
 
+    seenv.stop()
+
 
 # ---------------------------------------------------------------- F3
 
@@ -446,8 +526,8 @@ def fault_f3():
     print("=" * 72)
 
     install = fresh("f3")
-    proc, ok = start_real_gateway(install)
-    record("F3：升级前 Gateway 在运行", ok, f"pid={proc.pid}")
+    seenv, ok = start_real_gateway(install)
+    record("F3：升级前 Gateway 在运行", ok)
     if not ok:
         return
 
@@ -484,8 +564,8 @@ def fault_f4():
     print("=" * 72)
 
     install = fresh("f4")
-    proc, ok = start_real_gateway(install)
-    record("F4：升级前 Gateway 在运行", ok, f"pid={proc.pid}")
+    seenv, ok = start_real_gateway(install)
+    record("F4：升级前 Gateway 在运行", ok)
     if not ok:
         return
 
@@ -495,11 +575,7 @@ def fault_f4():
     hog.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     # 先停掉真实 Gateway 释放端口，再由 hog 抢占
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+    seenv.call("stop")
 
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
@@ -538,8 +614,8 @@ def fault_f5():
     print("=" * 72)
 
     install = fresh("f5")
-    proc, ok = start_real_gateway(install)
-    record("F5：升级前 Gateway 在运行", ok, f"pid={proc.pid}")
+    seenv, ok = start_real_gateway(install)
+    record("F5：升级前 Gateway 在运行", ok)
     if not ok:
         return
 
@@ -567,7 +643,7 @@ def fault_f6():
     print("=" * 72)
 
     install = fresh("f6")
-    proc, ok = start_real_gateway(install)
+    seenv, ok = start_real_gateway(install)
     record("F6：升级前 Gateway 在运行", ok)
     if not ok:
         return
@@ -673,15 +749,34 @@ def fault_f6():
 # ---------------------------------------------------------------- F7
 
 def fault_f7():
-    """pidfile 指向被复用的 pid -> 判 STOPPED 且绝不误杀。"""
+    """pidfile 指向被复用的 pid -> 不得误杀无关进程。
+
+    S5 之后这条保证的来源变了
+    ------------------------
+    S4 时 OTA 读 pidfile、自己比对 starttime、自己 kill。
+    "pid 被复用"因此是一个真实威胁：两个读取之间进程可能
+    退出且 pid 被重新分配。
+
+    S5 之后停止动作交给 supervisor，它停的是**自己的子进程**。
+    一个已退出但尚未被 wait 的子进程处于僵尸态，其 pid 不会
+    被内核重新分配，因此"误杀无关进程"在结构上不可能发生 ——
+    这不是靠更仔细的检查，而是靠所有权。
+
+    本场景因此改为验证这个结构性质，并且**仍然验证无关进程
+    必须存活**（试金石），只是不再断言内部的 pidfile 判定过程。
+
+    单元级覆盖：service_supervisor_test 里
+    test_state_pid_reused 直接验证了 starttime 不匹配时
+    判为未运行且不影响进程本身。
+    """
     print("\n" + "=" * 72)
-    print("F7：pidfile 指向无关进程 -> 不误杀")
+    print("F7：陈旧/伪造 pidfile 不得导致误杀")
     print("=" * 72)
 
     install = fresh("f7")
 
-    # 起一个完全无关的进程，把它的 pid 写进 pidfile，
-    # 但 starttime 故意写错（模拟 pid 被复用）
+    # 起一个完全无关的进程，把它的 pid 写进 **supervisor 的**
+    # pidfile 位置（模拟残留/人为破坏的记录）
     victim = own(subprocess.Popen(
         ["sleep", "120"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
@@ -689,11 +784,21 @@ def fault_f7():
 
     real_st = read_starttime(victim.pid)
     record("F7：无关进程已启动", real_st is not None, f"pid={victim.pid}")
+
     if real_st is None:
         return
 
-    # starttime 用真实值 +1，模拟"同一个 pid，但不是当初那个进程"
-    write_pidfile(install, victim.pid, real_st + 1)
+    #
+    # 关键设计点：这个 pidfile 属于 supervisor，而没有任何
+    # supervisor 在运行。因此它是纯粹的"垃圾文件"。
+    #
+    # OTA 现在不读它 —— 它问 supervisor。没有 supervisor
+    # 就拒绝升级。所以这个垃圾文件不应该产生任何影响。
+    #
+    run = install / "run"
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "service.pid").write_text(f"{victim.pid} {real_st + 1}\n")
+    (run / "service.pid").chmod(0o600)
 
     r = run_agent(install)
     out = r.stdout + r.stderr
@@ -701,16 +806,20 @@ def fault_f7():
 
     time.sleep(0.3)
 
-    # 核心断言
+    # 试金石：无关进程必须活着
     alive = victim.poll() is None
     record("F7：无关进程**未被杀死**（试金石）", alive,
            f"poll={victim.poll()}")
-    record("F7：判定为 STOPPED 而非 RUNNING",
-           "Pre-upgrade gateway state: STOPPED" in out,
-           [l for l in out.splitlines()
-            if "Pre-upgrade" in l][:1])
-    record("F7：升级得以继续（不因陈旧记录阻塞）",
-           r.returncode == 0, f"exit={r.returncode}")
+
+    #
+    # 没有任何 supervisor，因此必须拒绝升级 —— 而不是去
+    # 相信那个垃圾 pidfile 说的"有个 Gateway 在跑"。
+    #
+    record("F7：拒绝升级而非盲信残留记录",
+           r.returncode != 0, f"exit={r.returncode}")
+    record("F7：明确报告无法查询状态",
+           "cannot query gateway state from the supervisor" in out,
+           "" if "cannot query" in out else out.strip()[:60])
 
     victim.kill()
 
@@ -718,24 +827,33 @@ def fault_f7():
 # ---------------------------------------------------------------- F8
 
 def fault_f8():
-    """pidfile 内容损坏 -> UNKNOWN -> 中止且 current 不变。"""
+    """supervisor 的 pidfile 损坏 -> 必须中止，不得切换版本。
+
+    S5 之后"s损坏的 pidfile"由 supervisor 自己处理：它在启动时
+    读不到合法记录就拒绝启动（宁可不启动，也不基于看不懂的
+    记录去操作进程）。
+
+    OTA 侧看到的因此是"supervisor 不可用"，它的正确反应是中止。
+    本场景验证这条链路，并且验证一个更强的性质：
+    **无论 supervisor 因为什么原因不可用，OTA 都不许改 current。**
+    """
     print("\n" + "=" * 72)
-    print("F8：pidfile 损坏 -> UNKNOWN -> 中止")
+    print("F8：状态记录损坏 -> 中止，不切换版本")
     print("=" * 72)
 
     install = fresh("f8")
 
     run = install / "run"
     run.mkdir(parents=True, exist_ok=True)
-    (run / "gateway.pid").write_text("this is not a pidfile\n")
-    (run / "gateway.pid").chmod(0o600)
+
+    # 损坏的 supervisor pidfile
+    (run / "service.pid").write_text("this is not a pidfile\n")
+    (run / "service.pid").chmod(0o600)
 
     r = run_agent(install)
     out = r.stdout + r.stderr
     print(out, flush=True)
 
-    record("F8：判定为 UNKNOWN",
-           "Pre-upgrade gateway state: UNKNOWN" in out)
     record("F8：中止升级", r.returncode != 0, f"exit={r.returncode}")
     record("F8：current 未改",
            current(install) == f"releases/v{OLD}", current(install))
@@ -745,6 +863,25 @@ def fault_f8():
     record("F8：未启动任何 Gateway",
            len(procs_under(install)) == 0,
            procs_under(install))
+
+    #
+    # 反向验证：修好环境后必须能升级。
+    #
+    # 没有这一条，一个"总是拒绝"的实现也能让上面的断言全绿。
+    #
+    (run / "service.pid").unlink()
+
+    seenv, ok = start_real_gateway(install)
+    record("F8：反向验证 —— supervisor 就绪", ok)
+
+    if ok:
+        r = run_agent(install)
+        out = r.stdout + r.stderr
+        record("F8：反向验证 —— 升级成功",
+               r.returncode == 0
+               and "PASS: OTA upgrade CONFIRMED" in out,
+               f"exit={r.returncode}")
+        seenv.stop()
 
 
 # ---------------------------------------------------------------- F9
@@ -814,7 +951,7 @@ def fault_f10():
     print("=" * 72)
 
     install = fresh("f10")
-    proc, ok = start_real_gateway(install)
+    seenv, ok = start_real_gateway(install)
     record("F10：升级前 Gateway 在运行", ok)
     if not ok:
         return

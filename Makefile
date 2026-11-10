@@ -86,8 +86,32 @@ MOCK_WIFI_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(MOCK_WIFI_SRCS))
 # ============================================================
 
 .PHONY: all gateway server mock_node mock_wifi_node clean
+.PHONY: supervisor supervisor-test supervisor-arm
 
 all: gateway server mock_node mock_wifi_node
+
+
+# ============================================================
+# Service Supervisor（S5）
+#
+# 它解决 S3/S4 遗留的 L3（前置校验依赖 pidfile）与
+# L6（停止外部进程的 TOCTOU）—— 做法是把 Gateway 的
+# 所有权交给常驻 supervisor。
+#
+# 单独一个目标而不进 all：它只在对板部署时才需要，
+# 而且依赖 common/service_ipc.c，不应影响现有构建产物。
+# ============================================================
+
+SUPERVISOR_DIR := bsp/apps/service_supervisor
+
+supervisor:
+	$(MAKE) -C $(SUPERVISOR_DIR) all
+
+supervisor-test:
+	$(MAKE) -C $(SUPERVISOR_DIR) test
+
+supervisor-arm:
+	$(MAKE) -C $(SUPERVISOR_DIR) arm
 
 
 # ============================================================

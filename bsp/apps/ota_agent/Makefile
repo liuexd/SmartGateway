@@ -58,6 +58,9 @@ CC := gcc
 
 CFLAGS := -std=c11 -O0 -g -Wall -Wextra -Werror
 
+# 引用 common/service_ipc.h（S5 的服务客户端）
+COMMON_INC := -I../../../common
+
 PKG_CFLAGS := $(shell pkg-config --cflags openssl json-c)
 PKG_LIBS := $(shell pkg-config --libs openssl json-c)
 
@@ -79,6 +82,8 @@ OTA_SRCS := \
 	ota_health.c \
 	ota_supervisor.c \
 	ota_oplog.c \
+	ota_service.c \
+	../../../common/service_ipc.c \
 	ota_upgrade_run.c
 
 
@@ -98,6 +103,8 @@ OTA_HEADERS := \
 	ota_health.h \
 	ota_supervisor.h \
 	ota_oplog.h \
+	ota_service.h \
+	../../../common/service_ipc.h \
 	ota_upgrade_run.h \
 	ota_json_compat.h
 
@@ -118,7 +125,7 @@ all: ota_verify ota_agent
 # ============================================================
 
 ota_verify: ota_verify.c ota_verify_cli.c ota_verify.h
-	$(CC) $(CFLAGS) $(PKG_CFLAGS) \
+	$(CC) $(CFLAGS) $(COMMON_INC) $(PKG_CFLAGS) \
 		ota_verify.c ota_verify_cli.c \
 		-o $@ $(PKG_LIBS)
 
@@ -129,7 +136,7 @@ ota_verify: ota_verify.c ota_verify_cli.c ota_verify.h
 # ============================================================
 
 ota_agent: $(OTA_SRCS) $(OTA_HEADERS)
-	$(CC) $(CFLAGS) $(PKG_CFLAGS) \
+	$(CC) $(CFLAGS) $(COMMON_INC) $(PKG_CFLAGS) \
 		$(OTA_SRCS) \
 		-o $@ $(PKG_LIBS)
 
@@ -140,7 +147,7 @@ ota_agent: $(OTA_SRCS) $(OTA_HEADERS)
 # ============================================================
 
 ota_agent_x86: $(OTA_SRCS) $(OTA_HEADERS)
-	$(CC) $(CFLAGS) -DOTA_TARGET_X86_64 \
+	$(CC) $(CFLAGS) $(COMMON_INC) -DOTA_TARGET_X86_64 \
 		$(PKG_CFLAGS) \
 		$(OTA_SRCS) \
 		-o $@ $(PKG_LIBS)
@@ -188,7 +195,7 @@ $(ARM_BUILD_DIR)/ota_verify: ota_verify.c ota_verify_cli.c ota_verify.h ota_json
 # 未定义 OTA_TARGET_X86_64，因此仍保持 ARM 目标校验规则。
 $(ARM_BUILD_DIR)/ota_agent: $(OTA_SRCS) $(OTA_HEADERS)
 	@mkdir -p $(ARM_BUILD_DIR)
-	$(ARM_CC) $(ARM_CFLAGS) -DOTA_TARGET_ARM_V7 \
+	$(ARM_CC) $(ARM_CFLAGS) -DOTA_TARGET_ARM_V7 $(COMMON_INC) \
 		$(ARM_PKG_CFLAGS) \
 		$(OTA_SRCS) \
 		-o $@ $(ARM_PKG_LIBS) $(ARM_LDFLAGS)
@@ -270,17 +277,17 @@ test-supervisor-s2:
 test-supervisor-arm:
 	@mkdir -p $(ARM_BUILD_DIR)
 	$(ARM_CC) $(ARM_CFLAGS) -Wno-unused-result \
-		-DOTA_TARGET_ARM_V7 \
+		-DOTA_TARGET_ARM_V7 $(COMMON_INC) \
 		ota_supervisor.c ota_process.c \
 		ota_supervisor_test.c \
 		-o $(SUP_TEST_BIN)
 	$(ARM_CC) $(ARM_CFLAGS) -Wno-unused-result \
-		-DOTA_TARGET_ARM_V7 \
+		-DOTA_TARGET_ARM_V7 $(COMMON_INC) \
 		ota_supervisor.c ota_process.c \
 		ota_supervisor_s2_test.c \
 		-o $(S2_TEST_BIN)
 	$(ARM_CC) $(ARM_CFLAGS) -Wno-unused-result \
-		-DOTA_TARGET_ARM_V7 \
+		-DOTA_TARGET_ARM_V7 $(COMMON_INC) \
 		ota_supervisor.c ota_process.c \
 		ota_supervisor_e2e.c \
 		-o $(E2E_BIN)
