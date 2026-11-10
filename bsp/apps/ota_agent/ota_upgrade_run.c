@@ -11,6 +11,7 @@
 #include "ota_verify.h"
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -822,6 +823,374 @@ static int prepare_existing_gateway(const char *install_dir)
     }
 }
 
+/*
+ * 升级上下文（S3-R4）。
+ *
+ * 目的：把"是否动过 Gateway"变成可查询的事实，
+ * 从而在任意失败路径上判断是否需要恢复业务。
+ *
+ * 关键约束：如果升级开始时 Gateway 本来就没运行，
+ * 失败后**不能**擅自启动它——那是凭空制造一个本不存在的服务。
+ */
+typedef struct {
+    int gateway_was_running;      /* 升级前是否在运行 */
+    int gateway_stopped_by_ota;   /* 是否由本次 OTA 停止 */
+    int activation_started;       /* 是否已进入变更阶段 */
+} ota_upgrade_context_t;
+
+/*
+ * preflight_upstream_port - 解析并校验上游端口配置（只读）
+ *
+ * 必须在停止 Gateway **之前**执行。
+ * 原实现把这段放在停止之后，于是非法端口会导致
+ * "旧版已停 + 直接 return" 的业务中断（S3-R4 复审问题）。
+ *
+ * 输出：
+ *   external_out     1 表示由外部指定（测试注入故障），0 表示自行创建 Mock
+ *   port_out         外部指定时的端口号
+ *
+ * 返回 0 成功；-1 参数非法。
+ */
+static int preflight_upstream_port(
+    int *external_out,
+    unsigned short *port_out)
+{
+    if (external_out == NULL || port_out == NULL)
+        return -1;
+
+    *external_out = 0;
+    *port_out = 0;
+
+    const char *env_port = getenv("OTA_UPSTREAM_PORT");
+
+    if (env_port == NULL || env_port[0] == '\0')
+        return 0;      /* 未指定：走自行创建 Mock Server 的路径 */
+
+    char *end = NULL;
+
+    long value = strtol(env_port, &end, 10);
+
+    if (end == env_port || *end != '\0' ||
+        value <= 0 || value > 65535) {
+        puts("FAIL: invalid OTA_UPSTREAM_PORT");
+        return -1;
+    }
+
+    *external_out = 1;
+    *port_out = (unsigned short)value;
+
+    printf(
+        "External upstream port: %u (not listening)\n",
+        (unsigned)*port_out);
+
+    return 0;
+}
+
+/*
+ * port_owned_by_pid - 判断某 TCP 端口是否由指定进程监听
+ *
+ * 为什么需要它（S3-R4 复审发现）：
+ *   restore_gateway() 原本只用 ota_health_wait_tcp_ready() 判断
+ *   "7000 就绪"，但那只能证明**有人**在监听 7000，
+ *   无法证明监听者是我们刚启动的 Gateway。
+ *
+ *   实测反例：外部进程抢占 7000 后，OTA 启动的 Gateway
+ *   因端口冲突立即退出，而 L1 检查连到了抢占者，
+ *   于是报告 "restored and L1-ready" —— 假阳性，
+ *   实际上我们的服务根本没起来。
+ *
+ * 实现：
+ *   1. 从 /proc/net/tcp 找到目标端口 LISTEN 状态的 socket inode
+ *   2. 遍历 /proc/<pid>/fd，找到引用该 inode 的进程
+ *   3. 比对 pid
+ *
+ * 返回 1 是、0 否、-1 无法判定。
+ */
+static int port_owned_by_pid(unsigned short port, pid_t pid)
+{
+    char inode[32] = {0};
+    FILE *fp = fopen("/proc/net/tcp", "r");
+
+    if (fp == NULL)
+        return -1;
+
+    char line[512];
+    int found = 0;
+
+    /* 跳过表头 */
+    if (fgets(line, sizeof(line), fp) == NULL) {
+        (void)fclose(fp);
+        return -1;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        unsigned int local_addr = 0;
+        unsigned int local_port = 0;
+        unsigned int st = 0;
+        unsigned int ino = 0;
+
+        /*
+         * 列格式（/proc/net/tcp）：
+         *   sl local_address rem_address st ... inode
+         * local_address 形如 "0100007F:1B58"（十六进制 IP:端口）
+         */
+        int n = sscanf(
+            line,
+            " %*d: %8X:%4X %*8X:%*4X %2X %*s %*s %*s %*s %u",
+            &local_addr, &local_port, &st, &ino);
+
+        if (n != 4)
+            continue;
+
+        /* st == 0x0A 表示 TCP_LISTEN */
+        if (local_port == (unsigned int)port && st == 0x0A) {
+            snprintf(inode, sizeof(inode), "%u", ino);
+            found = 1;
+            break;
+        }
+    }
+
+    (void)fclose(fp);
+
+    if (!found)
+        return 0;      /* 端口没有 LISTEN 者 */
+
+    char target[64];
+    snprintf(target, sizeof(target), "socket:[%s]", inode);
+
+    char fd_dir[64];
+    snprintf(fd_dir, sizeof(fd_dir), "/proc/%ld/fd", (long)pid);
+
+    DIR *dir = opendir(fd_dir);
+
+    if (dir == NULL)
+        return -1;     /* 进程不存在或不可读 */
+
+    struct dirent *entry;
+    int owned = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.')
+            continue;
+
+        char link_path[PATH_MAX];
+        char link_target[128];
+
+        int m = snprintf(
+            link_path, sizeof(link_path),
+            "%s/%s", fd_dir, entry->d_name);
+
+        if (m < 0 || (size_t)m >= sizeof(link_path))
+            continue;
+
+        ssize_t len = readlink(
+            link_path, link_target, sizeof(link_target) - 1);
+
+        if (len <= 0)
+            continue;
+
+        link_target[len] = '\0';
+
+        if (strcmp(link_target, target) == 0) {
+            owned = 1;
+            break;
+        }
+    }
+
+    (void)closedir(dir);
+
+    return owned;
+}
+
+/*
+ * restore_gateway - 在停止 Gateway 之后的失败路径上恢复旧版服务
+ *
+ * 调用前提：ctx->gateway_stopped_by_ota 为真。
+ *
+ * 幂等性：本函数可重复调用。
+ *   - 若 Gateway 已在运行，ota_sup_start_managed 会返回 EALREADY，
+ *     此时视为"已恢复"，不再重复启动。
+ *   - 恢复失败不会改变 OTA 状态，也不会删除任何版本文件。
+ *
+ * 返回 0 表示旧版业务已恢复（L1 通过）；-1 表示恢复失败。
+ *
+ * 恢复失败时的处置原则（复审要求 2.6）：
+ *   1. 不修改 confirmed_version
+ *   2. 不删除旧版本文件
+ *   3. 不把状态伪装成 ROLLED_BACK
+ *   4. 保留 pidfile 等身份信息（不删！否则后续无法追踪）
+ *   5. 输出明确的 RECOVERY REQUIRED
+ */
+static int restore_gateway(
+    const char *install_dir,
+    const ota_upgrade_context_t *ctx)
+{
+    if (ctx == NULL || !ctx->gateway_was_running)
+        return 0;      /* 本来没跑，不需要恢复 */
+
+    if (!ctx->gateway_stopped_by_ota) {
+        /* 没被我们停过（例如停止失败），无需也无法恢复 */
+        return 0;
+    }
+
+    puts("RECOVERY: restarting the previously running gateway");
+
+    char executable[PATH_MAX];
+
+    if (snprintf(
+            executable, sizeof(executable),
+            "%s/current/smart_gateway",
+            install_dir) >= (int)sizeof(executable)) {
+        puts("RECOVERY FAILED: executable path too long");
+        return -1;
+    }
+
+    /*
+     * 恢复时使用固定的本地端口，不依赖外部上游。
+     * 只要 L1（7000 就绪）通过就认为服务可用——
+     * 北向是否可达取决于外部环境，不属于"恢复业务"的判定条件。
+     */
+    char *argv[] = {
+        executable,
+        "--no-serial",
+        "--server", "127.0.0.1",
+        "--port", "1",          /* 占位：恢复时不校验北向 */
+        NULL
+    };
+
+    ota_sup_managed_t managed = {0};
+
+    int rc = ota_sup_start_managed(
+        install_dir, executable, argv, &managed);
+
+    if (rc != 0) {
+        if (errno == EALREADY) {
+            /*
+             * 已有一个实例在运行。
+             * 可能是上次恢复已经成功，或外部把它拉起来了。
+             *
+             * 判定标准同样是"端口属于那个实例"，而不是
+             * 只看有人监听 7000 —— 否则外部占用会造成假阳性。
+             */
+            pid_t existing = -1;
+
+            if (ota_sup_query(install_dir, &existing) ==
+                OTA_SUP_RUNNING) {
+                int own = port_owned_by_pid(WIFI_PORT, existing);
+
+                if (own == 1) {
+                    puts("PASS: gateway recovered (already running, "
+                         "port owned by it)");
+                    return 0;
+                }
+            }
+
+            puts("RECOVERY FAILED: an instance exists but cannot "
+                 "confirm it owns port 7000");
+            return -1;
+        }
+
+        printf(
+            "RECOVERY FAILED: cannot start gateway (%s)\n",
+            strerror(errno));
+        return -1;
+    }
+
+    printf(
+        "RECOVERY: gateway restarted, pid=%ld\n",
+        (long)managed.pid);
+
+    /*
+     * 恢复成功的判定必须同时满足两点：
+     *   1. 我们启动的进程仍存活
+     *   2. 7000 端口的监听者**就是它**
+     *
+     * 只做 TCP connect 不够：若外部进程占着 7000，
+     * 我们的 Gateway 会因 bind 失败立刻退出，
+     * 而 connect 仍然成功 —— 得出"已恢复"的假阳性。
+     * （该假阳性已在本阶段实测确认）
+     */
+    if (ota_health_wait_tcp_ready(
+            managed.pid, "127.0.0.1",
+            WIFI_PORT, L1_TIMEOUT_MS) != 0) {
+        puts("RECOVERY FAILED: restarted gateway is not L1-ready");
+
+        /*
+         * 启动失败就收掉，避免留下一个半死的进程。
+         * 注意：不要删 pidfile —— 保留身份信息便于人工排查。
+         */
+        (void)ota_sup_stop_managed(
+            install_dir, &managed, STOP_TIMEOUT_MS, NULL, NULL);
+
+        return -1;
+    }
+
+    int owner = port_owned_by_pid(WIFI_PORT, managed.pid);
+
+    if (owner == 1) {
+        puts("PASS: old gateway restored and L1-ready (port owned by it)");
+        return 0;
+    }
+
+    if (owner == 0) {
+        puts("RECOVERY FAILED: port 7000 is listening but "
+             "NOT by the restored gateway");
+        puts("      another process holds the port");
+
+        (void)ota_sup_stop_managed(
+            install_dir, &managed, STOP_TIMEOUT_MS, NULL, NULL);
+
+        return -1;
+    }
+
+    /*
+     * 无法判定属主（/proc 不可读等）。
+     * 保守处理：不宣称恢复成功。
+     */
+    puts("RECOVERY FAILED: cannot verify port ownership");
+
+    (void)ota_sup_stop_managed(
+        install_dir, &managed, STOP_TIMEOUT_MS, NULL, NULL);
+
+    return -1;
+}
+
+/*
+ * abort_after_stop - 停止 Gateway 之后任何失败的统一出口
+ *
+ * 所有"已停止旧版、但无法继续升级"的路径都必须经过这里，
+ * 而不是直接 return。
+ *
+ * 返回 1（作为 ota_upgrade_run_test 的失败返回值）。
+ */
+static int abort_after_stop(
+    const char *install_dir,
+    const ota_upgrade_context_t *ctx,
+    const char *reason)
+{
+    printf("FAIL: %s\n", reason);
+
+    if (restore_gateway(install_dir, ctx) != 0) {
+        puts("");
+        puts("==================================================");
+        puts(" RECOVERY REQUIRED");
+        puts("==================================================");
+        puts(" The previously running gateway could not be");
+        puts(" restored automatically.");
+        puts("");
+        puts(" Current state:");
+        puts("   - OTA status: unchanged (NOT marked ROLLED_BACK)");
+        puts("   - confirmed version: unchanged");
+        puts("   - release files: untouched");
+        puts("");
+        puts(" Manual action required. After fixing the cause,");
+        puts(" start the gateway again, then re-run the upgrade.");
+        puts("==================================================");
+    }
+
+    return 1;
+}
+
 static int persist_next(
     const char *state_dir,
     ota_state_record_t *record,
@@ -904,55 +1273,82 @@ int ota_upgrade_run_test(
      *   2. 前置检查进程：清理孤儿文件、识别旧格式、停掉运行中的实例
      *   3. 端口检查：此时应已释放，若仍被占用说明是别的进程
      */
+    /*
+     * S3-R4：解析上游端口配置必须**在停止 Gateway 之前**。
+     *
+     * 原实现放在停止之后，非法端口会导致裸 return，
+     * 留下"旧版已停、业务未恢复"的状态（已实测复现）。
+     */
+    int external_upstream = 0;
+    unsigned short env_upstream_port = 0;
+
+    if (preflight_upstream_port(
+            &external_upstream, &env_upstream_port) != 0)
+        return 1;
+
+    /*
+     * 升级上下文：记录"升级前的 Gateway 状态"，
+     * 供后续任何失败路径判断是否需要恢复。
+     */
+    ota_upgrade_context_t ctx = {0};
+
+    {
+        pid_t probe_pid = -1;
+
+        ctx.gateway_was_running =
+            (ota_sup_query(install_dir, &probe_pid) ==
+             OTA_SUP_RUNNING);
+    }
+
+    printf(
+        "Gateway before upgrade: %s\n",
+        ctx.gateway_was_running ? "RUNNING" : "not running");
+
     if (prepare_existing_gateway(install_dir) != 0)
         return 1;
 
-    if (wifi_port_busy()) {
-        puts("FAIL: TCP 7000 still occupied after stopping gateway");
-        puts("      another process may be using the port");
-        return 1;
+    /*
+     * 若升级开始时它在运行，且现在确认已停止，
+     * 说明是本次 OTA 停的 —— 后续失败必须负责恢复。
+     */
+    if (ctx.gateway_was_running) {
+        pid_t after_pid = -1;
+
+        if (ota_sup_query(install_dir, &after_pid) ==
+            OTA_SUP_STOPPED) {
+            ctx.gateway_stopped_by_ota = 1;
+        }
     }
 
     /*
-     * 北向上游由测试协调器指定时，本进程不监听。
-     *
-     * 协调器会先 bind 但不 listen 该端口，于是 Gateway 的
-     * connect() 会拿到真实的 ECONNREFUSED —— 这是内核层面的
-     * 拒接，而不是测试开关直接返回失败。
+     * 从这里开始，任何失败都必须经过 abort_after_stop()，
+     * 不能直接 return —— 否则会留下未恢复的业务中断。
      */
-    const char *env_port = getenv("OTA_UPSTREAM_PORT");
+    if (wifi_port_busy()) {
+        return abort_after_stop(
+            install_dir, &ctx,
+            "TCP 7000 still occupied after stopping gateway "
+            "(another process may hold it)");
+    }
 
-    int external_upstream = 0;
-
-    if (env_port != NULL && env_port[0] != '\0') {
-        char *end = NULL;
-
-        long value = strtol(env_port, &end, 10);
-
-        if (end == env_port || *end != '\0' ||
-            value <= 0 || value > 65535) {
-            puts("FAIL: invalid OTA_UPSTREAM_PORT");
-            return 1;
-        }
-
-        external_upstream = 1;
-        upstream_port = (unsigned short)value;
-
-        printf(
-            "External upstream port: %u (not listening)\n",
-            (unsigned)upstream_port);
+    if (external_upstream) {
+        upstream_port = env_upstream_port;
     } else {
         listenfd = create_mock_server(&upstream_port);
 
         if (listenfd < 0) {
-            perror("FAIL: create mock upstream");
-            return 1;
+            return abort_after_stop(
+                install_dir, &ctx,
+                "cannot create mock upstream server");
         }
 
         printf(
             "Mock upstream port: %u\n",
             (unsigned)upstream_port);
     }
+
+    /* 进入变更阶段：此后失败需根据是否切换过 current 决定恢复方式 */
+    ctx.activation_started = 1;
 
     if (ota_activate_test(
             package_dir, install_dir) != 0)
@@ -1001,6 +1397,20 @@ rollback:
 
     if (ota_recover_execute(install_dir) != 0) {
         puts("FAIL: filesystem rollback");
+
+        /*
+         * 回滚都失败了：此时 current 可能指向新版或旧版，
+         * 无法安全地自动重启任何一个。明确报告需要人工处理，
+         * 绝不假装恢复成功。
+         */
+        puts("");
+        puts("==================================================");
+        puts(" RECOVERY REQUIRED");
+        puts("==================================================");
+        puts(" Filesystem rollback failed. The current release");
+        puts(" may be in an unknown state.");
+        puts(" Manual inspection is required before restarting.");
+        puts("==================================================");
         goto out;
     }
 
@@ -1008,7 +1418,27 @@ rollback:
         goto out;
 
     if (record.state != OTA_ROLLED_BACK) {
+        /*
+         * 未进入 ROLLED_BACK 说明激活根本没有走到需要回滚的地步
+         * （例如 activate 的前置校验失败）。
+         *
+         * 此时文件系统仍是旧版，可以直接恢复业务。
+         * 这是 S3-R4 新增的路径：原实现直接 goto out，
+         * 留下已停止的 Gateway 无人处理。
+         */
         puts("NOTICE: activation did not enter rollback state");
+
+        if (restore_gateway(install_dir, &ctx) != 0) {
+            puts("");
+            puts("==================================================");
+            puts(" RECOVERY REQUIRED");
+            puts("==================================================");
+            puts(" The gateway was stopped but could not be");
+            puts(" restarted. OTA state and release files are");
+            puts(" unchanged. Manual action required.");
+            puts("==================================================");
+        }
+
         goto out;
     }
 
