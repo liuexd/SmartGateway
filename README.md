@@ -217,6 +217,7 @@ M7-7 提交说明记录了单测与 Sanitizer 通过，但 GitHub 仓库目前�
 | D25-2 S5 | Service Supervisor + BusyBox init | **x86 + 板端** | 通过 |
 | D25-2 S6 | 板端正常升级与故障回滚 | **板端** | 通过 |
 | D25-2 S7 | 板端掉电恢复 | **板端（真实断电）** | 通过 |
+| D25-2 S5-R1 | G4a 开机启动 + G4b 崩溃自愈（inittab respawn） | **板端** | 通过（21 项） |
 
 ### OTA 与服务管理解决的问题
 
@@ -245,7 +246,7 @@ M7-7 提交说明记录了单测与 Sanitizer 通过，但 GitHub 仓库目前�
 | 编号 | 内容 |
 | --- | --- |
 | L10 | SIGKILL 也无效（D 状态）分支无集成测试 —— x86 与板端均无法构造 |
-| L12 | supervisor 崩溃自愈（G4b）未实现，需 `/etc/inittab` 的 `respawn`，与现有 `start-stop-daemon` pidfile 管理冲突 |
+| L11 | respawn 模式下领养的 Gateway 管理能力弱于原生（`waitpid` 无效，只能 kill + 轮询） |
 | — | 串口模式：全部验证以 `--no-serial` 运行，真实 `/dev/ttymxc2` 路径未板端验证 |
 | — | 真实北向云平台、eMMC 坏块/只读挂载未做故障注入 |
 | L5 | 无 CI，所有 PASS 均为手工执行 |

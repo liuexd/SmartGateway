@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -181,7 +182,7 @@ int service_ipc_decode_request(
     trim(buffer);
 
     /*
-     * 只取第一个 token 作为命令名。
+     * 取第一个 token 作为命令名。
      *
      * 带参数的 START 形如 "START 9000 127.0.0.1"，
      * 若拿整行去比对名字，会被当成未知命令。
@@ -196,10 +197,26 @@ int service_ipc_decode_request(
     }
 
     for (size_t i = 0; i < REQUEST_COUNT; i++) {
-        if (strcmp(request_names[i].name, token) == 0) {
-            *out = request_names[i].request;
-            return 0;
+        if (strcmp(request_names[i].name, token) != 0)
+            continue;
+
+        /*
+         * 本函数是**无参**入口，必须拒绝多余参数。
+         *
+         * 静默忽略参数会掩盖客户端 bug：一个把
+         * "STATUS extra" 发出来的客户端显然写错了，
+         * 若服务端当无事发生，那个 bug 永远不会被发现。
+         *
+         * 需要传参请用 service_ipc_decode_call()。
+         */
+        if (strtok_r(NULL, " ", &saveptr) != NULL) {
+            *out = SERVICE_IPC_UNKNOWN;
+            errno = EINVAL;
+            return -1;
         }
+
+        *out = request_names[i].request;
+        return 0;
     }
 
     *out = SERVICE_IPC_UNKNOWN;
@@ -749,11 +766,55 @@ int service_ipc_listen(
      *
      * 直接 unlink 再 bind 是危险的：会让两个 supervisor 同时
      * 认为自己是唯一的，于是双方都去启动 Gateway。
+     *
+     * 但只靠"先探测再 unlink"仍有竞态（实测确认）：
+     *
+     *   A: 探测 -> 失败（对方还没 bind 完）
+     *   B: 探测 -> 失败
+     *   A: unlink + bind 成功
+     *   B: unlink（把 A 刚建好的删掉）+ bind 成功
+     *   -> 两个 supervisor 各持一个 inode，都认为自己是唯一的
+     *
+     * 实测症状：inittab 的 respawn 与 init 脚本的 start 同时
+     * 触发时，系统里出现两个 supervisor，各持有不同的
+     * socket inode，其中一个的 socket 已被 unlink（成为"隐形"实例）。
+     *
+     * 因此这里加**文件锁**做互斥：探测+unlink+bind 这一整段
+     * 必须串行。锁文件与 socket 同目录，用 flock，不阻塞
+     * （拿不到锁说明别人正在初始化，直接失败即可）。
      */
+    char lock_path[160];
+
+    int n = snprintf(lock_path, sizeof(lock_path), "%s.lock", path);
+
+    if (n < 0 || (size_t)n >= sizeof(lock_path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    int lock_fd = open(
+        lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+
+    if (lock_fd < 0)
+        return -1;
+
+    if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        /*
+         * 另一个进程正在完成初始化。这不是错误状态，
+         * 而是"已经有人在做了" —— 报告 EADDRINUSE 让调用方
+         * 知道无需重试。
+         */
+        int saved = errno == EWOULDBLOCK ? EADDRINUSE : errno;
+        (void)close(lock_fd);
+        errno = saved;
+        return -1;
+    }
+
     struct stat st;
 
     if (lstat(path, &st) == 0) {
         if (!S_ISSOCK(st.st_mode)) {
+            (void)close(lock_fd);
             errno = EEXIST;
             return -1;
         }
@@ -762,19 +823,26 @@ int service_ipc_listen(
 
         if (probe >= 0) {
             (void)close(probe);
+            (void)close(lock_fd);
             errno = EADDRINUSE;
             return -1;
         }
 
         /* 无人监听：陈旧文件 */
-        if (unlink(path) != 0 && errno != ENOENT)
+        if (unlink(path) != 0 && errno != ENOENT) {
+            int saved = errno;
+            (void)close(lock_fd);
+            errno = saved;
             return -1;
+        }
     }
 
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 
-    if (fd < 0)
+    if (fd < 0) {
+        (void)close(lock_fd);
         return -1;
+    }
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
@@ -782,6 +850,7 @@ int service_ipc_listen(
 
     if (strlen(path) >= sizeof(addr.sun_path)) {
         (void)close(fd);
+        (void)close(lock_fd);
         errno = ENAMETOOLONG;
         return -1;
     }
@@ -803,6 +872,7 @@ int service_ipc_listen(
     if (rc != 0) {
         int saved = errno;
         (void)close(fd);
+        (void)close(lock_fd);
         errno = saved;
         return -1;
     }
@@ -811,6 +881,7 @@ int service_ipc_listen(
         int saved = errno;
         (void)close(fd);
         (void)unlink(path);
+        (void)close(lock_fd);
         errno = saved;
         return -1;
     }
@@ -819,9 +890,18 @@ int service_ipc_listen(
         int saved = errno;
         (void)close(fd);
         (void)unlink(path);
+        (void)close(lock_fd);
         errno = saved;
         return -1;
     }
+
+    /*
+     * 绑定完成，可以释放初始化锁。
+     *
+     * 释放后 socket 已存在且处于 listen 状态，后来者探测时
+     * 必然能连上，从而正确地得到 EADDRINUSE。
+     */
+    (void)close(lock_fd);
 
     return fd;
 }

@@ -1,30 +1,49 @@
 #!/bin/sh
 #
-# S99smartgateway - BusyBox init 启动脚本（S5）
+# S99smartgateway - BusyBox init 启动脚本
 #
 # 部署位置：/etc/init.d/S99smartgateway
 #
-# 为什么需要它
-# ------------
-# G4a（开机启动）与 G4b（崩溃自愈）是两件不同的事，必须分开实现：
+# ============================================================
+# 两层结构（理解这一点才能正确判断行为）
+# ============================================================
 #
-#   G4a 开机启动：rcS 遍历 /etc/init.d/S* 执行一次
-#   G4b 崩溃自愈：需要**持续监控**，没有任何脚本会自动做这件事
+#   BusyBox init
+#       └── supervisor（本脚本启动，或 inittab respawn 拉起）
+#               └── Gateway（由 supervisor 启动）
 #
-# 本脚本负责 G4a，并把 supervisor 注册到 inittab 的 respawn 中
-# 来实现 G4b（见安装说明）。
+# 为什么分两层：
+#   - supervisor 必须常驻并持有 Gateway 的子进程关系，这是
+#     L3/L6 被解决的前提（见 D25-2-S5）
+#   - Gateway 的启停必须由 OTA 决定，不能让 init 在升级中途
+#     把它拉起来，否则会出现"进程跑旧版、磁盘上是新版"
 #
-# 为什么用 start-stop-daemon
-# --------------------------
-# 板端 BusyBox 未内置该命令，但 /sbin/start-stop-daemon 是独立
-# 二进制（dpkg 版本），已实测存在且支持 --make-pidfile/--retry。
-# 用它而不是手写 pidfile 逻辑，是因为启停竞态已经被它处理过。
+# ============================================================
+# G4a 与 G4b 的职责划分
+# ============================================================
 #
-# 重要：本脚本管理的是 **supervisor**，不是 Gateway。
-# Gateway 由 supervisor 管理。两层分开的原因：
-#   - supervisor 崩溃时由 init 拉起（respawn / 本脚本）
-#   - Gateway 的启停必须由 coordinator（OTA）决定，不能让 init
-#     在升级中途把它拉起来
+#   G4a 开机启动 Gateway      <- 本脚本 start 时完成
+#   G4b supervisor 崩溃自愈   <- inittab 的 respawn 完成
+#
+# G4b **不再依赖本脚本**。S5 阶段这里是缺失的（L12）：
+# 当时 supervisor 只由 rcS 启动一次，崩溃后没有任何机制重拉。
+#
+# 采用 inittab respawn 后必须同步处理一个副作用：
+#   init 接管 supervisor 启动之后，start-stop-daemon 的
+#   --make-pidfile 不再有意义 —— 进程不是它 fork 的。
+# 因此本脚本改为"查询型"：不写 pidfile，通过 socket 判断
+# supervisor 是否在运行。
+#
+# ============================================================
+# 为什么 start 时要主动启动 Gateway
+# ============================================================
+#
+# S5 的实现 start 后只拉起 supervisor，Gateway 保持 stopped。
+# 这在"升级途中"是对的，但开机时是错的：
+#   开机后业务应当可用，而不是等运维手工 start。
+#
+# 因此本脚本在确保 supervisor 就绪后，显式请求 Gateway 启动。
+# OTA 升级期间不会执行 S99，所以不存在"升级中途被拉起"的风险。
 #
 set -e
 
@@ -32,12 +51,8 @@ NAME=smartgateway
 ROOT=${SMARTGATEWAY_ROOT:-/opt/smartgateway}
 BIN="$ROOT/bin/service_supervisor"
 RUN_DIR="$ROOT/run"
-PIDFILE="$RUN_DIR/supervisor-init.pid"
+SOCK="$RUN_DIR/supervisor.sock"
 LOG="$ROOT/logs/supervisor.log"
-
-# start-stop-daemon 的位置在不同构建里可能不同
-SSD=/sbin/start-stop-daemon
-[ -x "$SSD" ] || SSD=/usr/sbin/start-stop-daemon
 
 say() { printf '%s\n' "$*"; }
 
@@ -48,102 +63,163 @@ fail() {
 
 mkdir -p "$RUN_DIR" "$ROOT/logs"
 
+# supervisor 是否在监听 —— 这是唯一可信的判定。
+#
+# 不能只看 socket 文件是否存在：崩溃残留的 socket 文件仍在，
+# 但没人监听。必须真的连通一次。
+supervisor_up() {
+    [ -S "$SOCK" ] || return 1
+    "$BIN" status --root "$ROOT" >/dev/null 2>&1
+}
+
+# 找本 ROOT 的 supervisor 进程。
+#
+# 不用 pidof/pgrep：BusyBox 未必有；且必须按 --root 区分，
+# 否则同机多实例会被误伤。
+supervisor_pids() {
+    for p in /proc/[0-9]*; do
+        e=$(readlink "$p/exe" 2>/dev/null) || continue
+        case "$e" in
+            */service_supervisor) ;;
+            *) continue ;;
+        esac
+
+        cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
+        case "$cmd" in
+            *"run --root $ROOT"*) echo "${p#/proc/}" ;;
+        esac
+    done
+}
+
 case "$1" in
 start)
     say "Starting $NAME"
 
-    #
-    # 二次启动保护。
-    #
-    # rcS 只会执行一次，但运维可能手工再跑一次；S99 也可能被
-    # 别的脚本 source。重复启动会创建第二个 supervisor，
-    # 而它会因为 socket 已存在而失败——那个失败会污染日志，
-    # 让人误以为服务有问题。
-    #
-    if [ -f "$PIDFILE" ]; then
-        if "$SSD" --pidfile "$PIDFILE" --status >/dev/null 2>&1; then
-            say "$NAME is already running"
-            exit 0
-        fi
-
-        # pidfile 存在但进程不在：清掉陈旧记录
-        rm -f "$PIDFILE"
-    fi
-
     [ -x "$BIN" ] || fail "$BIN not found or not executable"
     [ -f "$ROOT/service.conf" ] || fail "$ROOT/service.conf not found"
 
-    #
-    # --make-pidfile 让 start-stop-daemon 在 --background 模式
-    # 下写入它自己 fork 出的进程 pid。
-    #
-    # 注意：这个 pidfile 是 init 层用来判断"supervisor 是否在跑"
-    # 的，与 supervisor 自己的 service.pid（记录 Gateway）是
-    # 两个不同的文件，不能混用。
-    #
-    "$SSD" --start \
-        --background \
-        --make-pidfile \
-        --pidfile "$PIDFILE" \
-        --chdir "$ROOT" \
-        --exec "$BIN" \
-        -- \
-        run --root "$ROOT" \
-        >>"$LOG" 2>&1
-
-    #
-    # 必须等 socket 真的出现才算启动成功。
-    #
-    # 只检查 fork 是否成功是不够的：supervisor 可能因为配置错误、
-    # 端口冲突、或"有残留 Gateway 不是它的"而立即退出，
-    # 那时 fork 已经成功，但服务是死的。
-    #
-    i=0
-    while [ $i -lt 50 ]; do
-        if [ -S "$RUN_DIR/supervisor.sock" ]; then
-            say "$NAME started"
-            exit 0
-        fi
-
+    if supervisor_up; then
+        say "supervisor already running"
+    else
         #
-        # 如果进程已经退出，没必要再等满 5 秒。
+        # 若 inittab 已注册 respawn，**不要自己 fork**。
         #
-        if [ -f "$PIDFILE" ] && \
-           ! "$SSD" --pidfile "$PIDFILE" --status >/dev/null 2>&1; then
-            rm -f "$PIDFILE"
-            fail "$NAME exited immediately; see $LOG"
+        # 这是本脚本最容易出错的地方（实测踩到过）：
+        # init 会按 respawn 拉起一个 supervisor，而 S99 start
+        # 又 fork 一个，两者竞争同一个 socket。先到者成功，
+        # 后到者因 EADDRINUSE 退出 —— 但退出的是被 init 监督的
+        # 那个时，init 会立刻重拉，于是陷入"起-退-起"的循环，
+        # 表现为系统里同时存在两个 supervisor 进程。
+        #
+        # 正确做法：交给 init，本脚本只等待它就绪。
+        #
+        if grep -q "^::respawn:.*service_supervisor" /etc/inittab 2>/dev/null; then
+            say "respawn 已接管，等待 init 拉起 supervisor"
+
+            i=0
+            while [ $i -lt 100 ]; do
+                supervisor_up && break
+                sleep 0.1
+                i=$((i + 1))
+            done
+
+            if ! supervisor_up; then
+                #
+                # init 没有按预期拉起：可能是 inittab 尚未重载
+                # （例如刚写入还没 kill -HUP 1）。此时退回到
+                # 自己启动，保证服务可用 —— 宁可多一个进程，
+                # 也不能让开机后服务干脆不存在。
+                #
+                say "WARN: respawn 未生效，改为直接启动"
+                nohup "$BIN" run --root "$ROOT" >>"$LOG" 2>&1 &
+
+                i=0
+                while [ $i -lt 50 ]; do
+                    supervisor_up && break
+                    sleep 0.1
+                    i=$((i + 1))
+                done
+            fi
+
+            supervisor_up || fail "$NAME did not become ready; see $LOG"
+            say "supervisor started (respawn)"
+        else
+            #
+            # 未配置 respawn：由本脚本负责生命周期。
+            #
+            # nohup + & 让它脱离本脚本：rcS 必须能走完，
+            # 否则系统起不来。
+            #
+            nohup "$BIN" run --root "$ROOT" >>"$LOG" 2>&1 &
+
+            i=0
+            while [ $i -lt 50 ]; do
+                supervisor_up && break
+                sleep 0.1
+                i=$((i + 1))
+            done
+
+            supervisor_up || fail "$NAME did not become ready; see $LOG"
+            say "supervisor started"
         fi
+    fi
 
-        sleep 0.1
-        i=$((i + 1))
-    done
+    #
+    # G4a：开机启动业务。
+    #
+    # 幂等：已在运行返回 ALREADY，不是错误。
+    #
+    if "$BIN" start --root "$ROOT" >>"$LOG" 2>&1; then
+        say "gateway started"
+    else
+        #
+        # Gateway 起不来不应阻止系统启动。
+        #
+        # 常见原因：串口设备不存在、北向不可达。这些是运行时
+        # 问题，不该让 rcS 失败 —— 否则板子会因为一个业务配置
+        # 错误而无法正常进入多用户状态。
+        #
+        say "WARN: gateway did not start; see $LOG"
+    fi
 
-    fail "$NAME did not create socket within 5s; see $LOG"
+    say "$NAME started"
     ;;
 
 stop)
     say "Stopping $NAME"
 
     #
-    # 停止顺序很重要：先让 supervisor 停掉 Gateway，再停 supervisor。
+    # 顺序：先停 Gateway，再停 supervisor。
     #
-    # 如果直接 kill supervisor，它会在收到 SIGTERM 时走自己的
-    # 退出路径停掉 Gateway（见 service_supervisor_run 的收尾），
-    # 所以这里其实可以不显式调用 stop。但显式调用更好：
-    # 它会把"Gateway 是否成功停止"记录到日志里。
+    # 反过来的话 supervisor 收到 SIGTERM 时会自己停掉 Gateway，
+    # 结果一样，但日志里看不到"Gateway 是否成功停止"这一条。
     #
-    if [ -S "$RUN_DIR/supervisor.sock" ]; then
+    if supervisor_up; then
         "$BIN" stop --root "$ROOT" >>"$LOG" 2>&1 || true
     fi
 
-    if [ -f "$PIDFILE" ]; then
-        "$SSD" --stop \
-            --pidfile "$PIDFILE" \
-            --retry TERM/5/KILL/3 \
-            >>"$LOG" 2>&1 || true
+    #
+    # 停 supervisor：SIGTERM 等 5 秒，不退则 SIGKILL。
+    #
+    for pid in $(supervisor_pids); do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
 
-        rm -f "$PIDFILE"
+    i=0
+    while [ $i -lt 50 ]; do
+        [ -z "$(supervisor_pids)" ] && break
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    if [ -n "$(supervisor_pids)" ]; then
+        say "WARN: supervisor did not stop in 5s; sending SIGKILL"
+        for pid in $(supervisor_pids); do
+            kill -KILL "$pid" 2>/dev/null || true
+        done
     fi
+
+    rm -f "$SOCK"
 
     say "$NAME stopped"
     ;;
@@ -156,23 +232,27 @@ restart)
 
 status)
     #
-    # 两层状态都要报。
+    # 两层的状态都要报。
     #
     # 只报 supervisor 会掩盖"supervisor 活着但 Gateway 死了"
-    # 这种最常见也最需要被发现的状态。
+    # 这种最常见、也最需要被发现的状态。
     #
-    if [ -f "$PIDFILE" ] && \
-       "$SSD" --pidfile "$PIDFILE" --status >/dev/null 2>&1; then
+    if supervisor_up; then
         say "supervisor: running"
-    else
-        say "supervisor: stopped"
-    fi
 
-    if [ -S "$RUN_DIR/supervisor.sock" ]; then
+        # respawn 模式下 supervisor 的父进程是 init(1)。
+        # 把它报出来，便于确认 G4b 是否真的在生效。
+        for pid in $(supervisor_pids); do
+            ppid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo "?")
+            say "supervisor: pid=$pid ppid=$ppid"
+        done
+
         "$BIN" status --root "$ROOT" 2>/dev/null | \
             sed 's/^/gateway: /' || say "gateway: unknown"
     else
+        say "supervisor: stopped"
         say "gateway: unknown (no supervisor)"
+        exit 1
     fi
     ;;
 

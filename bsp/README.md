@@ -6,7 +6,7 @@
 
 在现有 SmartGateway Linux C / Socket / pthread 应用基础上，学习和实操 i.MX6ULL 的 Device Tree、GPIO/IRQ、I²C、用户态调试和应用级 OTA，并最后通过 UART/RS485 + Modbus RTU 扩展第二类传感器节点。仅把**有实际证据验证**的事项标记为完成。
 
-## 当前进度（截至 D25-2 S1）
+## 当前进度（截至 D25-2 S7）
 
 - **D01 基线调查：部分完成**。已记录硬件、U-Boot、Linux、Buildroot、eMMC 和 rootfs；原厂资料、完整恢复流程与可恢复性验证仍需完成。
 - **D02 内核模块：核心实机验收通过**。Hello 模块编译、传输、加载/卸载有记录。
@@ -18,39 +18,80 @@
 - **D25-1 ARM 交叉编译：通过**。Buildroot 2020.02 SDK 工具链（glibc 2.30、OpenSSL 1.1.1g、json-c 4.0.0）产出 ARM EABI5 hard-float ELF；产物与板端库版本逐项一致。
 - **D25-1B 板端实测：四项验收通过**。串口 @115200 / SSH / ADB 三通道可用；ARM Gateway 与 OTA Agent 在板端真实执行，OTA 包校验及 4 个负向用例正确；隔离启动（19000 端口）生命周期完整、无残留；`/opt` 跨重启持久（inode/md5 一致）。
   - **未验证**：Gateway 运行资源占用曾未采集，已于 D25-2 S1 阶段补齐（见 D25-1B 第 5.5 节）。
-- **D25-2 进程生命周期管理：S1 / S1-R / S2 / S2-R / S2-R2 / S3 / S3-R 已完成**。
+- **D25-2 进程生命周期管理：S1–S7 全部完成**。
   - 设计：[D25-2 方案](docs/D25-2-process-lifecycle-design.md)
   - S1 + 两轮安全修正（pidfile 身份校验）：**145 项**单元测试
   - S2 自管 Supervisor：44 项单测 + 真实 ARM Gateway 端到端
-  - S3 升级流程接入：D23 回归 **27/27** + 前置检查 **31/31**
+  - S3 升级流程接入：D23 回归 **27/27**
   - S3-R 复审修正：包校验前置（损坏包不再导致业务中断）
   - S3-R2 校验补全：前置校验扩展为 **activate 的全部只读条件**，
     两者**共用同一个 `activate_check()`**，避免规则分叉
-  - S3-R3 测试补强：负向用例覆盖 **7 个校验分支**（S3 前置 40 → 73 项）；
-    系统化说明 PID 身份与进程停止的**保证边界**
-  - 修复的真实缺陷：僵尸误判、临时文件并发、假阳性测试、
-    /proc 竞争窗口、缺 boot_id、无界 waitpid、端口检查顺序陷阱、
-    损坏包导致业务中断、**候选未 stage 导致业务中断**、测试误杀无关进程
-  - D23 测试环境已**脚本化**（`tests/setup_ota_test_env.sh`）
-  - 详见 [S1-R+S2](docs/D25-2-S1R-S2-supervisor.md)、[S2-R](docs/D25-2-S2R-review-fixes.md)、
-    [S2-R2](docs/D25-2-S2R2-review-fixes.md)、[S3](docs/D25-2-S3-supervisor-integration.md)、
-    [S3-R](docs/D25-2-S3R-review-fixes.md)、[S3-R2](docs/D25-2-S3R2-preflight-completeness.md)
-  - **未完成**：S4（故障注入矩阵）、S5（init 集成）、S6–S7（板端完整升级）
-  - **S5 关键点**：init 脚本必须写 pidfile；并应改为“经由 init 停止”，
-    以从架构上移走外部停止的 TOCTOU 风险（L6）
-  - **注意：本项目无 CI**，所有 PASS 均为本地/板端手工执行结果
+  - S3-R3 测试补强：负向用例覆盖 **7 个校验分支**（前置 40 → 73 项）
+  - S3-R4 激活前恢复：停止 Gateway 之后的失败路径统一走
+    `abort_after_stop()`；修复「端口被外部占用时谎报 `restored and L1-ready`」
+    的假阳性（改用 `/proc/net/tcp` inode + fd 反查确认端口属主）
+  - S4 故障注入矩阵 **F1–F10，67 项 PASS**。修正三处真实缺陷：
+    - 停止超时后不发 SIGKILL —— 该理由只对 D 状态成立，却被用来处理
+      「用户态忽略 SIGTERM」，把可自动恢复的故障变成必须人工介入
+    - 新增 `ota_oplog`（`last_operation.json`），让「已停旧版但未完成
+      切换」这段空档有记录可查
+    - 并发 OTA 的锁冲突提示从裸 errno 改为可读原因
+  - S5 Service Supervisor：**通过转移所有权消除 L3/L6**
+    - L3（前置校验依赖 pidfile）：板端实测「删掉 pidfile 后 supervisor
+      依然正确报告状态并能停止进程」
+    - L6（停止外部进程 TOCTOU，pidfd 需 Linux 5.1+）：supervisor 停的是
+      自己的子进程，pid 不可能被复用
+    - 强制 IPC、不做 pidfile 回退：supervisor 不可用即拒绝升级
+  - S5-R1 init 集成（本轮）：
+    - **G4b 实现**（原 L12）：`/etc/inittab` 注册 `respawn`，supervisor
+      崩溃后由 init 自动拉起；板端 **21/21 PASS**
+    - **G4a 修正**：`S99 start` 现在会启动 Gateway（此前只启动 supervisor，
+      与 G4a 的定义矛盾）
+    - 修复 supervisor 双实例竞态：`service_ipc_listen` 的
+      「探测 + unlink + bind」加文件锁
+    - supervisor 支持**领养**孤儿 Gateway（`SMARTGATEWAY_RESPAWN=1`），
+      避免 init 无限重拉一个必然失败的命令
+  - S6 板端升级与回滚：v0.2.0→v0.3.0 正常升级；v0.3.0→v0.4.0
+    注入北向 `ECONNREFUSED` 后回滚，旧版业务实测恢复
+  - S7 板端掉电恢复：真实断电命中 `STARTING_NEW` 窗口，
+    重启后 `current` 不悬空、OTA 拒绝自动继续、`recover` 收敛、
+    `ack-operation` 后可继续升级
+  - 详见
+    [S1-R+S2](docs/D25-2-S1R-S2-supervisor.md)、
+    [S2-R](docs/D25-2-S2R-review-fixes.md)、
+    [S2-R2](docs/D25-2-S2R2-review-fixes.md)、
+    [S3](docs/D25-2-S3-supervisor-integration.md)、
+    [S3-R](docs/D25-2-S3R-review-fixes.md)、
+    [S3-R2](docs/D25-2-S3R2-preflight-completeness.md)、
+    [S3-R3](docs/D25-2-S3R3-negative-tests-and-pid-boundaries.md)、
+    [S3-R4](docs/D25-2-S3R4-pre-activation-recovery.md)、
+    [S4](docs/D25-2-S4-fault-injection-matrix.md)、
+    [S5](docs/D25-2-S5-service-supervisor.md)、
+    [S6+S7](docs/D25-2-S6-S7-board-upgrade-and-recovery.md)
+- **注意：本项目无 CI**，所有 PASS 均为本地/板端手工执行结果
 
-## 下一阶段顺序（用户确认）
+## 下一阶段顺序
 
-1. **D25-2 剩余阶段**：S4 故障注入 → S5 init 集成。
-   - 已确认：板端为 **BusyBox init**，Gateway **当前无人启动且无 init 脚本**，`/opt` 持久。
-   - 未确认：`start-stop-daemon` 是否存在（S5 前必须核实）。
-   - **S5 关键点**：init 脚本必须写 pidfile，否则 S3 的前置检查会被绕过。
-2. **OTA 完整板端验收**：x86 已完成北向故障注入与回滚验证，但**板端完整升级 / 健康检查 / 回滚流程尚未执行**，须在 D25-2 完成后补做。
-3. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成 UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
-4. **D35–D42：综合回归与交付**——稳定性、Perf、GDB 案例、文档和候选版本。
+1. **D25-2 已全部完成**（S1–S7，含 G4a/G4b）。板端验收结论：
+   - 开机自动启动 Gateway（G4a）
+   - supervisor 崩溃后由 init 自动拉起（G4b，`inittab respawn`）
+   - 真实 OTA 升级、北向故障回滚、真实断电恢复均已实测
+
+2. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成
+   UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
 
 详细任务、验收标准和安全边界见 [D16 后路线图](docs/ROADMAP.md)。
+
+## 已知限制（不报告为 PASS）
+
+| 编号 | 内容 | 原因 |
+| --- | --- | --- |
+| L10 | 「SIGKILL 也无效」分支无集成测试 | D 状态无法构造：x86 与板端均缺 FUSE 开发包、无 NFS、无 root |
+| L11 | 领养的 Gateway 管理能力弱于原生 | respawn 模式下新 supervisor 不是其父进程，`waitpid` 无效，只能 kill + 轮询 |
+| — | 串口模式未板端验证 | 全部验收以 `--no-serial` 运行，`/dev/ttymxc2` 路径未实测 |
+| — | 真实北向云服务器未验证 | 上游为本地 Mock |
+| — | eMMC 坏块 / 只读挂载未验证 | 未做存储层故障注入 |
+| — | 无 CI | 所有 PASS 均为手工执行 |
 
 ## 文档导航
 

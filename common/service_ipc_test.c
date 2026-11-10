@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int checks = 0;
@@ -94,14 +95,32 @@ static void test_request_invalid(void)
     check("拒绝前缀匹配",
           service_ipc_decode_request("STAR\n", &parsed) != 0);
 
+    /*
+     * 超长输入必须拒绝。
+     *
+     * 注意长度要真的超过内部缓冲（512）。先前这里用的字符串
+     * 约 250 字节，根本没触发长度检查 —— 它"通过"只是因为
+     * 内容本身不是合法命令，测试名与实际验证的行为不符。
+     */
+    char huge[900];
+    memset(huge, 'X', sizeof(huge) - 1);
+    huge[sizeof(huge) - 1] = '\0';
+
     check("拒绝超长输入",
-          service_ipc_decode_request(
-              "STATUS STATUS STATUS STATUS STATUS STATUS STATUS "
-              "STATUS STATUS STATUS STATUS STATUS STATUS STATUS "
-              "STATUS STATUS STATUS STATUS STATUS STATUS STATUS "
-              "STATUS STATUS STATUS STATUS STATUS STATUS STATUS "
-              "STATUS STATUS STATUS STATUS STATUS STATUS STATUS",
-              &parsed) != 0);
+          service_ipc_decode_request(huge, &parsed) != 0);
+
+    /*
+     * 无参入口必须拒绝多余参数。
+     *
+     * 静默忽略会掩盖客户端 bug —— 一个发出
+     * "STATUS extra" 的客户端显然写错了，
+     * 服务端不该当无事发生。
+     */
+    check("拒绝多余参数",
+          service_ipc_decode_request("STATUS extra", &parsed) != 0);
+
+    check("拒绝 STOP 带参数",
+          service_ipc_decode_request("STOP 1", &parsed) != 0);
 }
 
 static void test_reply_roundtrip(void)
@@ -341,6 +360,121 @@ static void test_stale_socket_recovery(void)
     rmdir(base);
 }
 
+/*
+ * 并发绑定：多个进程同时尝试 listen，只能有一个成功。
+ *
+ * 这是实测发现的竞态回归测试。
+ *
+ * 原实现的"探测 -> unlink -> bind"三步不是原子的：
+ *   A 探测失败（对方还没 bind 完）
+ *   B 探测失败
+ *   A unlink + bind 成功
+ *   B unlink（把 A 的删掉）+ bind 成功
+ *   -> 两个进程各持一个 inode，都认为自己是唯一的
+ *
+ * 症状（板端实测）：inittab 的 respawn 与 init 脚本的 start
+ * 同时触发时，系统里出现两个 supervisor，其中一个的 socket
+ * 已被 unlink 变成"隐形"实例 —— 它占着 Gateway 却不响应
+ * 任何请求。
+ *
+ * 修法是给"探测 + unlink + bind"整段加文件锁。
+ * 本测试用 fork 制造真实并发，不能靠单进程顺序调用验证。
+ */
+static void test_concurrent_bind(void)
+{
+    char dir[] = "/tmp/sipc_race_XXXXXX";
+    char *base = mkdtemp(dir);
+
+    if (base == NULL) {
+        check("创建临时目录", 0);
+        return;
+    }
+
+    const int children = 8;
+    pid_t pids[8];
+    int sync_pipe[2];
+
+    if (pipe(sync_pipe) != 0) {
+        check("创建同步管道", 0);
+        rmdir(base);
+            return;
+    }
+
+    for (int i = 0; i < children; i++) {
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            close(sync_pipe[1]);
+
+            /*
+             * 用管道同步：等父进程关闭写端（读到 EOF）后再开始，
+             * 让所有子进程尽可能同时冲进 listen。
+             * 不这样做的话它们是顺序启动的，测不出竞态。
+             */
+            char c;
+            while (read(sync_pipe[0], &c, 1) > 0) {
+            }
+
+            char path[256];
+            int fd = service_ipc_listen(base, path, sizeof(path));
+
+            /*
+             * 成功者要**保持**监听（不关闭），否则后来者探测
+             * 不到它，竞态就不会发生。
+             */
+            if (fd >= 0) {
+                sleep(2);
+                _exit(0);
+            }
+
+            _exit(errno == EADDRINUSE ? 1 : 2);
+        }
+
+        pids[i] = pid;
+    }
+
+    close(sync_pipe[0]);
+    close(sync_pipe[1]);      /* 全部子进程同时放行 */
+
+    int success = 0;
+    int addr_in_use = 0;
+    int other = 0;
+
+    for (int i = 0; i < children; i++) {
+        int status = 0;
+        waitpid(pids[i], &status, 0);
+
+        if (!WIFEXITED(status)) {
+            other++;
+            continue;
+        }
+
+        int code = WEXITSTATUS(status);
+
+        if (code == 0)
+            success++;
+        else if (code == 1)
+            addr_in_use++;
+        else
+            other++;
+    }
+
+    check("并发绑定：恰好一个成功", success == 1);
+    check("并发绑定：其余均报告 EADDRINUSE",
+          addr_in_use == children - 1);
+    check("并发绑定：无异常退出", other == 0);
+
+    /* 清理 */
+    char path[256];
+    snprintf(path, sizeof(path), "%s/%s",
+             base, SERVICE_IPC_SOCKET_NAME);
+    char lock[300];
+    snprintf(lock, sizeof(lock), "%s.lock", path);
+    unlink(path);
+    unlink(lock);
+    rmdir(base);
+}
+
 int main(void)
 {
     printf("== service_ipc 协议测试 ==\n\n");
@@ -364,6 +498,8 @@ int main(void)
     test_socket_permissions();
     printf("\n");
     test_stale_socket_recovery();
+    printf("\n");
+    test_concurrent_bind();
 
     printf("\n检查项: %d, 失败: %d\n", checks, failures);
     printf("结果: %s\n", failures == 0 ? "PASS" : "FAIL");

@@ -444,6 +444,22 @@ typedef struct {
 
     pid_t child;                    /* Gateway pid，0 表示无 */
     unsigned long long child_start; /* 启动时记录的 starttime */
+
+    /*
+     * adopted：该 Gateway 是"领养"来的，不是本 supervisor fork 的。
+     *
+     * 触发场景：supervisor 被 kill -9 后由 init respawn 重新拉起，
+     * 此时上一代 supervisor 启动的 Gateway 成了孤儿仍在运行。
+     *
+     * 为真的后果（必须区别对待）：
+     *   - waitpid 对它无效（不是子进程），不能用 waitpid 判断退出
+     *   - 只能靠 kill + 轮询 /proc 确认停止，弱于原生管理
+     *   - 它退出后不会产生 SIGCHLD，也收不到僵尸
+     *
+     * 之所以还要支持，是因为在 respawn 模式下**没有别的选择**：
+     * 若拒绝启动，init 会无限重拉一个必然失败的命令。
+     */
+    int adopted;
 } supervisor_t;
 
 /*
@@ -581,6 +597,7 @@ static int start_child(
         int status = 0;
         (void)waitpid(self->child, &status, WNOHANG);
         self->child = 0;
+        self->adopted = 0;
     }
 
     char *argv[10];
@@ -717,6 +734,59 @@ static int start_child(
  * "child > 0 且尚未回收"的窗口内，self->child 一定还指向
  * 那个进程（或它的僵尸）。
  */
+/*
+ * child_gone - 判断当前 Gateway 是否已经退出
+ *
+ * 两种归属关系必须用不同手段判断，这是本函数存在的唯一理由：
+ *
+ *   原生子进程：waitpid 是权威来源。它能同时完成"判断退出"和
+ *               "回收僵尸"两件事，不存在观察与被观察之间的时间差。
+ *
+ *   领养进程  ：waitpid 会返回 ECHILD（不是我的子进程）。
+ *               只能轮询 /proc/<pid>，并用 starttime 复核身份 ——
+ *               否则一个已被复用的 pid 会让它永远认为"还活着"。
+ *
+ * 返回 1 已退出（或身份已变）、0 仍存活、-1 无法判定。
+ */
+static int child_gone(supervisor_t *self)
+{
+    if (self->child <= 0)
+        return 1;
+
+    if (!self->adopted) {
+        int status = 0;
+        pid_t r = waitpid(self->child, &status, WNOHANG);
+
+        if (r == self->child)
+            return 1;
+
+        if (r < 0 && errno == EINTR)
+            return 0;
+
+        return 0;
+    }
+
+    /*
+     * 领养进程：轮询 /proc 并复核 starttime。
+     *
+     * 只判断 /proc 是否存在是不够的：僵尸目录会残留，
+     * 而 pid 复用时目录也存在但属于另一个进程。
+     */
+    char st = 0;
+    unsigned long long live = 0;
+
+    if (read_stat(self->child, &st, &live) != 0)
+        return 1;                    /* /proc 不存在：已退出 */
+
+    if (!state_is_alive(st))
+        return 1;                    /* 僵尸/正在退出 */
+
+    if (live != self->child_start)
+        return 1;                    /* pid 已复用：不是当初那个 */
+
+    return 0;
+}
+
 static int stop_child(supervisor_t *self, service_ipc_reply_t *reply)
 {
     if (self->child <= 0) {
@@ -724,13 +794,10 @@ static int stop_child(supervisor_t *self, service_ipc_reply_t *reply)
         return -1;
     }
 
-    int status = 0;
-
-    /* 可能已经自己退出（但还没被回收） */
-    pid_t r = waitpid(self->child, &status, WNOHANG);
-
-    if (r == self->child) {
+    /* 可能已经自己退出 */
+    if (child_gone(self) == 1) {
         self->child = 0;
+        self->adopted = 0;
         remove_pidfile(self);
 
         if (reply != NULL) {
@@ -752,13 +819,8 @@ static int stop_child(supervisor_t *self, service_ipc_reply_t *reply)
     int forced = 0;
 
     for (;;) {
-        r = waitpid(self->child, &status, WNOHANG);
-
-        if (r == self->child)
+        if (child_gone(self) == 1)
             break;
-
-        if (r < 0 && errno != EINTR)
-            return -1;
 
         if (now_ms() >= deadline) {
             if (!forced) {
@@ -785,6 +847,7 @@ static int stop_child(supervisor_t *self, service_ipc_reply_t *reply)
     }
 
     self->child = 0;
+    self->adopted = 0;
     remove_pidfile(self);
 
     if (reply != NULL) {
@@ -927,12 +990,31 @@ int service_supervisor_run(
     /*
      * 启动前先看有没有残留的 pidfile。
      *
-     * supervisor 自己崩溃重启时，旧 Gateway 可能还在跑。
-     * 此时**不能**当作没运行直接再起一个——会造成两个实例
-     * 抢同一个串口和同一个北向连接。
+     * 场景：supervisor 被 kill -9，它启动的 Gateway 成了孤儿
+     * 但仍在运行，pidfile 也还在。新拉起的 supervisor 面对的是
+     * 一个"不是我启动的 Gateway"。
      *
-     * 但也无法直接接管：supervisor 已经不是那个进程的父进程了，
-     * waitpid 会失败。正确做法是报告并要求人工处理。
+     * 两种处置方式，选择取决于运行模式：
+     *
+     *   交互模式（手工启动）：
+     *     报告并要求人工处理。此时人可以判断那个 Gateway 是否
+     *     该留、数据是否重要。
+     *
+     *   respawn 模式（由 init 拉起）：
+     *     **必须能自愈**，否则 init 会无限重拉一个必然失败的
+     *     命令，形成永久重启循环 —— 那比"服务没起来"更糟，
+     *     因为它会持续占日志、持续消耗 CPU。
+     *
+     * 领养的安全前提：
+     *   pidfile 里的 (pid, starttime) 与 /proc 实时值一致，
+     *   说明那确实是当初记录的那个进程（不是被复用的 pid）。
+     *   这个身份校验由 service_state_query 完成。
+     *
+     * 领养的局限（必须明确，写进文档）：
+     *   被领养的进程**不是本 supervisor 的子进程**，因此
+     *   waitpid 对它无效。stop_child() 里依赖 waitpid 的部分
+     *   对它不成立 —— 为此引入 adopted 标志，走信号 + 轮询
+     *   /proc 的路径，并在文档里记录其弱于原生管理。
      */
     service_state_t previous;
 
@@ -942,12 +1024,34 @@ int service_supervisor_run(
     }
 
     if (previous.running) {
-        fprintf(stderr,
-                "FAIL: a gateway is already running (pid=%ld) but this\n"
-                "      supervisor did not start it and cannot manage it.\n"
-                "      stop it manually, then start the supervisor again.\n",
-                (long)previous.pid);
-        return -1;
+        const char *respawn_mode = getenv("SMARTGATEWAY_RESPAWN");
+        int under_respawn = respawn_mode != NULL &&
+                            respawn_mode[0] == '1';
+
+        if (!under_respawn) {
+            fprintf(stderr,
+                    "FAIL: a gateway is already running (pid=%ld) but this\n"
+                    "      supervisor did not start it and cannot manage it.\n"
+                    "      stop it manually, or set SMARTGATEWAY_RESPAWN=1\n"
+                    "      to let the supervisor adopt it.\n",
+                    (long)previous.pid);
+            return -1;
+        }
+
+        /*
+         * respawn 模式：领养孤儿。
+         *
+         * 保留原 pidfile（service_state_query 已确认身份一致），
+         * 只在内存中记为子进程 —— 这样 STATUS 能正确报告，
+         * 停止时也能把信号发给正确的 pid。
+         */
+        printf("supervisor: adopting orphaned gateway (pid=%ld)\n",
+               (long)previous.pid);
+        fflush(stdout);
+
+        self.child = previous.pid;
+        self.child_start = previous.starttime;
+        self.adopted = 1;
     }
 
     char socket_path[128];
@@ -1010,19 +1114,18 @@ int service_supervisor_run(
          *
          * 不这样做会留下僵尸，且 self->child 会指向一个
          * 已死的 pid —— 后续 STATUS 会谎报 running。
+         *
+         * 用 child_gone() 而不是直接 waitpid：领养来的 Gateway
+         * 不是本进程的子进程，waitpid 会返回 ECHILD，那样
+         * "已退出"永远检测不到，STATUS 会一直说谎。
          */
-        if (self.child > 0) {
-            int status = 0;
-            pid_t r = waitpid(self.child, &status, WNOHANG);
+        if (self.child > 0 && child_gone(&self) == 1) {
+            self.child = 0;
+            self.adopted = 0;
+            remove_pidfile(&self);
 
-            if (r == self.child) {
-                self.child = 0;
-                remove_pidfile(&self);
-
-                printf("supervisor: gateway exited (status=%d)\n",
-                       WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-                fflush(stdout);
-            }
+            printf("supervisor: gateway exited\n");
+            fflush(stdout);
         }
 
         if (g_reload_requested) {

@@ -1,0 +1,8 @@
+# 编译产物（由 Makefile 生成）
+/service_supervisor
+/service_ipc_test
+/service_supervisor_test
+
+# 目标文件
+/*.o
+/*.log

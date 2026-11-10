@@ -41,22 +41,58 @@ Supervisor **不读** OTA 状态、**不判断**版本、**不碰** releases 目
 
 一旦让它参与 OTA 决策，就会出现第二个真相源，而两个真相源迟早会不一致。
 
-## 三、为什么 supervisor 不自动重启 Gateway
+## 三、supervisor 不**自主**重启 Gateway（但 init 会启动它）
 
-`G4a`（开机启动）与 `G4b`（崩溃自愈）是两件不同的事。S5 明确只做前者，后者交给 init 的 `respawn`。
+这一节在 S5 首次成文时表述有误，S5-R1 已修正。原表述是
+「S5 明确只做 G4a，supervisor 不自动启动 Gateway」——
+前半句与后半句互相矛盾：G4a 的定义就是「开机时能启动 Gateway」，
+若开机后 Gateway 不启动，那 G4a 就没有实现。
 
-**supervisor 不自动拉起 Gateway 的理由**：
+必须区分三个不同的动作：
 
-OTA 升级期间需要 Gateway 保持停止（旧版退出 → 切换 current → 新版上场）。若 supervisor 自动重启，会在升级中途把**旧版**拉起来，与「切换 current」形成竞争，最终可能出现「进程跑旧版、磁盘上是新版」。
+| 动作 | 谁做 | 何时 | 是否实现 |
+|------|------|------|----------|
+| 开机启动 Gateway | `S99smartgateway start` | `rcS` 遍历时一次 | ✅ S5-R1 实现 |
+| 崩溃后重启 Gateway | 无人 | — | ❌ **不做**，且是有意的 |
+| supervisor 崩溃自愈 | inittab `respawn` | supervisor 退出后 | ✅ S5-R1 实现（原 L12） |
 
-板端实测确认了这个设计：
+### 3.1 为什么 supervisor 自己**不**重启 Gateway
+
+OTA 升级期间需要 Gateway 保持停止（旧版退出 → 切换 current → 新版上场）。
+若 supervisor 一发现子进程退出就重启，它会在升级中途把**旧版**拉起来，
+与「切换 current」形成竞争，最终可能出现「进程跑旧版、磁盘上是新版」。
+
+这个「不自主重启」的约束与「开机要启动」并不冲突，因为触发者不同：
+
+```
+开机：  init → S99 start → 请求 supervisor 启动 Gateway   (一次性，显式)
+升级：  OTA 请求 stop     → Gateway 停止 → OTA 切换 → 请求 start
+中间：  没有人会"发现它停了就拉起来"
+```
+
+`S99` 只在 `rcS` 遍历时执行一次，OTA 升级期间不会运行，因此不存在
+「升级中途被 init 拉起」的风险。
+
+### 3.2 实测
 
 ```
 $ /etc/init.d/S99smartgateway start
+supervisor started
+gateway started                      <- S5-R1 起会启动；S5 时这里是 stopped
+$ /etc/init.d/S99smartgateway status
 supervisor: running
-gateway: status: stopped pid=0 starttime=0      <- 没有自动启动
-$ ls run/service.pid
-ls: cannot access 'run/service.pid': No such file
+supervisor: pid=331 ppid=1
+gateway: status: running pid=336 starttime=1562
+```
+
+而升级过程中，OTA 停止 Gateway 之后，supervisor **不会**自行把它拉回来：
+
+```
+$ ./bin/ota_agent upgrade-test pkg /opt/smartgateway
+Pre-upgrade gateway state: RUNNING
+PASS: gateway stopped                <- 停了就是停了，不会自己回来
+PASS: candidate activated: 0.6.0
+Gateway started: pid=...             <- 由 OTA 显式请求
 ```
 
 ## 四、协议设计
@@ -336,30 +372,81 @@ waitid(P_PID, pid, WEXITED|WNOHANG|WNOWAIT)
 | L7 | starttime 精度不足 | 不再作为安全判据的唯一来源 |
 | L8 | `port_owned_by_pid` 不覆盖 IPv6 | 当前绑 `0.0.0.0`，不影响 |
 | L10 | `survived SIGKILL` 分支无集成测试 | 本机无法构造 D 状态（无 FUSE 头、无 NFS、无 root） |
-| **L12** | **respawn 未注册到 inittab** | 当前 supervisor 由 `S99smartgateway` 拉起一次；supervisor 崩溃后需人工或重启。完整的 G4b 需要 `/etc/inittab` 加 `::respawn:`，**本阶段未做**，且会与 `start-stop-daemon` 的 pidfile 管理冲突，需单独设计 |
+| **L12** | respawn 未注册到 inittab | **已在 S5-R1 解决**，见下方「L12 的解决」 |
 
-### L12 的说明（必须诚实记录）
+### L12 的解决（S5-R1）
 
-init 脚本只保证 **supervisor 被启动一次**。若 supervisor 本身崩溃，`rcS` 不会重新执行，服务就此消失直到下次重启。
+**问题**：S5 只由 `rcS` 启动一次 supervisor。它崩溃后没有任何机制重拉，
+服务消失直到下次重启。这不是崩溃自愈。
 
-真正的 G4b（supervisor 崩溃自愈）需要把 supervisor 注册到 BusyBox init 的 `respawn`：
+**解决**：在 `/etc/inittab` 注册 respawn 条目：
 
 ```
-::respawn:/opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway
+::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $BIN run --root $ROOT >> $LOGS/supervisor.log 2>&1'
 ```
 
-但这样 `start-stop-daemon --make-pidfile` 就失去意义（进程不再由它 fork），需要重做启停逻辑。**本阶段没有做这个改动**，因为：
+板端实测前置条件（i.MX6ULL / BusyBox init / 4.9.88）：
 
-1. 它会与现有 `S99smartgateway` 的 pidfile 管理直接冲突
-2. 需要先决定「init 管进程」还是「init 管脚本」，这是设计决策不是实现细节
-3. 当前设计的核心价值（L3/L6）不依赖它
+| 验证 | 结果 |
+|------|------|
+| `kill -HUP 1` 重载 inittab | 有效，新条目立即应用 |
+| `kill -9` 后自动拉起 | 有效，出现新 pid |
+| 快速退出是否烧 CPU | 不烧，init 有节流（约 1 次/秒） |
 
-因此 G4b 列为**未实现**，不得报告为 PASS。
+实现细节（每一条都对应一个实测踩到的问题）：
 
-## 十、结论
+| 细节 | 为什么 |
+|------|--------|
+| 用 `/bin/sh -c '... exec ...'` 而非直接写命令 | respawn 直接 exec，没有 shell 解析 `VAR=1` 或 `>>`。不重定向会导致 supervisor 的启动输出（含关键诊断）全部丢失，排查时看到空日志。用 `exec` 让 sh 被 supervisor 取代，init 监督的才是 supervisor 本身 |
+| 传 `SMARTGATEWAY_RESPAWN=1` | supervisor 被 kill -9 后，它启动的 Gateway 成孤儿仍占着 pidfile。新 supervisor 若不领养而是拒绝启动，init 就会**无限重拉一个必然失败的命令**。该变量让它领养 |
+| install.sh 清理旧条目时按 `service_supervisor` 通配 | 早期版本没有 marker 注释，只按 marker 过滤会留下旧行，inittab 里出现两条 respawn，init 拉起两个 supervisor |
+| `service_ipc_listen` 对「探测+unlink+bind」加文件锁 | 这三步不是原子的。并发时 A 探测失败、B 探测失败、A unlink+bind、B unlink（删掉 A 的）+bind，结果两个 supervisor 各持一个 inode 都认为自己是唯一的。**实测确认过**：respawn 与 S99 start 同时触发时出现两个 supervisor，其中一个 socket 已被 unlink 成为"隐形"实例 |
+| S99 在 respawn 已注册时不自己 fork | 否则与 init 竞争同一个 socket |
 
-- L3 与 L6 通过**转移所有权**解决，而非更好的检查。板端实测确认：删掉 pidfile 后 supervisor 依然正确。
+**领养的局限**（必须明确）：
+
+被领养的 Gateway **不是**新 supervisor 的子进程，因此：
+
+- `waitpid` 对它无效 → `child_gone()` 对领养进程走 `/proc` + starttime 复核
+- 它退出时不会产生 SIGCHLD，也收不到僵尸
+- 停止它只能靠 kill + 轮询，弱于原生管理
+
+这是 respawn 模式的固有限制。之所以接受，是因为**没有更好的选择**：
+拒绝领养会让 init 陷入无限重拉，那比"管理能力弱一点"糟糕得多。
+
+**验收**：`tests/test_l12_respawn.py`，**21/21 PASS**
+
+```
+检查一：inittab respawn 条目（唯一、参数正确）
+检查二：supervisor 由 init 监督（ppid=1、单实例）
+检查三：kill -9 后自动恢复（新 pid、ppid 仍为 1、可服务）
+检查四：孤儿 Gateway 被领养（STATUS 正确、能停止、pidfile 清理）
+检查五：反复崩溃不烧 CPU（delta=0 ticks / 3 次重启）
+```
+
+**真实重启验证**：
+
+```
+$ cat /proc/uptime
+78.54 ...                        <- 确实是重启后
+$ /etc/init.d/S99smartgateway status
+supervisor: running
+supervisor: pid=331 ppid=1
+gateway: status: running pid=336 starttime=1562
+```
+
+单实例、ppid=1、Gateway 随开机自动启动（G4a）。
+
+## 十一、结论
+
+- L3 与 L6 通过**转移所有权**解决，而非更好的检查。板端实测确认：
+  删掉 pidfile 后 supervisor 依然正确。
 - 强制 IPC、不做回退：supervisor 不可用即拒绝升级。代价明确，方向正确。
-- 板端完整链路（init 启动、真实 OTA 升级、崩溃检测、陈旧 socket、真实重启）全部实测通过。
-- 过程中修复 3 个真实缺陷，其中「删掉 `port_owned_by_pid` 导致假阳性重现」这一条最有价值 —— 它说明**同一个错误会以不同理由回来**。
-- G4b（supervisor 崩溃自愈）**未实现**，列为 L12，留给后续阶段。
+- 板端完整链路（init 启动、真实 OTA 升级、崩溃检测、陈旧 socket、
+  真实重启）全部实测通过。
+- 过程中修复 3 个真实缺陷，其中「删掉 `port_owned_by_pid` 导致假阳性重现」
+  这一条最有价值 —— 它说明**同一个错误会以不同理由回来**。
+- **G4b（supervisor 崩溃自愈）已在 S5-R1 实现**（原 L12），方式为
+  inittab `respawn`，板端 21/21 验收通过。
+- 原「S5 不做 G4a」的表述有误，已在 S5-R1 修正：`S99 start` 会启动 Gateway，
+  开机后业务即可用。
