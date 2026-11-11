@@ -36,7 +36,7 @@
 - [x] 记录 p2：start 2,052,098，size 3,072,000 sectors。
 - [x] 记录 p3：start 5,124,098，size 1,024,000 sectors。
 - [x] 使用只读 `fdisk -l /dev/mmcblk1` 确认分区表类型为 DOS/MBR；原始分区表导出/备份仍待完成。
-- [ ] 识别 p1、p3 的实际文件系统、标签、UUID、PARTUUID 和内容；当前 `blkid` 未识别二者。
+- [ ] 识别 p1、p3 的实际文件系统、标签、UUID、PARTUUID 和内容；当前 `blkid` 无识别输出，前 2048 bytes 全零，但整个分区尚未扫描。
 - [ ] 确认 p1、p3 是否包含启动文件、厂商恢复数据或其他保留数据。
 - [x] 确认 MBR 类型 ID：p1/p2=0x83，p3=0x0C；该字段不等同于内部文件系统类型。
 - [x] 确认 p1/p2 的 MBR bootable 标志均置位；其是否被 U-Boot 使用仍待查。
@@ -57,6 +57,14 @@
 - [ ] 确认原厂工具是否能够恢复 U-Boot 本体及环境变量。
 
 **已知异常：** 当前记录中 U-Boot `mmc list` 可列出 eMMC 控制器，但随后 `mmc part` 曾返回 `MMC: no card present` / `mmc_init: -123`。Linux 同时能够识别 eMMC。该异常必须先复核，不能直接推断为介质损坏或分区表损坏。
+
+### G0-1B 补充结论
+
+- [x] p1/p3 的 `blkid -p -o full` 无识别输出。
+- [x] p1/p3 前 2048 bytes 全零。
+- [x] RTC 与系统时间显示 1970-01-06，当前日志墙钟时间不可信。
+- [x] 发现 fstab 声明 ext2/noauto 与实际 ext4 根挂载不一致，用户空间挂载流程待追踪。
+- [ ] 不得据此认定 p1/p3 全盘为空或可回收。
 
 ### 本轮 G0-1 结论
 
