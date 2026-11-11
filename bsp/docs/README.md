@@ -22,6 +22,7 @@
 
 | 分类 | 文档 |
 |---|---|
+| G0 inventory | [Read-only eMMC inventory script](../tools/collect_system_baseline.sh) | Collects partition, filesystem and boot metadata without writing eMMC |
 | Build | [Host build environment](reference/build/host-environment.md) |
 | Kernel / Driver | [Platform driver](reference/kernel-driver/platform-driver.md) |
 | Kernel / Driver | [Device Tree](reference/kernel-driver/device-tree.md) |
