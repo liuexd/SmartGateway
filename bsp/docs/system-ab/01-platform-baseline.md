@@ -4,7 +4,7 @@
 
 本文件记录用户通过开发板 ADB shell 提供的实测输出，不代表所有恢复条件已经验收。证据包括 uname、/proc/cmdline、/proc/version、/proc/partitions、/dev/mmcblk*、/sys/class/block/mmcblk1*、/proc/mounts、df -h 和 /proc/meminfo。
 
-本轮粘贴的命令在开头有终端输入/回显交错，且 dmesg grep 未提供可读结果。因此不把本轮 dmesg 当作有效证据；后续需单独保存原始输出。
+初次手工采集的命令回显存在交错；后续通过只读脚本 `bsp/tools/collect_system_baseline.sh` 获取了完整报告。脚本报告中的日期为 1970-01-06，说明板端实时时钟/系统时间未正确设置或尚未同步；该时间不能作为可靠的事件时间戳。
 
 ## 2. SoC、内核与系统
 
@@ -43,7 +43,7 @@ CMA 用于满足连续物理内存分配需求，不能简单视为永久不可�
 | mmcblk1boot1 | 4,096 | 4 MiB |
 | mmcblk1rpmb | 4,096 | 4 MiB |
 
-Linux 可见 eMMC user area 设备 /dev/mmcblk1 及 p1/p2/p3。boot0、boot1 是 eMMC 专用硬件 boot 分区，不等于 p1/p2/p3；rpmb 是受保护存储区域，本阶段不计划使用。
+Linux 可见 eMMC user area 设备 /dev/mmcblk1 及 p1/p2/p3。设备字段报告为 type=MMC、name=S40004、manfid=0x000001、oemid=0x0100、date=06/2020。boot0、boot1 是 eMMC 专用硬件 boot 分区，不等于 p1/p2/p3；rpmb 是受保护存储区域，本阶段不计划使用。报告有意不采集 serial/CID，避免公开设备唯一标识。boot0/boot1 的 `force_ro` 均为 1，表示当前 Linux sysfs 接口将其标记为只读；这不是对 U-Boot 存储位置的证明。
 
 ## 5. 分区扇区几何
 
@@ -64,7 +64,7 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 - p3 之后剩余：1,486,846 sectors，约 726.97 MiB。
 - p1 前从 sector 0 到 4,097 有 4,098 sectors，约 2.00 MiB 未包含在 p1 中。
 
-上述尾部空间只是根据 Linux 内核暴露的起始扇区和长度做的算术推算，不证明分区表允许在该位置创建新分区，也不证明该区域未被厂商元数据、备份数据或其他机制占用。必须使用分区表解析工具和原厂资料交叉核验。
+只读 `fdisk -l /dev/mmcblk1` 已确认分区表为 DOS/MBR。p1、p2 的分区类型 ID 均为 0x83（Linux），且两者均带有 MBR bootable 标志；p3 的类型 ID 为 0x0C（Win95 FAT32 LBA）。注意：MBR 类型 ID 不是文件系统探测结果，不能据此认定 p3 一定格式化为 FAT32。上述尾部空间只是根据 Linux 内核暴露的起始扇区和长度做的算术推算，不证明该区域未被厂商元数据、备份数据或其他机制占用。
 
 ## 6. 文件系统与占用
 
@@ -78,7 +78,7 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 | /tmp | tmpfs | 245M | 376K | 245M | 1% |
 | /run | tmpfs | 245M | 500K | 245M | 1% |
 
-当前 p2 是根文件系统所在分区，因为 cmdline 指定 root=/dev/mmcblk1p2，且根文件系统容量约 1.5G。p1、p3 用途尚未确认。
+当前 p2 是根文件系统所在分区，因为 cmdline 指定 root=/dev/mmcblk1p2，且根文件系统容量约 1.5G。`blkid` 仅识别 p2 的 UUID（491f6117-415d-4f53-88c9-6e0de54deac6）；p1、p3 未返回可识别的文件系统签名。当前 `/proc/mounts` 未显示 p1、p3 挂载。p1/p3 可能包含启动、恢复或厂商数据，必须进一步检查分区头和内容，不能视为空闲。`/boot` 是当前根文件系统目录树中的目录（没有单独挂载记录），其中存在 zImage 和多个 DTB；实际 U-Boot 加载路径仍待确认。
 
 ## 7. 已知与待验证
 
@@ -91,8 +91,9 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 - MemTotal 约 489 MiB，CMA 总量 320 MiB。
 
 尚未确认：
-- p1、p3 内部文件系统、标签、文件内容和用途。
-- eMMC 分区表类型（DOS/MBR 或 GPT）及原始分区表备份。
+- p1、p3 内部文件系统、标签、文件内容和用途（blkid 本轮未识别）。
+- 原始 MBR 分区表备份及分区表之外的厂商元数据位置。
+- p1、p3 的实际文件系统类型、内容和用途；当前 MBR 类型 ID 不能替代文件系统识别。
 - p3 后尾部区域是否可用于新增分区。
 - U-Boot 本体和环境变量的存储位置、偏移、大小及冗余方式。
 - 原厂完整恢复镜像与恢复流程。
@@ -105,8 +106,7 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 ```sh
 cat /sys/block/mmcblk1/device/type
 cat /sys/block/mmcblk1/device/name
-cat /sys/block/mmcblk1/device/cid
-cat /sys/block/mmcblk1/device/csd
+# 避免公开设备唯一标识；如确需 CID/CSD，应在本地私有记录中保存并脱敏，不提交公开仓库。
 
 command -v fdisk && fdisk -l /dev/mmcblk1
 command -v sfdisk && sfdisk -d /dev/mmcblk1
