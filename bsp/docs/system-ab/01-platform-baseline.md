@@ -68,7 +68,7 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 
 ## 6. 文件系统与占用
 
-/ proc/mounts（实际路径为 /proc/mounts）显示根文件系统为 /dev/root，挂载点 /，类型 ext4，rw；/tmp、/run、/dev/shm 使用 tmpfs；ADB FunctionFS 挂载于 /dev/usb-ffs/adb。
+/proc/mounts显示根文件系统为 /dev/root，挂载点 /，类型 ext4，rw；/tmp、/run、/dev/shm 使用 tmpfs；ADB FunctionFS 挂载于 /dev/usb-ffs/adb。
 
 | 挂载点 | 文件系统 | Size | Used | Avail | Use% |
 |---|---|---:|---:|---:|---:|
