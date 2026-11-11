@@ -1,262 +1,178 @@
 # SmartGateway
 
-**基于 C / Embedded Linux / STM32 的蓝牙 + WiFi 异构多节点智能网关**
+**SmartGateway 是一个以 C / Embedded Linux 为核心的多节点智能网关与 i.MX6ULL BSP 工程。**
 
-> A multi-node IoT gateway built with C, POSIX threads and TCP sockets, bridging Bluetooth RFCOMM and WiFi devices to a unified TCP/JSON server.
+项目围绕两条相互衔接的技术主线展开：
 
-**开发状态：M7-7 已提交，M7-8 真实 WiFi 光敏节点联调待完成。** 本仓库当前包含网关、上位 TCP Server、Linux Mock 节点和测试代码；不将尚未提交的 MCU 固件或未完成的硬件验收描述为已交付功能。
+1. **网关应用层**：Linux C、TCP/Socket、pthread、多节点接入、协议解析、设备管理与应用级 OTA。
+2. **BSP 与系统层**：i.MX6ULL 平台适配、GPIO/IRQ、I²C 驱动、Device Tree、交叉编译、进程监督，以及正在推进的 Kernel/Buildroot 定制和系统级 A/B OTA。
 
-[项目演进与历史 Commit](CHANGELOG.md) · [提交规范与开发流程](CONTRIBUTING.md) · [查看全部 Commits](https://github.com/liuexd/SmartGateway/commits/main)
+当前重点是第二条主线：在已经完成的 i.MX6ULL 驱动、网关和应用级 OTA 基础上，进一步掌握 Linux 启动链、存储布局、内核配置、RootFS 构建和可靠系统升级。
 
-## 项目简介
+## 当前项目状态
 
-SmartGateway 是一个从单蓝牙节点逐步扩展到多节点异构接入的嵌入式 Linux / Linux C 项目。项目重点不是单纯连接传感器，而是围绕 **TCP 网络通信、串口协议、pthread 并发模型、线程安全队列、设备生命周期管理和 CMD/ACK/NACK 闭环** 构建可维护的网关。
+| 模块 | 当前状态 |
+|---|---|
+| Linux Gateway / TCP Server | 已有 C / pthread / TCP / JSON Lines 实现 |
+| GPIO 事件驱动 | 已完成 i.MX6ULL 板端事件链路和可靠性验证 |
+| AP3216C | 已完成 I²C 驱动、错误统计、故障注入和 Sensor Agent 集成 |
+| GDB 远程调试 | 已完成 ARM 远程调试实践；部分端到端接收证据仍以验收文档为准 |
+| 应用级 OTA | D25-2 S1–S7 已完成，包含 Supervisor、正常升级、故障回滚和真实断电恢复 |
+| BusyBox init 集成 | Gateway 开机启动及 Supervisor 崩溃后 respawn 已完成板端验证 |
+| Kernel / Buildroot 定制 | 当前扩展方向，尚处于基线复核与方案准备阶段 |
+| 系统级 A/B OTA | 设计与约束文档已建立，尚未进行分区改造或板端升级实现 |
 
-- **NODE01（蓝牙）**：STM32F103 + HC-06，温湿度数据上报，LED 命令与 ACK/NACK 反馈。
-- **NODE02（WiFi）**：当前提供 Linux Mock WiFi 光敏节点，通过 TCP 发送 LIGHT_RAW；规划中的真实方案为 STM32F103 + ESP8266 + 光敏传感器（M7-8）。
-- **Linux Gateway**：南向连接设备，北向通过 JSON Lines 对接 TCP Server。
-- **TCP Server**：维护节点数据，处理命令下发、ACK/NACK 匹配、超时和重试。
+**当前开发分支：** `feature/imx6ull-system-ab-ota`  
+该分支基于 `feature/bsp-imx6ull` 创建，原有 BSP 实现保留在基础分支，`main` 不作为本轮直接开发分支。
+
+> 计划、设计和历史测试记录不等于当前功能已经实现。系统级 A/B OTA 在完成恢复能力核验和存储布局评审前，不报告为 PASS。
+
+## 平台基线
+
+目标板：100ASK i.MX6ULL Pro。
+
+| 项目 | 当前记录 |
+|---|---|
+| SoC / CPU | NXP i.MX6ULL / ARM Cortex-A7 |
+| DDR | 512 MiB |
+| Bootloader | U-Boot 2017.03 |
+| Linux Kernel | 4.9.88，ARMv7，SMP PREEMPT |
+| RootFS | Buildroot 2020.02，ext4 |
+| 工具链 | Linaro GCC 6.2.1；Buildroot SDK 用于应用交叉编译 |
+| eMMC user area | 7,634,944 个 512-byte sectors，约 3.64 GiB |
+| 当前根分区 | `/dev/mmcblk1p2`，约 1,500 MiB |
+
+最近一次板端采样记录了 p1/p2/p3 的扇区几何、文件系统占用、MemAvailable 和 CMA 信息。p1、p3 的实际用途、分区表类型、U-Boot 环境存储位置及可靠恢复路径仍待确认。
 
 ## 系统架构
 
-~~~mermaid
-flowchart TB
-    N1["NODE01 · STM32 + HC-06<br/>温湿度 / LED"]
-    N2["NODE02 · Linux Mock WiFi<br/>真实 STM32 + ESP8266 待 M7-8"]
-    BT["Bluetooth Worker<br/>RFCOMM / serial"]
-    WA["WiFi Listen / Accept<br/>TCP :7000"]
-    WW["WiFi Client Workers<br/>one connection, one thread"]
-    Q["Thread-safe Upstream Queue"]
-    DM["Device Manager<br/>node_id → transport / owner / command queue"]
-    SL["Server Link Thread<br/>Northbound TCP"]
-    SV["TCP Server :9000<br/>Node Store / CMD / ACK / NACK"]
+### 网关与设备数据链路
 
-    N1 <-->|Bluetooth| BT
-    N2 <-->|WiFi TCP| WA
-    WA --> WW
-    BT --> Q
-    WW --> Q
-    Q --> SL
-    SL <-->|JSON Lines| SV
-    SL -->|route CMD| DM
-    DM -->|per-node command| BT
-    DM -->|per-node command| WW
-~~~
+```text
+GPIO Button ──> GPIO Event Driver ──> GPIO Agent ──┐
+                                                   │
+AP3216C ─────> I2C Driver ──────────> Sensor Agent ├──> SmartGateway
+                                                   │        │
+Bluetooth / WiFi Nodes ────────────────────────────┘        │
+                                                            v
+                                                     TCP / JSON Lines
+                                                            │
+                                                            v
+                                                       TCP Server
+```
 
-**设计原则：** 上行由设备 Worker 生产消息、Server Link Thread 消费；下行通过 Device Manager 按 node_id 路由，设备 fd 由对应 Worker 负责发送，避免多个线程直接竞争同一通信资源。
+### Linux 启动与系统升级链路
 
-## 主要能力
+```text
+Boot ROM
+   |
+   v
+U-Boot 2017.03
+   |
+   +── load Kernel (zImage)
+   +── load DTB
+   |
+   v
+Linux Kernel 4.9.88
+   |
+   v
+ext4 RootFS (/dev/mmcblk1p2)
+   |
+   +── BusyBox init
+   +── Service Supervisor
+   +── SmartGateway / Agents
+   +── Application OTA Agent
+```
 
-| 模块 | 已实现的功能 |
-| --- | --- |
-| 协议处理 | CRC16-CCITT-FALSE、DATA/CMD/ACK/NACK、KV 字段、JSON Lines 半包/粘包处理 |
-| 蓝牙接入 | RFCOMM 串口读写、独立 Bluetooth Worker、断线重连 |
-| WiFi 接入 | TCP 监听、多 Client Worker、NODE02 Mock 数据上传 |
-| 并发通信 | pthread、mutex、condition variable、有界环形消息队列、Server Link Thread |
-| 设备管理 | 设备注册、在线状态、最近活跃时间、连接所有权校验、设备专属命令队列 |
-| 命令闭环 | 按 node_id 路由、ACK/NACK、失败反馈、命令重试与超时 |
-| 网络可靠性 | TCP 重连、非阻塞发送、poll 可写等待及发送超时 |
-| 测试 | 协议/队列/设备管理/命令管理/TCP 超时单测，以及独立集成测试目标 |
+应用级 OTA 管理用户态 release；规划中的系统级 OTA 管理非活动系统槽中的 Kernel、DTB 和 RootFS。两种 OTA 必须保持职责分离，并通过升级互斥机制避免并发写入。
 
-上述“已实现”指代码能力。**多节点长期稳定性、异常网络、真实硬件集成等仍需完整验收**，不代表已通过全部可靠性测试。
+## 已完成的关键工程内容
 
-## 协议示例
+### BSP 驱动与设备接入
 
-蓝牙串口链路使用带 CRC16 的自定义帧，逻辑格式为：
+- GPIO 事件字符设备、IRQ、等待队列、阻塞/非阻塞 read、poll 和事件队列。
+- GPIO 端到端链路：Kernel Driver → Agent → Gateway → Server。
+- Device Tree GPIO 资源化与 pinctrl 配置验证。
+- AP3216C I²C 驱动、sysfs 数据接口、错误统计和故障注入。
+- Sensor Agent 采集、心跳、传感器状态和 Gateway 数据上报。
 
-~~~text
-@数据区*CRC\r\n
-~~~
+### 调试与系统集成
 
-Gateway 与 Server 使用 **JSON Lines**：一条 JSON 消息占一行，以换行符结尾。业务字段使用通用 fields 对象，字段值当前按字符串处理。
+- ARM 交叉编译与板端运行兼容性验证。
+- GDB / gdbserver 远程调试。
+- Service Supervisor 进程生命周期管理。
+- BusyBox init 启动脚本和 inittab respawn。
+- Supervisor IPC 强制接入，Supervisor 不可用时拒绝应用升级。
 
-~~~json
-{"node":"NODE01","seq":101,"type":"DATA","fields":{"T":"253","H":"601"}}
-{"node":"NODE02","seq":24,"type":"DATA","fields":{"LIGHT_RAW":"2841"}}
-{"node":"NODE01","sender":"SERVER","seq":3001,"type":"CMD","fields":{"LED":"1"}}
-{"node":"NODE01","seq":3001,"type":"ACK","fields":{"LED":"1"}}
-{"node":"NODE01","seq":3001,"type":"NACK","error":"bad_cmd"}
-~~~
+### 应用级 OTA
 
-- T、H：温度和湿度数值扩大 10 倍保存，如 253 表示 25.3 ℃。
-- LIGHT_RAW：ADC 原始采样值，**不是 lux 照度值**。
-- CMD 中的 node 是路由目标；具体字段以 common/message_json.c 的实际编码为准。
+已完成包校验、staging、release 切换、健康检查、失败回滚、故障注入和板端掉电恢复。详细测试范围、命令和限制见文档索引中的 OTA / Supervisor 验收记录。
+
+## 当前系统级扩展工作
+
+按以下技术依赖推进，不按日期排期：
+
+1. **平台与恢复基线**：确认 eMMC 分区表、p1/p3 用途、U-Boot 环境位置、原厂镜像匹配性和可恢复入口。
+2. **Kernel 构建复现**：获取匹配的 4.9.88 源码、补丁、defconfig 和 DTS，先复现原始构建。
+3. **Kernel / DTS 定制**：逐项审计驱动依赖、pinctrl、reserved-memory 和 CMA，再进行可回归的配置裁剪。
+4. **Buildroot RootFS 定制**：复现 2020.02 构建配置，梳理 Gateway、Supervisor、Agent 和 OTA 运行依赖。
+5. **A/B 存储与启动设计**：完成容量核算、槽位定义、Boot Control Metadata 和 U-Boot 启动选择方案。
+6. **系统级 OTA**：实现非活动槽写入、镜像验证、启动健康确认、失败回滚和故障注入。
+
+### 存储安全边界
+
+在原厂恢复资料、U-Boot 环境存储布局、完整备份及恢复演练得到确认前：
+
+- 不修改 eMMC 分区表；
+- 不执行针对 eMMC 的 `dd` 写入、擦除或格式化；
+- 不执行 `saveenv` 或未经核实的 `fw_setenv`；
+- 不覆盖当前 U-Boot、Kernel、DTB 或 RootFS；
+- 不将 p1、p3 或尾部候选空间直接指定为 A/B 槽位。
 
 ## 目录结构
 
-~~~text
+```text
 SmartGateway/
-├── common/              # CRC16、帧协议、行解析、JSON 编解码
-├── gateway/             # Linux Gateway、Bluetooth/WiFi workers、
-│                        # message_queue、server_link、device_manager
-├── server/              # TCP Server、node_store、command_manager
-├── tools/               # 蓝牙 Mock Node、WiFi Mock Node
-├── tests/               # 单元测试与联调工具
-├── README.md            # 项目介绍、运行方法
-├── CHANGELOG.md         # 各阶段与历史提交记录
-├── CONTRIBUTING.md      # Git Commit 规范、开发与验收流程
-└── makefile
-~~~
+├── common/                 # 协议、帧解析、JSON 编解码
+├── gateway/                # Linux Gateway 与通信 Worker
+├── server/                 # TCP Server、节点状态和命令管理
+├── tools/                  # Mock 节点与开发工具
+├── tests/                  # 应用、OTA、Supervisor 测试
+├── bsp/
+│   ├── apps/               # GPIO / Sensor / OTA Agent / Supervisor
+│   ├── drivers/            # BSP 驱动
+│   ├── dts/                # Device Tree 实验与配置
+│   ├── tools/              # BSP 辅助工具
+│   └── docs/               # BSP 模块文档、参考资料和验收记录
+├── README.md
+├── CHANGELOG.md
+└── CONTRIBUTING.md
+```
 
-## 构建与快速体验（Linux）
+## 构建与测试
 
-### 依赖
+主机端 Linux Gateway / Server：
 
-Linux、GCC、GNU Make 和 pthread；使用模拟串口时需要 socat。部分 TCP 集成测试依赖 nc（netcat）与 timeout。嵌入式板端部署需要与目标平台适配的工具链及环境。
-
-~~~bash
-git clone https://github.com/liuexd/SmartGateway.git
-cd SmartGateway
+```bash
 make clean
 make all
-~~~
-
-构建生成：
-
-- build/smart_gateway — Linux Gateway
-- build/gateway_server — TCP Server
-- build/mock_node — 蓝牙链路的模拟串口节点
-- build/mock_wifi_node — WiFi TCP 光敏模拟节点
-
-### Linux Mock 联调
-
-使用独立终端，保持各进程运行。下面示例采用本机回环地址，不需要真实蓝牙或 ESP8266 硬件。
-
-**终端 A — 建立虚拟串口对**
-
-~~~bash
-socat -d -d pty,raw,echo=0,link=/tmp/ttyGW pty,raw,echo=0,link=/tmp/ttyNODE
-~~~
-
-**终端 B — 启动 TCP Server（默认示例端口 9000）**
-
-~~~bash
-./build/gateway_server 9000
-~~~
-
-**终端 C — 启动 Linux Gateway（WiFi 监听端口 7000）**
-
-~~~bash
-./build/smart_gateway --serial /tmp/ttyGW --baud 9600 --server 127.0.0.1 --port 9000
-~~~
-
-**终端 D — 启动蓝牙 Mock 节点**
-
-~~~bash
-./build/mock_node /tmp/ttyNODE
-~~~
-
-**终端 E — 启动 WiFi Mock 节点**
-
-~~~bash
-./build/mock_wifi_node 127.0.0.1 7000 NODE02
-~~~
-
-运行后可在 Server 控制台尝试：
-
-~~~text
-nodes
-led NODE01 1
-led NODE01 0
-help
-~~~
-
-当前仓库的 mock_wifi_node 以约 2 秒间隔发送 LIGHT_RAW 数据，**仅模拟上行数据**；不能将其视为已完成的 NODE02 真实 WiFi 下行执行器或硬件 ACK/NACK 测试。
-
-## 测试
-
-~~~bash
-make test            # 10 个独立单元测试程序
-make test-tcp        # 需要 nc 等依赖的 TCP 集成测试
-make tests-bin       # 构建单测、集成测试及手动联调工具
-make test-asan       # AddressSanitizer + UBSan
-make test-tsan       # ThreadSanitizer
-
-# OTA 与服务管理（D23 / D25-2）
-sh tests/setup_ota_test_env.sh                     # 一次性准备 OTA 测试产物
-python3 tests/test_ota_northbound_fault.py --prepare   # 北向故障与回滚
-python3 tests/test_s3_preflight_running.py             # 前置校验完整性
-python3 tests/test_s3r4_recovery.py                    # 激活前失败恢复
-python3 tests/test_s4_fault_matrix.py                  # 故障矩阵 F1–F10
-python3 tests/test_s5_supervisor_e2e.py                # 服务监督进程
-
-make supervisor        # 构建 Service Supervisor
-make supervisor-test   # IPC 协议 + supervisor 单元测试
-make supervisor-arm    # ARM 交叉编译
-~~~
-
-M7-7 提交说明记录了单测与 Sanitizer 通过，但 GitHub 仓库目前未配置可供公开查阅的 CI 工作流运行记录。实际测试结果以当前机器与环境中的运行输出为准；部分 Sanitizer 对系统环境有要求。
-
-## 开发里程碑
-
-| 阶段 | 内容 | 状态 |
-| --- | --- | --- |
-| M5 | 单节点蓝牙智能网关基础版 | 历史基线提交 |
-| M7-1 | 通用 KV 数据与 NODE02 LIGHT_RAW 测试 | 已提交 |
-| M7-2 | Linux Mock WiFi 光敏节点 | 已提交 |
-| M7-3 | Gateway WiFi TCP Server | 已提交 |
-| M7-4 | WiFi 多连接 pthread Worker | 已提交 |
-| M7-5 | Bluetooth Worker 线程化 | 已提交 |
-| M7-6 | 线程安全消息队列与 Server Link Thread | 已提交 |
-| M7-7 | Device Manager、目标节点路由、错误反馈 | 已提交 |
-| M7-8 | 真实 STM32 + ESP8266 光敏节点、双节点最终联调 | **计划中 / 未验收** |
-
-完整 Commit、提交时间和每阶段关键变化请查看 [CHANGELOG.md](CHANGELOG.md)。M7-8 完成后还需要回归测试、断线重连与长期稳定性验收，才能正式结项。
-
-## BSP 与 OTA 里程碑（i.MX6ULL）
-
-板端：100ASK i.MX6ULL Pro / Linux 4.9.88 / Buildroot 2020.02 / glibc 2.30 / BusyBox init。
-
-| 阶段 | 内容 | 验证环境 | 状态 |
-| --- | --- | --- | --- |
-| D25-1 | ARM 交叉编译与板端兼容性 | 板端 | 通过 |
-| D25-2 S1–S2 | 进程身份（pidfile + starttime + boot_id） | x86 | 通过 |
-| D25-2 S3 | 升级流程插入前置检查 | x86 | 通过 |
-| D25-2 S3-R~R4 | 安全复审修正、前置校验完整性、激活前恢复 | x86 | 通过 |
-| D25-2 S4 | 故障注入矩阵 F1–F10 | x86 | 通过（67 项） |
-| D25-2 S5 | Service Supervisor + BusyBox init | **x86 + 板端** | 通过 |
-| D25-2 S6 | 板端正常升级与故障回滚 | **板端** | 通过 |
-| D25-2 S7 | 板端掉电恢复 | **板端（真实断电）** | 通过 |
-| D25-2 S5-R1 | G4a 开机启动 + G4b 崩溃自愈（inittab respawn） | **板端** | 通过（21 项） |
-
-### OTA 与服务管理解决的问题
-
-| 问题 | 原状 | 现状 |
-| --- | --- | --- |
-| L3 前置校验依赖 pidfile | Gateway 由别的方式启动时 pidfile 不存在，OTA 会启动第二个实例 | **已解决**：所有权在 supervisor 内存中，板端实测「删掉 pidfile 仍正确」 |
-| L6 停止外部进程的 TOCTOU | pidfd 需 Linux 5.1+，板端 4.9.88 无法消除 | **已解决**：supervisor 停止自己的子进程，pid 不可能被复用 |
-
-两者通过**转移所有权**解决，而非更仔细的检查。
-
-部署结构：
-
-```
-/opt/smartgateway/
-├── bin/{ota_agent,service_supervisor}
-├── current -> releases/v0.x.0
-├── releases/v0.x.0/{smart_gateway,manifest.json}
-├── run/          supervisor.sock, service.pid
-├── state/ota_state.json
-└── service.conf
-/etc/init.d/S99smartgateway
+make test
+make test-tcp
 ```
 
-### 已知限制（不报告为 PASS）
+OTA / Supervisor 相关回归命令以对应测试脚本和验收文档为准。ARM 交叉编译需使用与目标 RootFS ABI 和动态库版本匹配的 Buildroot SDK。
 
-| 编号 | 内容 |
-| --- | --- |
-| L10 | SIGKILL 也无效（D 状态）分支无集成测试 —— x86 与板端均无法构造 |
-| L11 | respawn 模式下领养的 Gateway 管理能力弱于原生（`waitpid` 无效，只能 kill + 轮询） |
-| — | 串口模式：全部验证以 `--no-serial` 运行，真实 `/dev/ttymxc2` 路径未板端验证 |
-| — | 真实北向云平台、eMMC 坏块/只读挂载未做故障注入 |
-| L5 | 无 CI，所有 PASS 均为手工执行 |
+本仓库当前没有 CI 工作流作为自动验收依据；文档中的 PASS 均应结合对应的本地或板端实测证据理解。
 
-详细设计见 `bsp/docs/D25-2-*.md`。
+## 文档入口
 
-## 后续方向（非 M7 必选）
+- [BSP 项目说明](bsp/README.md)
+- [BSP 文档总索引](bsp/docs/README.md)
+- [系统定制与 A/B OTA](bsp/docs/system-ab/README.md)
+- [平台与 eMMC 实测基线](bsp/docs/system-ab/01-platform-baseline.md)
+- [U-Boot 启动链](bsp/docs/system-ab/02-boot-chain-and-uboot.md)
+- [A/B 分区与恢复约束](bsp/docs/system-ab/03-ab-layout-and-recovery-constraints.md)
+- [Kernel / RootFS 定制](bsp/docs/system-ab/04-kernel-and-rootfs-customization.md)
+- [系统 OTA 状态机](bsp/docs/system-ab/05-system-ota-state-machine.md)
 
-可根据需要扩展 epoll / thread pool、MQTT、TLS、systemd、SQLite、配置管理和结构化日志。这些能力属于后续规划，不属于当前已交付功能。
-
-## 项目定位
-
-面向嵌入式 Linux / Linux C 开发实践，系统性展示 Socket、串口、网络协议解析、pthread 同步与并发资源生命周期管理。欢迎通过 Issues 交流具体问题；提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+历史提交和版本变化见 [CHANGELOG.md](CHANGELOG.md)；提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
