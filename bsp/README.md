@@ -144,7 +144,11 @@ U-Boot 环境变量显示当前从 eMMC 的 mmc 1:2 加载 `/boot/zImage` 和 DT
 
 当前 U-Boot 曾出现 `mmc part` 报告 `no card present` / `mmc_init: -123`，但 Linux 能识别 eMMC。需要先按只读方式复核 `mmc dev 1`、`mmc rescan`、`mmc info` 和 `mmc part`，不能跳过异常直接设计写入流程。
 
-## 8. 文档导航
+## 8. 当前只读核查工具
+
+G0-1 使用 [`bsp/tools/collect_system_baseline.sh`](tools/collect_system_baseline.sh) 采集 eMMC 分区表、p1/p2/p3 文件系统签名、挂载情况和相关内核日志。脚本只写入 `/tmp/sgw-g0-readonly-inventory.txt`，不写 eMMC。执行前将脚本复制到板端 `/tmp`；执行后把报告回传复核。
+
+## 9. 文档导航
 
 - [BSP 文档总索引](docs/README.md)
 - [系统定制与 A/B OTA](docs/system-ab/README.md)
