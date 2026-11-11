@@ -23,6 +23,7 @@
 | 分类 | 文档 |
 |---|---|
 | G0 inventory | [Read-only eMMC inventory script](../tools/collect_system_baseline.sh) | Collects partition, filesystem and boot metadata without writing eMMC |
+| G0-1B result | [p1/p3 and RTC follow-up](validation/platform/G0-1B-p1-p3-rtc-followup.md) | p1/p3 first 2048 bytes zero; RTC reports 1970; no repartition authorization |
 | G0-1 result | [eMMC inventory findings](validation/platform/G0-1-emmc-inventory.md) | DOS/MBR confirmed; p1/p3 contents and purpose remain unknown |
 | Build | [Host build environment](reference/build/host-environment.md) |
 | Kernel / Driver | [Platform driver](reference/kernel-driver/platform-driver.md) |
