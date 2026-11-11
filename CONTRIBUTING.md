@@ -1,132 +1,157 @@
-# SmartGateway 开发与 Commit 规范
+# SmartGateway 开发与文档维护规范
 
-本文件约定后续代码提交、测试和阶段验收方式，**不改变历史 Commit**。适用于 M7-8 和今后的可选扩展。
+本文件适用于 SmartGateway、i.MX6ULL BSP 和系统级 OTA 后续开发。目标是让代码、设计、验证记录和 README 始终反映仓库真实状态。
 
 ## 1. 核心原则
 
-- 一次 Commit 聚焦一个可解释、可回退的变更：新功能、缺陷修复、单测或文档。
-- 先检查改动再提交：避免把 build/、日志、临时文件、个人配置或编译生成的二进制纳入版本管理。
-- 功能实现不等于验收成功；单测、集成测试、异常测试的完成情况要如实记录。
-- 串口 fd、WiFi client fd、Server fd 均需有明确的线程所有权；共享状态要明确 mutex / condition variable 边界。
-- M7-8 真机完成前，不把 Mock WiFi Node 写成已完成 STM32 + ESP8266 实物联调。
+- 一次 Commit 聚焦一个可解释、可回退的变更：功能、缺陷修复、测试、构建或文档。
+- 实现、测试通过、板端验收是不同状态，必须分别描述。
+- README 只描述当前仓库中已经实现且有证据支持的能力。
+- 设计方案不得写成已实现功能；计划不得写成验收结果。
+- 不提交 build 产物、日志、临时文件、个人配置、密钥或未经许可的厂商镜像。
+- 修改启动链、eMMC 分区、U-Boot 环境或系统镜像前，必须满足恢复就绪检查表的放行条件。
 
-## 2. 推荐 Commit 标题格式
+## 2. 分支约定
 
-~~~text
+| 分支 | 用途 |
+|---|---|
+| `main` | 项目稳定主线 |
+| `feature/bsp-imx6ull` | i.MX6ULL BSP 驱动、Agent、调试和应用级 OTA 基线 |
+| `feature/imx6ull-system-ab-ota` | Kernel / Buildroot 定制、启动链与系统级 A/B OTA 扩展 |
+
+新工作优先在对应功能分支完成。不要将系统级 A/B OTA 的未验证设计描述为已交付功能。合并前核对目标分支、测试范围和文档状态。
+
+## 3. Commit 标题
+
+格式：
+
+```text
 <type>(<scope>): <short imperative summary>
-~~~
+```
 
 | type | 场景 |
-| --- | --- |
+|---|---|
 | feat | 新功能 |
 | fix | 缺陷修复 |
-| test | 单测、集成测试或测试工具 |
-| refactor | 不改变对外行为的代码重构 |
-| docs | README、设计文档、开发日志 |
-| build | Makefile、构建与工具链 |
-| chore | 杂项维护、清理 |
-| perf | 性能优化 |
+| test | 单元、集成或故障注入测试 |
+| refactor | 不改变外部行为的重构 |
+| docs | README、设计文档、验收记录 |
+| build | Makefile、工具链和构建系统 |
+| chore | 仓库维护 |
+| perf | 有测量依据的性能优化 |
 
-常见 scope：gateway、wifi、bluetooth、device-manager、server、protocol、node02、integration、readme。英文简洁标题便于 GitHub 统一展示；正文可写中文。
+推荐 scope：gateway、bsp、gpio、ap3216c、ota、supervisor、uboot、kernel、buildroot、docs。
 
-**示例（未来提交建议，不代表已经实现）：**
+示例：
 
-~~~text
-feat(node02): add STM32 ADC sampling for LIGHT_RAW
-feat(wifi): connect ESP8266 to gateway TCP listener
-fix(gateway): handle WiFi reconnect without stale device state
-test(integration): verify Bluetooth and WiFi link isolation
-test(stability): record dual-node long-running results
-docs(readme): document M7-8 hardware validation
-~~~
+```text
+fix(gpio): release irq resources on probe failure
+docs(bsp): document i.MX6ULL recovery constraints
+test(ota): cover interrupted inactive-slot update
+build(kernel): reproduce vendor kernel configuration
+```
 
-若需要保留阶段编号，请放在 Commit 正文，而非每条都堆在标题：
+## 4. 文档目录规则（固定结构）
 
-~~~text
-feat(node02): add STM32 ADC sampling for LIGHT_RAW
+后续文档按内容类型归档，不再创建 D17、D18 或 D26 等日期/阶段平铺目录。
 
-Milestone: M7-8
-- Sample sensor values through ADC.
-- Send LIGHT_RAW over UART.
-- Tested: local UART output verified.
-~~~
+```text
+bsp/docs/
+├── README.md                 # 唯一文档导航入口
+├── system-ab/                # 当前系统定制与 A/B OTA 设计/实施
+├── reference/                # 长期技术参考和教程
+├── validation/               # 已执行的验收记录
+└── archive/                  # 被新基线替代的历史资料
+```
 
-## 3. 每次提交前检查
+具体规则：
 
-~~~bash
-git status
+1. **当前设计与实施文档**放入 `bsp/docs/system-ab/`。按主题命名，例如 `07-kernel-build-reproduction.md`、`08-buildroot-rootfs.md`。只有确实新增独立主题时才新增文件，不为每日进度创建文档。
+2. **历史验收记录**放入 `bsp/docs/validation/<module>/`。模块目录沿用现有分类：platform、kernel、gpio、sensors、debug、build、ota。
+3. **可重复使用的知识资料**放入 `bsp/docs/reference/<topic>/`。
+4. **被新资料替代但仍有历史价值的文件**放入 `bsp/docs/archive/`，并在 archive README 说明替代关系。
+5. 新文档必须从 `bsp/docs/README.md` 或所属模块 README 建立入口。禁止新增未被索引的孤立文档。
+6. 不随意改名或搬迁既有验收记录；确有必要时，同一 Commit 更新所有引用链接。
+7. 不恢复旧 `ROADMAP.md` 的 Dxx 时间排期体系。当前任务顺序维护在 `system-ab/README.md`，仅记录依赖、状态和验收门槛。
+
+## 5. 验收记录模板
+
+每份新验收报告至少说明：
+
+```text
+# <主题> 验收记录
+
+状态：DESIGN / IMPLEMENTED / HOST-TESTED / BOARD-TESTED / BLOCKED
+平台：板卡型号、SoC、Kernel、RootFS
+范围：本次变更包含与不包含的内容
+
+## 变更
+- ...
+
+## 验证环境与命令
+- ...
+
+## 结果
+- 构建：PASS / FAIL / NOT RUN
+- 单元测试：PASS / FAIL / NOT RUN
+- 板端验证：PASS / FAIL / NOT RUN
+- 故障场景：PASS / FAIL / NOT RUN
+
+## 证据
+- 关键命令输出、日志、版本或测试计数
+
+## 已知限制
+- ...
+```
+
+状态应选择最严格且有证据支持的等级。HOST-TESTED 不能写成 BOARD-TESTED；编译成功不能写成完整功能验收通过。
+
+## 6. 提交前检查
+
+```bash
+git status --short
+git diff --check
+git diff --stat
 git diff
+```
+
+暂存后再次检查：
+
+```bash
 git diff --cached --check
 git diff --cached --stat
 git diff --cached
-~~~
+```
 
-确认无意外修改、行尾空白、调试日志及编译产物。按需指定文件暂存，避免直接使用 git add . 将无关文件一并提交。
+按文件路径精确暂存，避免将无关文件、生成物或本地配置提交。
 
-~~~bash
-git add -- path/to/changed_file.c path/to/changed_file.h
-git diff --cached --check
-git commit -m "fix(gateway): handle WiFi reconnect safely"
-git push origin main
-~~~
+## 7. 构建与测试
 
-可将功能开发放在独立分支并通过 PR 合并；直接推送 main 时尤其应确保通过对应测试。
+根据实际改动选择测试，不得将未执行项目标记为 PASS。
 
-## 4. 构建与测试标准
+网关主机端基础回归：
 
-~~~bash
+```bash
 make clean
 make all
 make test
-~~~
+```
 
-按改动范围增加：
+按需运行：
 
-~~~bash
+```bash
 make test-tcp
 make test-asan
 make test-tsan
-~~~
+```
 
-- make test 目前登记 **10 个单元测试程序**。
-- test-tcp 依赖本机 TCP 服务端测试工具和 nc。
-- ASan / TSan 需要操作系统与编译器提供相应支持；两者分开运行。
-- 涉及网络或多线程的改动，应额外手动复测断线、重连、队列 shutdown、Ctrl+C、fd / thread 回收。
-- 测试失败时先修复，不要在 Commit 消息中声称通过。
+涉及 BSP / OTA 时，还应记录对应 ARM 交叉编译、目标板版本、实际命令和故障注入范围。不要用主机模拟测试替代板端结论。
 
-## 5. M7-8 推荐拆分
+## 8. README、CHANGELOG 与文档同步
 
-以小步可验收为原则，推荐拆成以下独立提交（仅为计划）：
-
-1. **feat(node02): acquire LIGHT_RAW from STM32 ADC** — ADC 与串口数值验证。
-2. **feat(wifi): establish ESP8266 TCP connection** — AT / UART / WiFi / TCP 链路验证。
-3. **feat(node02): upload sensor readings to gateway** — 真实 NODE02 DATA 上传。
-4. **test(integration): verify concurrent Bluetooth and WiFi nodes** — 双链路、断线与恢复。
-5. **test(stability): validate long-running gateway resources** — CPU、RSS、fd、线程数与长稳结果。
-6. **docs(readme): complete M7-8 acceptance and usage guide** — 更新硬件清单、运行步骤、验收结果。
-
-如果 MCU 固件目前保存在其他仓库，应在 README 中提供实际链接，不要在当前仓库虚构固件路径。未来新增固件目录时再对应修改目录树。
-
-## 6. 每个阶段的验收记录模板
-
-~~~text
-Milestone: M7-8
-Scope: ADC / UART / WiFi / Gateway / Server
-Changes:
-- ...
-Verification:
-- make clean && make all: PASS / FAIL / NOT RUN
-- make test: PASS / FAIL / NOT RUN
-- 双节点联调: PASS / FAIL / NOT RUN
-- 网络异常/重连: PASS / FAIL / NOT RUN
-- 资源监测: PASS / FAIL / NOT RUN
-Known limitations:
-- ...
-~~~
-
-## 7. 开发记录与版本管理
-
-- 每个阶段完成后更新 [CHANGELOG.md](CHANGELOG.md)，链接到对应 Commit。
-- README 只描述目前已在仓库中实现的能力及经过验证的结果。
-- 发布正式 Tag（如首次完整 M7 版本）前，确认最终验收清单已通过；不要用 Tag 暗示未完成的硬件测试已经完成。
-- **不要改写既有 M5 / M7-1～M7-7 提交历史**。已有短 Commit 标题可以通过 CHANGELOG 补充背景和具体工作。
+- 根目录 README 描述整个 SmartGateway 当前真实能力和开发方向。
+- `bsp/README.md` 描述 BSP 平台、驱动、系统架构与当前状态。
+- `bsp/docs/README.md` 是 BSP 文档唯一总索引。
+- `CHANGELOG.md` 记录有意义的代码/工程里程碑，不记录每次小型文字调整。
+- 完成一个可独立验收的功能后，同步更新相应 README、验收记录和 CHANGELOG。
+- 只修改文档结构时，不要顺手改写无关代码或历史提交。
