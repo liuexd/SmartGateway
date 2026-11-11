@@ -124,3 +124,67 @@ Kernel cmdline 指定 `root=/dev/mmcblk1p2 rootwait rw`。当前可确认实际�
 - 系统已集成 SWUpdate，且出现 `rootfs`、`rootfs-1` selection 名称；必须先审计现有 OTA 设计，避免重复造轮子或破坏已有升级布局。
 - RTC 时间异常需要结合正在运行的 ntpd 和 `S49ntp` 一并调查。
 - G0 仍未放行。禁止格式化、重分区、刷写、执行 SWUpdate 升级或修改 U-Boot 环境。
+
+
+## 9. G0-2A：原厂 SWUpdate 与 U-Boot 环境配置初查
+
+**证据来源：** 开发板 ADB shell 输出；本轮仅读取配置、进程列表和文件目录，没有执行升级或写入 U-Boot 环境。
+
+### SWUpdate 文件与服务
+
+`/etc/swupdate/` 包含：
+- `swupdate.cfg`（451 bytes）
+- `postupdate.sh`（116 bytes）
+- `swupdate-public.pem`（471 bytes）
+
+目录列表已确认，但本轮配置文件的 `cat` 内容尚未成功采集；先前的 `grep` 命令回显发生输入/终端交错，不能据此判断配置为空。公钥文件不等于私钥，不应将任何私钥或设备凭据提交到公开仓库。
+
+`/etc/init.d/S98swupdate` 显示：
+- 读取 `/proc/cmdline`，通过固定位置参数展开 `${LINE:28:14}` 提取 root 设备字符串；
+- 若结果等于 `/dev/mmcblk1p2`，设置 `ROOTFS=rootfs-1`，否则设置 `ROOTFS=rootfs-2`；
+- 根据 `/update-ok` 是否存在设置 `SURICATTA_ARGS=-c 2` 或 `-c 1`，并在存在时删除该标记；
+- 从 SoC/eMMC sysfs 路径读取 CID，并构造带设备标识的 SWUpdate 参数；
+- 启动参数包含 `-f /etc/swupdate/swupdate.cfg -L -e rootfs,${ROOTFS} -u ...`。
+
+当前 cmdline 的 root 为 `/dev/mmcblk1p2`，按脚本逻辑会选择 `rootfs-1`。这是**脚本目标选择**的证据，不是 `rootfs-1` 对应物理分区的证据。
+
+脚本存在需后续审计的健壮性问题：
+- 固定字符偏移解析 cmdline 对参数顺序、前缀变化敏感；未知/解析失败时当前 `else` 会默认选择 `rootfs-2`，属于不安全的默认分支。
+- `${LINE:28:14}` 与 `MMCCID=(...)` 不是可移植 POSIX `sh` 写法；必须先确认 `/bin/sh` 实际解释器及脚本启动方式。
+- `-u "${SURICATTA_ARGS} ${MMCCID}"` 将拼接内容作为一个带空格的 quoted 参数传入；需通过进程 `/proc/PID/cmdline` 的 NUL 分隔内容与 SWUpdate 参数定义确认实际 argv 语义，不能仅凭 `ps` 的空格展示判断。
+- 进程列表出现两个 SWUpdate PID（286、298）；需要查看 PPid、状态和 NUL 分隔 argv，确认是否为父子/工作进程，不能直接认定重复启动。
+
+### U-Boot 环境配置
+
+`/etc/fw_env.config` 内容为：
+
+```text
+/dev/mmcblk1  0xe0000 0x2000
+```
+
+这表示 Linux 用户空间的 fw_printenv/fw_setenv 工具被配置为从 eMMC user-area 设备 `/dev/mmcblk1` 的 byte offset `0xE0000` 读取/写入一个 `0x2000` bytes 的环境区域。换算为 offset 917,504 bytes（896 KiB）、size 8,192 bytes（8 KiB）。
+
+该配置文件本身不能证明：
+- U-Boot 编译时使用相同的环境介质、偏移和大小；
+- 环境是否冗余、是否有 CRC/冗余标志布局；
+- 该区域是否与原厂镜像/其他厂商数据存在约定；
+- 环境变量中是否已经实现 bootcount、bootlimit 或升级回滚。
+
+`fw_printenv` 与 `fw_setenv` 均存在；本轮尚未提供 `fw_printenv` 输出。只允许下一步执行 `fw_printenv` 只读查看，禁止执行 `fw_setenv`。
+
+### 本轮结论
+
+1. 已确认原厂系统使用 SWUpdate，并通过启动根设备选择 `rootfs-1` 或 `rootfs-2` 更新集合。
+2. 当前运行在 p2 时脚本选择 `rootfs-1`；其物理目标尚未确认。
+3. 已确认 fw_env 用户空间配置位置为 eMMC user area + 0xE0000，长度 0x2000；U-Boot 侧一致性和冗余方式未确认。
+4. 现有脚本存在参数解析/传参可移植性与失败默认分支的审计点；暂不修改原厂脚本。
+5. G0 仍未放行。不得执行 SWUpdate 升级、fw_setenv、分区修改或刷写。
+
+### 下一轮只读采集
+
+- `cat /etc/swupdate/swupdate.cfg`（只输出配置，不输出私钥；若包含凭据先脱敏）
+- `cat /etc/swupdate/postupdate.sh`
+- `readlink -f /bin/sh; ls -l /bin/sh`
+- `fw_printenv`（只读；网络密码、密钥、token 等先脱敏）
+- 对 PID 286、298 查看 `/proc/<PID>/status` 的 Name/PPid/State，以及 `od -An -tx1c /proc/<PID>/cmdline`，保留 NUL 边界
+- 查看 `/proc/mtd`、`/sys/block/mmcblk1/device/name` 等只读信息；不推测 U-Boot 本体位置
