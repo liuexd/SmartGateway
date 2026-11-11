@@ -1,10 +1,10 @@
 # SmartGateway-BSP · i.MX6ULL BSP 与驱动开发
 
-> 本目录是 [SmartGateway](../README.md) 的 BSP 学习与开发工作区，当前在 `feature/bsp-imx6ull` 分支开发。原项目 `main` 保持不变。
+> 本目录是 [SmartGateway](../README.md) 的 BSP 学习与开发工作区。原有驱动与应用 OTA 基线位于 `feature/bsp-imx6ull`；系统定制与 A/B OTA 扩展位于 `feature/imx6ull-system-ab-ota`。原项目 `main` 保持不变。
 
 ## 项目目标
 
-在现有 SmartGateway Linux C / Socket / pthread 应用基础上，学习和实操 i.MX6ULL 的 Device Tree、GPIO/IRQ、I²C、用户态调试和应用级 OTA，并最后通过 UART/RS485 + Modbus RTU 扩展第二类传感器节点。仅把**有实际证据验证**的事项标记为完成。
+在现有 SmartGateway Linux C / Socket / pthread 应用基础上，完成 i.MX6ULL Device Tree、GPIO/IRQ、I²C、用户态调试、应用级 OTA 与 Supervisor；后续扩展方向调整为 Linux Kernel/Buildroot 定制及系统级 A/B OTA。RS485/Modbus RTU 暂不纳入本轮必做范围。仅把**有实际证据验证**的事项标记为完成。
 
 ## 当前进度（截至 D25-2 S7）
 
@@ -77,10 +77,10 @@
    - supervisor 崩溃后由 init 自动拉起（G4b，`inittab respawn`）
    - 真实 OTA 升级、北向故障回滚、真实断电恢复均已实测
 
-2. **D26–D34：RS485 / Modbus RTU**——作为最后一个新增外设模块，完成
-   UART/pinmux、收发方向、CRC16、超时重试、NODE05 和多节点回归。
+2. **系统定制与 A/B OTA 扩展**：新分支 `feature/imx6ull-system-ab-ota` 已建立。先完成平台/存储基线与恢复能力核验，再复现并裁剪 Kernel、定制 Buildroot RootFS，最后设计 U-Boot A/B 启动与系统 OTA。
+3. 新扩展文档按工程组成部分组织，入口见 [System A/B 文档索引](docs/system-ab/README.md)。其中 eMMC p1/p3 用途、U-Boot 环境存储位置和原厂恢复能力尚未确认；未通过恢复门槛前不修改分区表或写入 eMMC。
 
-详细任务、验收标准和安全边界见 [D16 后路线图](docs/ROADMAP.md)。
+原 D16 后路线图保留为历史计划记录；本轮系统扩展以 `docs/system-ab/` 下的模块化文档为准。
 
 ## 已知限制（不报告为 PASS）
 
@@ -124,7 +124,23 @@
 - [D25-2 S3-R3 负向测试与 PID 身份边界](docs/D25-2-S3R3-negative-tests-and-pid-boundaries.md)
 - [D16 后调整路线图：OTA 优先，RS485 最后](docs/ROADMAP.md)
 
-### 硬件与软件基线（已记录）
+### 系统级扩展基线（本轮板端实测）
+
+| 项目 | 结果 |
+|---|---|
+| Linux | 4.9.88，ARMv7，SMP PREEMPT |
+| Kernel 编译器 | Linaro GCC 6.2.1 |
+| eMMC user area | 7,634,944 × 512-byte sectors，约 3.64 GiB |
+| p1 | 1,000 MiB，用途待确认 |
+| p2 | 1,500 MiB，当前 ext4 根文件系统；677 MiB used / 706 MiB avail |
+| p3 | 500 MiB，用途待确认 |
+| p3 后尾部 | 按扇区算术推算约 726.97 MiB，分区表/原厂占用待核验 |
+| MemTotal | 500,948 KiB |
+| CMA | 320 MiB total，约 220.9 MiB free（采样时点） |
+
+详见 [板端平台与 eMMC 基线](docs/system-ab/01-platform-baseline.md) 和 [U-Boot 启动链基线](docs/system-ab/02-boot-chain-and-uboot.md)。
+
+### 硬件与软件基线（历史记录）
 
 | 项目 | 值 |
 | --- | --- |
@@ -141,7 +157,7 @@
 
 ## Git 与阶段验收规则
 
-- 所有 BSP 工作在 `feature/bsp-imx6ull` 分支进行，不在 `main` 直接开发。
+- 原有 BSP 驱动与应用 OTA 基线保留在 `feature/bsp-imx6ull`；系统定制与 A/B OTA 在 `feature/imx6ull-system-ab-ota` 开发，不在 `main` 直接开发。
 - 按 `docs(bsp)`、`build(bsp)`、`feat(driver)`、`test(bsp)` 等 Conventional Commits 形式提交，每个提交聚焦一个主题。
 - 每阶段保留命令、实测输出、验收结果与已知问题；计划中的工作不得写成 PASS。
 - 原厂恢复介质与可靠恢复方式未确认前，不执行 `dd` 写块设备、`mmc write`、`saveenv`、刷写 U-Boot 或覆盖现有 DTB / Kernel。
