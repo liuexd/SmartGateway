@@ -35,11 +35,13 @@
 - [x] 记录 p1：start 4098，size 2,048,000 sectors。
 - [x] 记录 p2：start 2,052,098，size 3,072,000 sectors。
 - [x] 记录 p3：start 5,124,098，size 1,024,000 sectors。
-- [ ] 使用只读工具确认分区表类型（MBR/DOS 或 GPT）并保存分区表导出。
-- [ ] 识别 p1、p3 的文件系统、标签、UUID、PARTUUID 和内容。
+- [x] 使用只读 `fdisk -l /dev/mmcblk1` 确认分区表类型为 DOS/MBR；原始分区表导出/备份仍待完成。
+- [ ] 识别 p1、p3 的实际文件系统、标签、UUID、PARTUUID 和内容；当前 `blkid` 未识别二者。
 - [ ] 确认 p1、p3 是否包含启动文件、厂商恢复数据或其他保留数据。
+- [x] 确认 MBR 类型 ID：p1/p2=0x83，p3=0x0C；该字段不等同于内部文件系统类型。
+- [x] 确认 p1/p2 的 MBR bootable 标志均置位；其是否被 U-Boot 使用仍待查。
 - [ ] 通过原厂分区布局和分区表交叉确认 p3 后的尾部空间是否可分配。
-- [ ] 记录 eMMC CID/CSD、设备型号和容量信息。
+- [x] 记录非唯一设备字段：type=MMC、name=S40004、manfid=0x000001、oemid=0x0100、date=06/2020 及容量；serial/CID 未写入公开记录以保护设备唯一标识。CSD 如后续确有必要，在本地私有记录中核查。
 
 **容量提醒：** p3 后按扇区算术推算剩余 1,486,846 sectors，约 726.97 MiB。这只是 Linux 暴露几何数据的计算结果，不证明该区域可安全使用。
 
@@ -47,7 +49,7 @@
 
 - [x] 记录 `bootcmd`、`mmcdev`、`mmcpart`、`mmcroot`、Kernel/DTB 文件名和加载地址。
 - [x] 记录当前 Linux cmdline：`root=/dev/mmcblk1p2 rootwait rw`。
-- [ ] 在 U-Boot 只读执行 `mmc dev 1`、`mmc rescan`、`mmc info`、`mmc part` 并保存完整日志。
+- [ ] 在 U-Boot 只读执行 `mmc dev 1`、`mmc rescan`、`mmc info`、`mmc part` 并保存完整日志；Linux 侧已确认 eMMC 正常枚举，不能据此推定 U-Boot 侧也正常。
 - [ ] 查明 U-Boot 本体存放于 eMMC user area、boot0、boot1 或其他位置。
 - [ ] 从匹配的 U-Boot 配置和源码确认环境变量存储介质、offset、size、sector size。
 - [ ] 确认是否启用 redundant environment，以及掉电时的恢复语义。
@@ -55,6 +57,15 @@
 - [ ] 确认原厂工具是否能够恢复 U-Boot 本体及环境变量。
 
 **已知异常：** 当前记录中 U-Boot `mmc list` 可列出 eMMC 控制器，但随后 `mmc part` 曾返回 `MMC: no card present` / `mmc_init: -123`。Linux 同时能够识别 eMMC。该异常必须先复核，不能直接推断为介质损坏或分区表损坏。
+
+### 本轮 G0-1 结论
+
+- [x] Linux 侧识别 eMMC user area 和 p1/p2/p3；容量及起始扇区与前次记录一致。
+- [x] 只读 fdisk 确认 DOS/MBR。
+- [x] 当前根文件系统为 p2/ext4；p1/p3 未挂载。
+- [ ] p1/p3 文件系统与内容未识别，禁止将其作为 A/B 槽或空闲空间。
+- [ ] p3 后约 726.97 MiB 仍只是几何推算，不能分配。
+- [ ] 板端报告时间为 1970-01-06，需查明 RTC/NTP 时间同步；日志时间暂不可信。
 
 ## 3. 备份与恢复演练
 
