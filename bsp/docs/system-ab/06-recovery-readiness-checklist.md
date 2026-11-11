@@ -52,7 +52,8 @@
 - [x] 记录当前 Linux cmdline：`root=/dev/mmcblk1p2 rootwait rw`。
 - [ ] 在 U-Boot 只读执行 `mmc dev 1`、`mmc rescan`、`mmc info`、`mmc part` 并保存完整日志；Linux 侧已确认 eMMC 正常枚举，不能据此推定 U-Boot 侧也正常。
 - [ ] 查明 U-Boot 本体存放于 eMMC user area、boot0、boot1 或其他位置。
-- [ ] 从匹配的 U-Boot 配置和源码确认环境变量存储介质、offset、size、sector size。
+- [ ] 从匹配的 U-Boot 配置和源码确认环境变量存储介质、offset、size、sector size；Linux `/etc/fw_env.config` 当前记录为 `/dev/mmcblk1 0xe0000 0x2000`，仅是用户空间工具配置，不能替代 U-Boot 配置核验。
+- [ ] 执行只读 `fw_printenv` 并保存脱敏输出，核对 `bootcmd`、槽位变量、bootcount/bootlimit 和升级状态变量。
 - [ ] 确认是否启用 redundant environment，以及掉电时的恢复语义。
 - [ ] 确认是否有 bootcount / bootlimit 能力；不能仅凭 `help bootcount` 无命令判断配置不存在。
 - [ ] 确认原厂工具是否能够恢复 U-Boot 本体及环境变量。
@@ -64,7 +65,11 @@
 - [x] p1 相对 512 MiB 与接近末尾的抽样点包含 QML/XML 风格文本数据。
 - [x] p3 六个分散抽样点均为全零；完整分区内容仍未知。
 - [x] 发现系统已集成 SWUpdate，进程参数出现 `rootfs`、`rootfs-1` 两个 selection 名称。
-- [ ] 审计 `/etc/swupdate/swupdate.cfg`、`S98swupdate`、bootloader integration 和槽位映射，确认是否已有 A/B 实现。
+- [ ] 读取并审计 `/etc/swupdate/swupdate.cfg`、`postupdate.sh`、`S98swupdate`、bootloader integration 和槽位映射，确认是否已有 A/B 实现。
+- [x] 确认 `S98swupdate` 按 cmdline root 字段选择 `rootfs-1` 或 `rootfs-2`；当前 p2 分支选择 `rootfs-1`。
+- [x] 记录 `/etc/fw_env.config`：`/dev/mmcblk1 0xe0000 0x2000`（offset 896 KiB，size 8 KiB）；U-Boot 侧配置一致性、冗余机制和环境内容仍待核实。
+- [ ] 检查 `S98swupdate` 的固定偏移 cmdline 解析、未知 root 默认分支、quoted 参数拼接及 `/bin/sh` 兼容性；只记录问题，不在 G0 阶段修改原厂脚本。
+- [ ] 检查 PID 286/298 的 PPid、状态及 NUL 分隔 argv，确认两个 SWUpdate 进程的关系。
 - [x] 发现 `ntpd -g` 进程及 `S49ntp`；NTP 实际同步状态待核实，不能把 RTC 1970 时间直接等同于无 NTP 服务。
 
 ### G0-1B 补充结论
