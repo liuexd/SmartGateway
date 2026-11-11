@@ -91,9 +91,10 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 - MemTotal 约 489 MiB，CMA 总量 320 MiB。
 
 尚未确认：
-- p1、p3 内部文件系统、标签、文件内容和用途（blkid 无识别输出；两分区前 2048 bytes 全零，但整个分区内容尚未扫描）。
+- p1、p3 内部文件系统、标签和用途仍未确认。抽样发现 p1 在相对 512 MiB 与接近末尾处含 QML/XML 风格结构化文本；p3 六个抽样点均为零，但未全盘扫描。
 - 原始 MBR 分区表备份及分区表之外的厂商元数据位置。
-- RTC 当前日期为 1970-01-06，系统时间不可信；原因待查。
+- RTC/系统时间采样为 1970-01-06；进程列表同时存在 `ntpd -g` 和 `/etc/init.d/S49ntp`，NTP 实际同步状态待查。
+- 系统已集成 SWUpdate：存在 `/etc/init.d/S98swupdate`、`/etc/swupdate/swupdate.cfg`，进程参数出现 `-e rootfs,rootfs-1`。这提示可能已有双 RootFS 更新配置，槽位映射和回滚能力必须先审计。
 - `/etc/fstab` 将 `/` 声明为 ext2 且 `noauto`，但运行时 `/proc/mounts` 为 ext4；早期用户空间挂载/重挂载流程待查。
 - p1、p3 的实际文件系统类型、内容和用途；当前 MBR 类型 ID 不能替代文件系统识别。
 - p3 后尾部区域是否可用于新增分区。
@@ -101,7 +102,14 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 - 原厂完整恢复镜像与恢复流程。
 - CMA 的实际设备依赖和可裁剪空间。
 
-## 8. G0-1B 补充结果
+## 8. G0-1C 补充结果
+
+- p1 在相对 512 MiB 和接近末尾的抽样位置出现 QML/XML 风格结构化文本；p1 不得视为全空或可回收。
+- p3 六个分散抽样点（约 1、4、8、128、256 MiB 和末尾附近）各 2 KiB 均为全零；这不等于全分区为空。
+- 系统存在 SWUpdate、swupdate-progress、S98swupdate，命令行出现 `rootfs` 与 `rootfs-1` selection。必须先审计现有 SWUpdate 与 bootloader 集成，再决定是否需要新增 A/B 机制。
+- `ntpd -g` 正在运行且存在 S49ntp，故 1970 时间问题应进一步核对 NTP 同步状态，不应直接断言无时间同步服务。
+
+## 9. G0-1B 补充结果
 
 - p1、p3 的 `blkid -p -o full` 均无识别输出；回显退出码为 0，但 BusyBox blkid 版本/退出码语义未核实，因此不将其当作识别成功。
 - p1、p3 前 2048 bytes 均为全零；这不证明整个分区全零，也不证明分区可回收。
@@ -109,7 +117,7 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 - RTC 与系统时间均显示 1970-01-06，需单独排查 RTC 供电、时钟源、驱动初始化和网络时间同步。
 - `/etc/fstab` 声明 `/dev/root / ext2 rw,noauto`，而运行时根挂载为 ext4。需追踪 BusyBox init/rcS 和 mount 流程；不能假设 fstab 负责首次根挂载。
 
-## 9. 后续只读补充采集
+## 10. 后续只读补充采集
 
 在开发板 Linux shell 执行；工具缺失时保留报错，不安装或修改系统：
 
