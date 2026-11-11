@@ -69,3 +69,58 @@ Kernel cmdline 指定 `root=/dev/mmcblk1p2 rootwait rw`。当前可确认实际�
 ## 6. G0 决策
 
 **不放行**任何分区修改、格式化、刷写、U-Boot 环境写入或 A/B 槽位分配。继续只读调查与主机端构建准备。
+
+
+## 7. G0-1C：分区抽样与现有 SWUpdate 线索
+
+**证据来源：** 后续开发板只读 shell 输出。抽样命令通过 `dd if=/dev/mmcblk1pX` 读取，每次 4×512-byte sectors，再由 `od` 显示；未向 eMMC 写入。
+
+### p1 抽样结果
+
+| p1 相对 sector | 相对偏移 | 结果 |
+|---:|---:|---|
+| 2,048 | 1 MiB | 2 KiB 全零 |
+| 8,192 | 4 MiB | 2 KiB 全零 |
+| 16,384 | 8 MiB | 2 KiB 全零 |
+| 1,048,576 | 512 MiB | 出现可读 ASCII/QML 风格文本 |
+| 2,047,996 | 分区末尾前 4 sectors | 出现 XML 风格 `internalNodes`、`leafValues` 等文本 |
+
+512 MiB 处可见 `edit.anchors.*Margin`、`Component.onCompleted`、`StyleItem`、`elementType: "spinbox"` 等字符串，具有 Qt Quick/QML 风格。分区末尾附近可见 `<internalNodes>`、`<leafValues>` 及数值数据。只能确认这些采样块含结构化文本；不能据此确定文件名、格式、所属软件或是否为可执行启动内容。
+
+### p3 抽样结果
+
+相对 sector 2,048、8,192、16,384、262,144、524,288、1,023,996（约 1、4、8、128、256 MiB 及分区末尾附近）对应的每个 2 KiB 样本均为全零。该结果只覆盖抽样点，不证明 p3 全分区为空。
+
+### 工具版本采集限制
+
+`blkid -V` 未产生可见版本信息；`busybox` 命令返回 not found。因此不能将系统环境简单描述为可直接调用 BusyBox 多调用程序，也不能根据先前 blkid 回显 exit=0 推导识别成功。后续应通过 `command -v blkid`、`readlink -f "$(command -v blkid)"`、`blkid --help` 等只读方式确认实际实现（命令不存在时保留错误）。
+
+### 现有 OTA / A-B 机制的关键线索
+
+开发板进程列表显示：
+- `/usr/bin/swupdate-progress -w -r`
+- `/usr/bin/swupdate -f /etc/swupdate/swupdate.cfg -L -e rootfs,rootfs-1 -u -c 1 -i BrImx6ullpro_01-8b0806700`（进程列表中出现两个 swupdate 进程条目）
+
+同时，`/etc/init.d/` 存在 `S98swupdate`。这表明当前系统已经集成 SWUpdate，且命令行出现 `rootfs` 与 `rootfs-1` 两个 software selection 名称。**这是调查现有双 RootFS / OTA 布局的强线索，但尚不能证明 A/B 已正确配置、当前槽位映射为何，或升级/回滚可用。**
+
+在设计新 A/B 方案前，必须先只读检查：
+- `/etc/swupdate/swupdate.cfg`
+- `/etc/swupdate/*`（仅列目录与查看非敏感配置；证书/私钥内容不得输出或提交）
+- `/etc/init.d/S98swupdate`
+- `/etc/fw_env.config`（如存在，注意记录存储偏移但不执行 fw_setenv）
+- `fw_printenv`（只读；若工具存在且输出含敏感信息，先脱敏）
+- U-Boot 的 bootcmd/bootargs 与当前启动槽位标识
+
+需确认 SWUpdate 的 software collections、rootfs/rootfs-1 对应设备、写入方式、bootloader integration、bootloader environment 变量、健康检查和回滚路径。禁止运行升级命令或写入 U-Boot 环境进行探测。
+
+### RTC / NTP 线索修正
+
+进程列表中存在 `/usr/sbin/ntpd -g`，且 init 脚本目录存在 `S49ntp`。因此目前只能确认采样时 RTC/系统时间为 1970-01-06，同时 NTP daemon 正在运行；不能据此断言系统没有时间同步服务或 NTP 一定失败。需要检查 NTP 配置、同步状态和启动日志。
+
+## 8. 更新后的 G0 决策
+
+- p1 已在 512 MiB 和接近末尾的抽样点发现结构化数据，不能视为空分区。
+- p3 的六个抽样点均为零，但尚未进行全分区扫描，也未确认厂商用途。
+- 系统已集成 SWUpdate，且出现 `rootfs`、`rootfs-1` selection 名称；必须先审计现有 OTA 设计，避免重复造轮子或破坏已有升级布局。
+- RTC 时间异常需要结合正在运行的 ntpd 和 `S49ntp` 一并调查。
+- G0 仍未放行。禁止格式化、重分区、刷写、执行 SWUpdate 升级或修改 U-Boot 环境。
