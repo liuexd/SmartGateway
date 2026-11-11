@@ -10,6 +10,21 @@
 - 第一阶段不升级 U-Boot 本体。
 - 所有分区写入和刷机动作必须经过恢复就绪门槛；当前仍处于只读核查和设计阶段。
 
+## G0-1：当前执行入口
+
+先在目标板运行只读采集脚本：
+
+```sh
+# 将脚本从仓库复制到板端 /tmp 后执行
+sh /tmp/collect_system_baseline.sh
+# 报告位置
+cat /tmp/sgw-g0-readonly-inventory.txt
+```
+
+脚本位于 [bsp/tools/collect_system_baseline.sh](../../tools/collect_system_baseline.sh)。它不挂载分区、不运行修复、不修改 U-Boot 环境，也不向 eMMC 写入。工具缺失会明确记录，不要为了补齐工具而先改造当前 RootFS。脚本有意不输出 eMMC serial/CID 等设备唯一标识；公开分享报告前仍应检查是否含有个人路径、网络信息或其他敏感内容。
+
+**本次只需回传报告内容。不要执行分区创建、格式化、dd 写入、saveenv 或 fw_setenv。**
+
 ## 文档导航
 
 | 文档 | 内容 | 状态 |
