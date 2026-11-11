@@ -94,12 +94,14 @@ Linux sysfs 的 size 和 start 以 512-byte sector 计。
 - p1、p3 内部文件系统、标签和用途仍未确认。抽样发现 p1 在相对 512 MiB 与接近末尾处含 QML/XML 风格结构化文本；p3 六个抽样点均为零，但未全盘扫描。
 - 原始 MBR 分区表备份及分区表之外的厂商元数据位置。
 - RTC/系统时间采样为 1970-01-06；进程列表同时存在 `ntpd -g` 和 `/etc/init.d/S49ntp`，NTP 实际同步状态待查。
-- 系统已集成 SWUpdate：存在 `/etc/init.d/S98swupdate`、`/etc/swupdate/swupdate.cfg`，进程参数出现 `-e rootfs,rootfs-1`。这提示可能已有双 RootFS 更新配置，槽位映射和回滚能力必须先审计。
+- 系统已集成 SWUpdate：`S98swupdate` 根据 `/proc/cmdline` 的 root 字段选择 `rootfs-1` 或 `rootfs-2` 更新集合；当前 p2 按脚本逻辑选择 `rootfs-1`。物理分区映射、启动切换与回滚能力仍待审计。
+- `/etc/fw_env.config` 为 `/dev/mmcblk1 0xe0000 0x2000`，即 eMMC user area byte offset 896 KiB、长度 8 KiB；尚未用 `fw_printenv` 验证环境内容，也未确认与 U-Boot 构建配置一致。
 - `/etc/fstab` 将 `/` 声明为 ext2 且 `noauto`，但运行时 `/proc/mounts` 为 ext4；早期用户空间挂载/重挂载流程待查。
 - p1、p3 的实际文件系统类型、内容和用途；当前 MBR 类型 ID 不能替代文件系统识别。
 - p3 后尾部区域是否可用于新增分区。
-- U-Boot 本体和环境变量的存储位置、偏移、大小及冗余方式。
+- U-Boot 本体存储位置；用户空间 `/etc/fw_env.config` 配置为 `/dev/mmcblk1` + `0xE0000`、大小 `0x2000`，但 U-Boot 编译配置是否一致、环境冗余方式仍待确认。
 - 原厂完整恢复镜像与恢复流程。
+- `S98swupdate` 中固定偏移解析 cmdline、未知 root 默认选择 `rootfs-2`、quoted 参数拼接及 `/bin/sh` 兼容性问题。
 - CMA 的实际设备依赖和可裁剪空间。
 
 ## 8. G0-1C 补充结果
