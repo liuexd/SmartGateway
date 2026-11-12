@@ -152,3 +152,16 @@ dmesg | grep -Ei 'cma|reserved memory|Memory:|mmc|EXT4-fs'
 - PID 298 的 PPid 为 286，二者 argv 相同，更符合父子派生关系，不应视为两个独立重复服务。
 - argv 证实 -u 后为一个包含空格的单独参数；需核实 SWUpdate 对该参数的解析。
 - 当前默认启动路径看起来固定使用 p2；是否存在 boot.scr 额外切换逻辑尚未检查。
+
+
+## 12. G0-2C SWUpdate CLI 语义补充
+
+- 板端 SWUpdate 版本为 2019.11.0（compiled Jul 21 2024）。
+- Suricatta `-c` 是 hawkBit 状态确认：1=AGAIN、2=SUCCESS、3=FAILED；不是本地 A/B 槽位切换命令。
+- `/update-ok` 影响下一次 Suricatta 的服务器确认状态；不能据此认定新 RootFS 已通过本地健康检查。
+- SWUpdate 帮助提供 `-M/--no-transaction-marker`，说明该构建具有 bootloader transaction marker 控制选项。marker 的具体后端、变量名、写入时机及 U-Boot 消费逻辑尚未确认。
+- `boot.scr` 的实际 U-Boot 加载位置由 `fatload mmc 1:2 ... boot.scr` 决定，即分区 1:2 根目录下的 `boot.scr`；此前检查 `/boot.scr`（Linux 根目录路径）与 `/boot/boot.scr` 的结果没有列出文件，但仍需准确确认分区根目录文件及其可见性。
+- 本次在 `/tmp /mnt /root /home` 搜索 `.swu` 与 `sw-description` 未发现结果，搜索范围不代表整机或主机端无升级包。
+- `dumpimage` 位于 `/usr/sbin/dumpimage`。
+
+当前仍不能证明原厂具备完整 A/B 启动切换、健康检查与失败回滚。需要审计匹配版本 SWUpdate transaction marker 源码、boot.scr 和 sw-description。
