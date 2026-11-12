@@ -301,3 +301,43 @@ NUL 分隔 argv 显示 `-u` 后面只有一个参数字符串：`-c 1 -i BrImx6u
 - 从原厂升级包或交付介质取得 `sw-description`，映射 `rootfs-1`、`rootfs-2` 的实际写入设备。
 - 在主机端审计 S98swupdate 对 Suricatta 子参数字符串的解析；不在运行中的设备上重启或重配 OTA 服务。
 - 不执行升级、`fw_setenv`、分区修改或刷写。
+
+
+## 12. G0-2D：U-Boot marker 候选变量与 boot.scr 路径核查
+
+**板端只读结果：**
+
+### U-Boot 环境变量筛查
+
+执行 `fw_printenv | grep -Ei 'ustate|update|upgrade|boot|rollback|recovery|transaction'`，匹配到：
+- `bootcmd`、`bootdelay`、`bootdir`、`bootscript`、`loadbootscript`、`mmcboot` 等常规启动变量；
+- `mmcpart=2`、`mmcroot=/dev/mmcblk1p2 rootwait rw`；
+- `update=yes` 与 `updateset=if test $update = undefined; then setenv update yes; saveenv; fi;`。
+
+未匹配到 `ustate`、`bootcount`、`bootlimit`、`upgrade_available`、`rollback` 或 `transaction` 等显式状态变量。筛查结果不能排除其他命名的变量、SWUpdate 自定义后端或 U-Boot 源码中的事务处理。
+
+`updateset` 仅在 `update` 未定义时初始化为 `yes` 并保存；不能把它解释为 A/B 槽位状态或升级成功标志。
+
+### boot.scr 检查
+
+- Linux 根目录下 `/boot.scr` 不存在。
+- `/boot/boot.scr` 不存在。
+- U-Boot 环境显示 `loadbootscript=fatload mmc ${mmcdev}:${mmcpart} ${loadaddr} ${script}`，其中 `mmcdev=1`、`mmcpart=2`、`script=boot.scr`。因此它尝试读取 eMMC 设备 1、分区 2 根目录下的 `boot.scr`，对应 Linux 当前根文件系统的根目录路径 `/boot.scr`，而不是 `/boot/boot.scr`。
+- 当前根文件系统已由 `/proc/mounts` 确认为 ext4；U-Boot 命令使用 `fatload`，通常用于 FAT 文件系统。该组合存在文件系统驱动不匹配风险；但要以此 U-Boot 构建的命令实现和启动日志验证实际行为。
+- `bootcmd` 的条件分支是：若 `loadbootscript` 成功则执行 `bootscript`；否则尝试 `loadimage`，再执行 `mmcboot`。当前未发现 `boot.scr`，因此常规预期路径是回退到从 p2 的 `/boot/zImage` 和 DTB 加载启动；仍需启动日志验证。
+- `dumpimage` 位于 `/usr/sbin/dumpimage`，但当前未发现可供分析的脚本文件。
+
+### 当前结论
+
+1. 未发现明确的 U-Boot A/B 状态变量或启动计数变量。
+2. 未发现 Linux 根目录 `/boot.scr` 或 `/boot/boot.scr`；按 U-Boot 配置实际目标应为 p2 根目录的 `/boot.scr`。
+3. 当前默认启动参数仍固定指向 p2；现有证据不支持“原厂已实现完整 A/B 启动回滚”的结论。
+4. SWUpdate 2019.11.0 的 `-M` 选项仍需源码审计，不能仅凭帮助文本断言其 transaction marker 的实现细节或板端是否启用。
+
+### 下一步只读工作
+
+- 获取与板端匹配的 U-Boot 2017.03 源码、defconfig 和构建配置，查明 `fatload`、`ext2load`、环境变量及启动流程。
+- 从板端启动日志确认 `fatload mmc 1:2 ... boot.scr` 是否失败，以及后续 Kernel/DTB 加载路径。
+- 获取匹配 SWUpdate 2019.11.0 源码，检查 transaction marker 相关实现和默认启用条件。
+- 获取原厂 `sw-description`，确认两个 mode 的实际写入目标。
+- 继续禁止 OTA 安装、`fw_setenv`、分区修改和刷写。
