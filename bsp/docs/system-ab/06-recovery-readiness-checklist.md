@@ -143,3 +143,18 @@
 - [ ] 获取匹配的 U-Boot 配置/源码，确认环境布局、启动计数及失败回滚实现。
 
 G0 仍未放行：不得执行 SWUpdate 安装、fw_setenv、分区修改或刷写。
+
+
+## G0-2C：SWUpdate CLI 与 transaction marker
+
+- [x] 确认 SWUpdate 版本 2019.11.0。
+- [x] 确认 Suricatta `-c`：1=AGAIN、2=SUCCESS、3=FAILED；修正此前将其视为本地启动状态的理解。
+- [x] 确认帮助中存在 `-M/--no-transaction-marker`，将 bootloader transaction marker 纳入后续源码审计。
+- [x] 确认 dumpimage 可用；此前 `/boot.scr`、`/boot/boot.scr` 未列出文件。
+- [x] 在 /tmp、/mnt、/root、/home 搜索未发现 `.swu` 或 `sw-description`；搜索范围有限。
+- [ ] 检查 U-Boot 实际尝试加载的分区 1:2 根目录 `boot.scr`，并离线分析，不执行脚本。
+- [ ] 审计 SWUpdate 2019.11.0 transaction marker 实现及 U-Boot 对应处理。
+- [ ] 获取原厂 `sw-description`，映射 rootfs-1/rootfs-2 的实际写入设备。
+- [ ] 确认 `/update-ok` 与 hawkBit 确认状态的完整生命周期；不得将其当成本地健康检查证据。
+
+G0 未放行；继续只读调查，不运行升级，不调用 fw_setenv，不修改分区或刷写。
