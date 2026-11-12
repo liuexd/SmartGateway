@@ -126,3 +126,20 @@
 - 结论及未解决问题。
 
 公开仓库只提交不含个人路径、账号、设备唯一标识、密钥或私有镜像的必要信息。
+
+
+## G0-2B SWUpdate / U-Boot 审计证据
+
+- [x] 读取 swupdate.cfg：确认 SWUpdate/Suricatta 配置、postupdatecmd、公钥路径、HTTP URL 与 nocheckcert=true。
+- [x] 读取 postupdate.sh：创建 /update-ok、sync、reboot；-c 参数确认协议待查。
+- [x] 确认 /bin/sh -> /bin/bash；脚本当前可用性与 POSIX 可移植性分开评估。
+- [x] fw_printenv 读取 mmcdev=1、mmcpart=2、mmcroot=p2；未定义 bootcount、bootlimit、upgrade_available。
+- [x] 确认 PID 298 PPid=286；两个相同 argv 进程更符合父子派生关系。
+- [x] 确认 SWUpdate -e rootfs,rootfs-1 表示 software set 与 mode，不代表已知物理分区。
+- [ ] 检查原厂 sw-description，映射 rootfs-1/rootfs-2 到实际写入设备。
+- [ ] 检查 /boot/boot.scr 内容及是否含槽位切换逻辑。
+- [ ] 核实 -u 参数单个 argv 字符串和 -c 参数的实际解析语义。
+- [ ] 审计 HTTP/nocheckcert=true 下的签名验证、设备身份认证与更新包完整性。
+- [ ] 获取匹配的 U-Boot 配置/源码，确认环境布局、启动计数及失败回滚实现。
+
+G0 仍未放行：不得执行 SWUpdate 安装、fw_setenv、分区修改或刷写。
