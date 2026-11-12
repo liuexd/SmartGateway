@@ -188,3 +188,74 @@ Kernel cmdline 指定 `root=/dev/mmcblk1p2 rootwait rw`。当前可确认实际�
 - `fw_printenv`（只读；网络密码、密钥、token 等先脱敏）
 - 对 PID 286、298 查看 `/proc/<PID>/status` 的 Name/PPid/State，以及 `od -An -tx1c /proc/<PID>/cmdline`，保留 NUL 边界
 - 查看 `/proc/mtd`、`/sys/block/mmcblk1/device/name` 等只读信息；不推测 U-Boot 本体位置
+
+
+## 10. G0-2B：SWUpdate 配置、U-Boot 环境与进程关系
+
+**证据来源：** 开发板只读命令输出。本轮未执行升级、未调用 `fw_setenv`、未修改启动介质。
+
+### SWUpdate 配置
+
+`/etc/swupdate/swupdate.cfg` 关键项：
+- `postupdatecmd = "/etc/swupdate/postupdate.sh"`
+- `public-key-file = "/etc/swupdate/swupdate-public.pem"`
+- download retries=1、timeout=30
+- Suricatta tenant=`default`、id=`BrImx6ullpro_01`
+- server URL 为 HTTP，`nocheckcert=true`，poll delay=360、retry=4、retrywait=200
+- `confirm=0`、`max_artifacts=1`
+
+安全审计项：配置使用明文 HTTP 且 `nocheckcert=true`，需确认签名校验覆盖范围、设备身份认证和传输安全边界；不能仅因配置有 public key 就推断所有下载内容均受到端到端保护。公开文档不应暴露设备凭据或私钥。
+
+### postupdate 行为
+
+`/etc/swupdate/postupdate.sh`：
+1. 创建 `/update-ok`；
+2. 执行 `sync`；
+3. 执行 `wait`；
+4. 打印提示并 `reboot`。
+
+与 `S98swupdate` 联合观察：服务启动时若发现 `/update-ok`，设置 `SURICATTA_ARGS="-c 2"` 并删除标记，否则设为 `-c 1`。这说明该标记参与下一次 Suricatta 启动参数选择；`-c` 的精确语义及更新确认协议仍须对照当前 SWUpdate 版本帮助/源码确认。不能将 `/update-ok` 直接等同于新槽健康检查成功。
+
+### Shell 解释器
+
+`/bin/sh -> bash`，`readlink -f /bin/sh` 为 `/bin/bash`。因此当前镜像上 `S98swupdate` 使用的 Bash 数组与 substring 扩展可能可运行；但脚本 shebang 为 `#!/bin/sh`，若换成 BusyBox ash/dash 等 POSIX shell 会有兼容性风险。应明确脚本运行时解释器，不能把它直接判定为当前板端必然失效。
+
+### U-Boot 环境
+
+`fw_printenv` 读到：
+- `mmcdev=1`
+- `mmcpart=2`
+- `mmcroot=/dev/mmcblk1p2 rootwait rw`
+- `bootcmd` 首先执行 `updateset`、`findfdt`、`findtee`，随后从指定 MMC 分区尝试加载启动脚本；失败时加载 Kernel 并运行 `mmcboot`。
+- `bootargs`、`bootcount`、`bootlimit`、`upgrade_available` 均未定义。
+
+按当前环境变量可确认默认启动参数固定指向 p2；尚未发现显式 A/B boot-slot 选择和 bootcount/bootlimit 自动回滚配置。不能据此排除 boot.scr 或其他未检查脚本中存在额外逻辑。
+
+### 重要语义澄清：SWUpdate `-e`
+
+命令行 `-e rootfs,rootfs-1` 应按 SWUpdate 的 software-set,mode 形式理解：`rootfs` 是 software set，`rootfs-1` 是该 set 下选择的 mode/collection。它不是“同时选择两个物理 RootFS 分区”的证据。必须检查 `sw-description` 中对应的 software set/modes 及其 `device`、`partition`、`device`/handler 等配置，才能映射到实际目标设备。
+
+### SWUpdate 进程关系与参数
+
+- PID 286：PPid=1。
+- PID 298：PPid=286。
+- 两者状态均为 sleeping，且 NUL 分隔 argv 相同。
+- 因 PID 298 的父进程为 286，当前证据更符合 SWUpdate 父子进程/派生进程关系，不应描述为两个独立重复启动实例；仍可通过 SWUpdate 日志和进程树进一步确认。
+
+NUL 分隔 argv 显示 `-u` 后面只有一个参数字符串：`-c 1 -i BrImx6ullpro_01-...`。这是脚本将 `${SURICATTA_ARGS} ${MMCCID}` 放在双引号内造成的单个 argv。需对照 SWUpdate 对 `-u` 的参数解析方式确认是否符合预期，不能仅凭 `ps` 的显示判定。
+
+### 当前架构结论（更新）
+
+1. 已证实系统集成 SWUpdate 和 Suricatta；更新选择脚本根据当前 root 字符串选择 `rootfs-1` 或 `rootfs-2` mode。
+2. `-e rootfs,rootfs-1` 中的 `rootfs-1` 是 SWUpdate mode 名称，不是物理分区名；当前物理写入目标仍未知。
+3. 当前 U-Boot 环境默认 `mmcpart=2`、`mmcroot=p2`，未发现 bootcount/bootlimit/upgrade_available；现有输出不足以证明完整 A/B 启动切换与自动回滚。
+4. `postupdate.sh` 创建 `/update-ok` 后重启；该标记影响下一次 SWUpdate 的 `-c` 参数，但健康确认语义待查。
+5. p1/p3 及尾部空间仍不得改动；G0 未放行。
+
+### 下一步只读调查
+
+- 在主机端原厂升级包中定位并检查 `sw-description`（不在设备上触发升级），查明 `rootfs` software set 下 `rootfs-1`、`rootfs-2` 的 images/files/scripts 和实际写入设备。
+- 查看板端是否存在 `/boot/boot.scr`，只复制/读取并在主机端反编译或用 U-Boot 工具检查；不要执行脚本。
+- 查看 `/etc/swupdate/postupdate.sh`、`S98swupdate` 的日志及 SWUpdate 版本：`swupdate -h` 或 `swupdate --help`（仅帮助查询）。
+- 查明 U-Boot 编译配置和源码中的环境偏移、启动脚本来源、bootcount 支持；不修改环境变量。
+- 不执行 `swupdate` 安装命令、`fw_setenv`、分区操作或刷写。
