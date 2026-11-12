@@ -259,3 +259,45 @@ NUL 分隔 argv 显示 `-u` 后面只有一个参数字符串：`-c 1 -i BrImx6u
 - 查看 `/etc/swupdate/postupdate.sh`、`S98swupdate` 的日志及 SWUpdate 版本：`swupdate -h` 或 `swupdate --help`（仅帮助查询）。
 - 查明 U-Boot 编译配置和源码中的环境偏移、启动脚本来源、bootcount 支持；不修改环境变量。
 - 不执行 `swupdate` 安装命令、`fw_setenv`、分区操作或刷写。
+
+
+## 11. G0-2C：SWUpdate 版本、确认语义与启动脚本检查
+
+### 版本与 CLI 语义（板端实测）
+
+- SWUpdate 版本：`2019.11.0`，编译日期 Jul 21 2024。
+- `-e/--select <software>,<mode>`：选择 software set 与 mode；`rootfs,rootfs-1` 不是物理分区名映射。
+- Suricatta 的 `-c/--confirm` 明确为服务器端状态确认：`1=AGAIN`、`2=SUCCESS`、`3=FAILED`。
+- `-M/--no-transaction-marker` 的帮助说明为“disable setting bootloader transaction marker”。因此该构建包含/暴露 bootloader transaction marker 控制选项；但仅凭帮助文本不能确认 marker 的变量名、存储介质、设置时机、U-Boot 是否读取它，以及是否构成启动回滚。
+- `-u` 在主 CLI 中用于启动 Suricatta；Suricatta 子参数另有 `-u/--url`。当前 S98swupdate 将多个子参数拼为一个带空格的 argv 传给主 `-u`，必须结合该版本源码/参数解析逻辑确认，不能把它解释为直接传递了独立的 `-c`、`-i` argv。
+
+### 对 /update-ok 的结论修正
+
+`S98swupdate` 根据 `/update-ok` 是否存在，选择 Suricatta 的 `-c 2` 或 `-c 1`。结合本次帮助输出：
+- `-c 2` 是向 hawkBit 报告 SUCCESS；
+- `-c 1` 是向 hawkBit 报告 AGAIN；
+- `/update-ok` 是影响服务器端确认状态的本地标记，不等同于本地 A/B 槽位切换，也不自动证明新系统已通过健康检查。
+- `postupdate.sh` 在升级后创建标记并重启；当前未看到在创建标记前执行 Gateway/Supervisor 健康检查的证据。
+
+### 启动脚本检查与文件搜索边界
+
+- `/boot.scr` 与 `/boot/boot.scr` 均未列出。
+- U-Boot 环境为 `script=boot.scr`、`loadbootscript=fatload mmc ${mmcdev}:${mmcpart} ${loadaddr} ${script}`。因此实际尝试位置是 MMC 分区 `1:2` 的文件系统根目录下 `boot.scr`，不是 `/boot/boot.scr`。当前检查尚未覆盖该准确位置，也未证明脚本不存在。
+- `dumpimage` 可用：`/usr/sbin/dumpimage`。
+- 在 `/tmp /mnt /root /home` 下搜索 `*.swu` 和 `sw-description` 未返回结果；只说明这些目录中本次搜索未发现文件，不代表整机或主机上没有升级包。
+
+### 当前判断更新
+
+1. 已确认 `-c` 是 hawkBit 状态确认参数，不是本地启动槽位控制。
+2. 已确认 SWUpdate 提供 bootloader transaction marker 选项；其实现与 U-Boot 集成仍待源码和环境证据确认。
+3. 默认 `mmcroot=p2` 仍然成立，但不能仅凭未定义 bootcount/bootlimit 就排除 transaction marker 或 boot.scr 中的其他机制。
+4. 原厂是否具备完整 A/B 启动切换、健康确认和失败回滚，仍未证实。
+
+### 下一步只读调查
+
+- 在板端准确检查 `/boot.scr`（根目录）以及 `/boot/boot.scr`；若根目录存在，使用 `dumpimage -l /boot.scr` 查看头信息，提取脚本只能在主机离线分析，禁止在 U-Boot 执行。
+- 检查 `/proc/mtd`、`fw_printenv` 全量输出及可公开的 U-Boot 构建信息；不要调用 `fw_setenv`。
+- 从匹配的 SWUpdate 2019.11.0 源码确认 transaction marker 的实现、marker 名称/后端、状态变化时机，以及其是否依赖 libubootenv。
+- 从原厂升级包或交付介质取得 `sw-description`，映射 `rootfs-1`、`rootfs-2` 的实际写入设备。
+- 在主机端审计 S98swupdate 对 Suricatta 子参数字符串的解析；不在运行中的设备上重启或重配 OTA 服务。
+- 不执行升级、`fw_setenv`、分区修改或刷写。
