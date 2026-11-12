@@ -165,3 +165,11 @@ dmesg | grep -Ei 'cma|reserved memory|Memory:|mmc|EXT4-fs'
 - `dumpimage` 位于 `/usr/sbin/dumpimage`。
 
 当前仍不能证明原厂具备完整 A/B 启动切换、健康检查与失败回滚。需要审计匹配版本 SWUpdate transaction marker 源码、boot.scr 和 sw-description。
+
+
+## 13. G0-2D：U-Boot marker 与 boot.scr 核查结果
+
+- `fw_printenv` 关键字筛查发现 `update=yes` 与 `updateset`，后者只在 update 未定义时初始化并保存 yes；未发现 ustate、bootcount、bootlimit、upgrade_available、rollback、transaction 等显式状态变量。
+- `/boot.scr`（当前根文件系统根目录）与 `/boot/boot.scr` 均不存在。U-Boot `fatload mmc 1:2 ... boot.scr` 的目标是 p2 根目录的 `/boot.scr`。
+- 当前 RootFS 为 ext4，而 U-Boot 启动脚本使用 `fatload`，存在文件系统类型不匹配风险；需结合 U-Boot 2017.03 构建配置与启动日志验证。`bootcmd` 在脚本加载失败时会尝试 `loadimage`/`mmcboot`。
+- 目前未发现完整 A/B 启动回滚证据；SWUpdate 2019.11.0 transaction marker 的实际实现和启用状态仍待匹配源码审计。
