@@ -158,3 +158,17 @@ G0 仍未放行：不得执行 SWUpdate 安装、fw_setenv、分区修改或刷�
 - [ ] 确认 `/update-ok` 与 hawkBit 确认状态的完整生命周期；不得将其当成本地健康检查证据。
 
 G0 未放行；继续只读调查，不运行升级，不调用 fw_setenv，不修改分区或刷写。
+
+
+## G0-2D：U-Boot marker / boot.scr 检查
+
+- [x] 关键字筛查未发现 ustate、bootcount、bootlimit、upgrade_available、rollback、transaction 等显式变量；发现 update=yes/updateset 初始化逻辑。
+- [x] 确认 updateset 只是初始化 update=yes，不是 A/B 槽位状态。
+- [x] 确认 `/boot.scr` 与 `/boot/boot.scr` 均不存在；U-Boot 实际尝试目标为 eMMC 1:2 根目录 `/boot.scr`。
+- [x] 记录 p2 RootFS 为 ext4，而启动脚本命令使用 fatload；文件系统不匹配风险待 U-Boot 日志/源码验证。
+- [ ] 获取 U-Boot 2017.03 匹配源码、defconfig 和构建配置，核实启动脚本加载及环境事务机制。
+- [ ] 通过启动日志验证 fatload 失败后是否进入 loadimage/mmcboot。
+- [ ] 审计 SWUpdate 2019.11.0 transaction marker 源码及默认启用条件。
+- [ ] 获取 sw-description，确认 rootfs-1/rootfs-2 物理写入目标。
+
+G0 仍未放行：不执行 SWUpdate 安装、fw_setenv、分区修改或刷写。
