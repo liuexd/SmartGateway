@@ -140,3 +140,15 @@ dmesg | grep -Ei 'cma|reserved memory|Memory:|mmc|EXT4-fs'
 ```
 
 不要为了运行缺失工具而修改 RootFS。p1/p3 内容检查优先使用只读挂载，并先确认文件系统类型；不得直接执行 fsck 修复、格式化或写入。
+
+
+## 11. G0-2B U-Boot / SWUpdate 只读审计结果
+
+- /bin/sh 指向 /bin/bash；当前脚本的 Bash 数组/substring 扩展在此镜像上具备解释器基础，但 shebang 可移植性仍需考虑。
+- SWUpdate 配置使用 postupdate.sh、public key，并启用 Suricatta；服务器 URL 为 HTTP 且 nocheckcert=true，需进一步审计签名与传输安全。
+- postupdate.sh 创建 /update-ok、sync 后重启；该标记影响下一次 S98swupdate 的 -c 参数，确认协议语义待核实。
+- fw_printenv 显示默认 mmcdev=1、mmcpart=2、mmcroot=/dev/mmcblk1p2 rootwait rw；bootcmd 从该分区尝试加载启动脚本或 Kernel。当前未发现 bootcount、bootlimit、upgrade_available。
+- SWUpdate -e rootfs,rootfs-1 中 rootfs 是 software set，rootfs-1 是 mode 名称；不是物理分区映射证据。
+- PID 298 的 PPid 为 286，二者 argv 相同，更符合父子派生关系，不应视为两个独立重复服务。
+- argv 证实 -u 后为一个包含空格的单独参数；需核实 SWUpdate 对该参数的解析。
+- 当前默认启动路径看起来固定使用 p2；是否存在 boot.scr 额外切换逻辑尚未检查。
