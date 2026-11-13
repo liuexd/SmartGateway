@@ -6,6 +6,16 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G1 & G2 — U-Boot A/B 启动管理与主机端验收（HOST-TESTED，未写板）
+
+- **G1 恢复基线与工程准备（HOST-VERIFIED）：**
+  - 在 `feature/imx6ull-system-ab-ota` 分支建立只读核查脚本 [bsp/tools/g1_check_host_env.sh](bsp/tools/g1_check_host_env.sh) 与防自毁只读备份校验脚本 [bsp/tools/g1_emmc_backup_verify.sh](bsp/tools/g1_emmc_backup_verify.sh)。
+  - 完整记录 `Uboot-2017.03`、`Linux-4.9.88`、`Buildroot_2020.02.x`、Linaro GCC 6.2.1 与 Buildroot GCC 7.5.0 工具链基线；不触碰开发板 eMMC 与现网 `p2`。
+- **G2 U-Boot A/B 启动与 Watchdog（HOST-TESTED）：**
+  - 完成 U-Boot 2017.03 审计：确认 `CONFIG_BOOTCOUNT_ENV` + `CONFIG_ENV_OFFSET_REDUND`（`0xE0000` + `0xE2000`）是当前硬件唯一支持冷断电持久化的计数后端。
+  - 新增隔离补丁与构建脚本 [bsp/uboot/patches/0001-mx6ullevk-ab-bootcount-redund-env-watchdog.patch](bsp/uboot/patches/0001-mx6ullevk-ab-bootcount-redund-env-watchdog.patch)、[bsp/uboot/build_uboot_ab.sh](bsp/uboot/build_uboot_ab.sh)，实现 `sgw_*` 状态机、`bootlimit=3`、`altbootcmd` 自动回滚、`panic=5` 与 `WDOG1` 60s 硬件看门狗。
+  - 新增 `sgw_bootctl` 工具与 C/Python 主机测试套件（隔离 `update`/`recovery_status`），全部通过主机测试并保持可交叉编译为 ARMv7 二进制；未经板端真机验证的功能均显式标为主机验证状态。
+
 ## 2026-11-11 — BSP 文档结构整理
 
 **文档体系从阶段编号平铺调整为按工程模块分类。**

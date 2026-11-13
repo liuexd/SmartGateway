@@ -15,6 +15,10 @@
 - [Kernel 与 Buildroot RootFS 定制](system-ab/04-kernel-and-rootfs-customization.md)
 - [系统 OTA 状态机](system-ab/05-system-ota-state-machine.md)
 - [恢复就绪检查表](system-ab/06-recovery-readiness-checklist.md)
+- [G1：恢复基线与工具链核查](system-ab/07-g1-recovery-baseline-and-toolchain.md)
+- [G2：U-Boot A/B 启动管理与 Watchdog](system-ab/08-g2-uboot-ab-boot-and-watchdog.md)
+- [G1 主机验收报告](validation/platform/G1-baseline-and-recovery-prep.md)
+- [G2 U-Boot A/B 主机验收报告](validation/ota/G2-uboot-ab-host-validation.md)
 
 ## 技术参考
 

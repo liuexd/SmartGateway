@@ -1,0 +1,133 @@
+--- a/include/configs/mx6ullevk.h
++++ b/include/configs/mx6ullevk.h
+@@ -121,7 +121,7 @@
+ #define CONFIG_EXTRA_ENV_SETTINGS \
+ 	CONFIG_MFG_ENV_SETTINGS \
+ 	TEE_ENV \
+-	"update=undefined\0" \
++	"update=yes\0" \
+ 	"script=boot.scr\0" \
+ 	"image=zImage\0" \
+ 	"console=ttymxc0\0" \
+@@ -143,7 +143,66 @@
+ 	"mmcautodetect=no\0" \
+ 	"mmcargs=setenv bootargs console=${console},${baudrate} " \
+ 		BOOTARGS_CMA_SIZE \
+-		"root=${mmcroot}\0" \
++		"root=${mmcroot} panic=5\0" \
++	"bootlimit=3\0" \
++	"bootcount=0\0" \
++	"upgrade_available=0\0" \
++	"sgw_active_slot=2\0" \
++	"sgw_last_good_slot=2\0" \
++	"sgw_pending_slot=none\0" \
++	"sgw_ab_state=confirmed\0" \
++	"sgw_rollback_count=0\0" \
++	"sgw_last_error=none\0" \
++	"ab_select_slot=" \
++		"if test \"${upgrade_available}\" = \"1\"; then " \
++			"if test \"${sgw_pending_slot}\" = \"1\" || test \"${sgw_pending_slot}\" = \"2\"; then " \
++				"setenv sgw_active_slot ${sgw_pending_slot}; " \
++				"setenv sgw_ab_state trial; " \
++			"fi; " \
++		"fi; " \
++		"if test \"${sgw_active_slot}\" = \"1\"; then " \
++			"setenv mmcpart 1; " \
++		"else " \
++			"if test \"${sgw_active_slot}\" = \"2\"; then " \
++				"setenv mmcpart 2; " \
++			"else " \
++				"echo [AB-OTA] Invalid sgw_active_slot, defaulting to p2; " \
++				"setenv sgw_active_slot 2; " \
++				"setenv sgw_last_good_slot 2; " \
++				"setenv mmcpart 2; " \
++			"fi; " \
++		"fi; " \
++		"setenv mmcroot /dev/mmcblk${mmcdev}p${mmcpart} rootwait rw; " \
++		"echo [AB-OTA] boot slot=${mmcpart} state=${sgw_ab_state} bootcount=${bootcount}/${bootlimit} upgrade_available=${upgrade_available};\0" \
++	"ab_boot_fallback=" \
++		"if test \"${upgrade_available}\" = \"1\"; then " \
++			"echo [AB-OTA] Trial boot failed, resetting to advance bootcount; " \
++			"reset; " \
++		"else " \
++			"run netboot; " \
++		"fi;\0" \
++	"altbootcmd=" \
++		"echo [AB-OTA] Bootlimit exceeded, rolling back to slot ${sgw_last_good_slot}; " \
++		"if test \"${sgw_last_good_slot}\" = \"1\" || test \"${sgw_last_good_slot}\" = \"2\"; then " \
++			"setenv sgw_active_slot ${sgw_last_good_slot}; " \
++		"else " \
++			"setenv sgw_active_slot 2; " \
++			"setenv sgw_last_good_slot 2; " \
++		"fi; " \
++		"setenv sgw_pending_slot none; " \
++		"setenv sgw_ab_state rolled_back; " \
++		"setenv sgw_last_error bootlimit_exceeded; " \
++		"setexpr sgw_rollback_count ${sgw_rollback_count} + 1; " \
++		"setenv upgrade_available 0; " \
++		"setenv bootcount 0; " \
++		"saveenv; " \
++		"run ab_select_slot; " \
++		"mmc dev ${mmcdev}; if mmc rescan; then " \
++			"if run loadimage; then " \
++				"run mmcboot; " \
++			"fi; " \
++		"fi; " \
++		"run netboot;\0" \
+ 	"loadbootscript=" \
+ 		"fatload mmc ${mmcdev}:${mmcpart} ${loadaddr} ${script};\0" \
+ 	"bootscript=echo Running bootscript from mmc ...; " \
+@@ -170,10 +229,6 @@
+ 				"bootz; " \
+ 			"fi; " \
+ 		"fi;\0" \
+-        "updateset="\
+-                "if test $update = undefined; then " \
+-                        "setenv update yes; saveenv; " \
+-                "fi;\0" \
+ 	"netargs=setenv bootargs console=${console},${baudrate} " \
+ 		BOOTARGS_CMA_SIZE \
+ 		"root=/dev/nfs " \
+@@ -196,7 +251,7 @@
+ 			"fi;\0" \
+ 
+ #define CONFIG_BOOTCOMMAND \
+-	   "run updateset;"\
++	   "run ab_select_slot;" \
+ 	   "run findfdt;" \
+ 	   "run findtee;" \
+ 	   "mmc dev ${mmcdev};" \
+@@ -206,10 +261,10 @@
+ 		   "else " \
+ 			   "if run loadimage; then " \
+ 				   "run mmcboot; " \
+-			   "else run netboot; " \
+ 			   "fi; " \
++			   "run ab_boot_fallback; " \
+ 		   "fi; " \
+-	   "else run netboot; fi"
++	   "else run ab_boot_fallback; fi"
+ #endif
+ 
+ /* Miscellaneous configurable options */
+@@ -284,6 +339,7 @@
+ #define CONFIG_ENV_SIZE			SZ_8K
+ #if defined(CONFIG_ENV_IS_IN_MMC)
+ #define CONFIG_ENV_OFFSET		(14 * SZ_64K)
++#define CONFIG_ENV_OFFSET_REDUND	(CONFIG_ENV_OFFSET + CONFIG_ENV_SIZE)
+ #elif defined(CONFIG_ENV_IS_IN_SPI_FLASH)
+ #define CONFIG_ENV_OFFSET		(896 * 1024)
+ #define CONFIG_ENV_SECT_SIZE		(64 * 1024)
+@@ -352,4 +408,11 @@
+ #define CONFIG_MODULE_FUSE
+ #define CONFIG_OF_SYSTEM_SETUP
+ 
+-#endif
++/* SmartGateway A/B persistent bootcount and hardware watchdog recovery */
++#define CONFIG_BOOTCOUNT_LIMIT
++#define CONFIG_BOOTCOUNT_ENV
++#define CONFIG_HW_WATCHDOG
++#define CONFIG_IMX_WATCHDOG
++#define CONFIG_WATCHDOG_TIMEOUT_MSECS	60000
++
++#endif

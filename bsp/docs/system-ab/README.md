@@ -39,6 +39,8 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 | [04-kernel-and-rootfs-customization.md](04-kernel-and-rootfs-customization.md) | Kernel、DTS、CMA 和 Buildroot 定制 | 实施计划，未实施 |
 | [05-system-ota-state-machine.md](05-system-ota-state-machine.md) | 系统 OTA、健康确认和自动回滚 | 设计方案，未实施 |
 | [06-recovery-readiness-checklist.md](06-recovery-readiness-checklist.md) | 恢复资料、分区、U-Boot 环境和备份检查 | 当前待办清单 |
+| [07-g1-recovery-baseline-and-toolchain.md](07-g1-recovery-baseline-and-toolchain.md) | G1 恢复基线、分支、工具链核查与只读备份方案 | HOST-VERIFIED；板端演练待执行 |
+| [08-g2-uboot-ab-boot-and-watchdog.md](08-g2-uboot-ab-boot-and-watchdog.md) | G2 U-Boot A/B 状态机、bootcount 持久化、冗余 env 与 Watchdog | HOST-TESTED；未写板 |
 
 ## 当前板端事实
 
