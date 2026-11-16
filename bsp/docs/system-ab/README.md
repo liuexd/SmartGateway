@@ -51,6 +51,7 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 | [06-recovery-readiness-checklist.md](06-recovery-readiness-checklist.md) | 恢复资料、分区、U-Boot 环境和备份检查 | 当前待办清单 |
 | [07-g1-recovery-baseline-and-toolchain.md](07-g1-recovery-baseline-and-toolchain.md) | G1 恢复基线、分支、工具链核查与只读备份方案 | HOST-VERIFIED；板端演练待执行 |
 | [08-g2-uboot-ab-boot-and-watchdog.md](08-g2-uboot-ab-boot-and-watchdog.md) | G2 U-Boot A/B 状态机、bootcount 持久化、冗余 env 与 Watchdog | HOST-TESTED；未写板 |
+| [09-g3-kernel-and-rootfs-trimming.md](09-g3-kernel-and-rootfs-trimming.md) | G3-0 内核基线复现与 G3 Linux 4.9.88 / CMA / Buildroot 2020.02 裁剪 | HOST-TESTED；未写板 |
 
 ## 当前板端事实
 

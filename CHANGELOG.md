@@ -6,6 +6,12 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G3-0 & G3 — Linux 4.9.88 内核与 Buildroot 2020.02 RootFS 裁剪定制（HOST-TESTED，未写板）
+
+- **G3-0 裁剪前基线与 G3 内核/DTS 裁剪：** 新增隔离构建脚本 [bsp/kernel/build_kernel_g3.sh](bsp/kernel/build_kernel_g3.sh)、DTS CMA 裁剪补丁 [bsp/kernel/patches/0001-dts-trim-cma-from-320m-to-32m.patch](bsp/kernel/patches/0001-dts-trim-cma-from-320m-to-32m.patch)（`linux,cma` `320 MiB -> 32 MiB`，释放 `288 MiB`）及内核配置片段 [bsp/kernel/g3_trimmed.fragment](bsp/kernel/g3_trimmed.fragment)（保留全部 BSP 驱动、`ap3216@1e`、ConfigFS ADB、FEC/RTL8723BU WiFi、eMMC/ext4、WDOG1 与 `perf` 钩子）。实测 `zImage` 由 `8,873,360 B` 降至 `4,848,520 B`（`-45.4%`），`vmlinux` `text+data+bss` 降至 `9,365,578 B`（`-49.5%`），模块体积由 `3,304,232 B` 降至 `1,131,700 B`（`-65.7%`），5 个外部 `.ko` 均兼容编出。
+- **G3 Buildroot 2020.02 RootFS 裁剪与 Overlay 集成：** 新增 [bsp/rootfs/g3_trimmed_defconfig](bsp/rootfs/g3_trimmed_defconfig)、[bsp/rootfs/post_build_g3.sh](bsp/rootfs/post_build_g3.sh)、[bsp/rootfs/build_rootfs_g3.sh](bsp/rootfs/build_rootfs_g3.sh)、兼容补丁 [bsp/rootfs/br_patches/](bsp/rootfs/br_patches/) 与审计清单 [bsp/rootfs/g3_package_audit.md](bsp/rootfs/g3_package_audit.md)。剔除 Qt5/LLVM/Mesa/LVGL/PulseAudio/ALSA/BlueZ5/`eudev hwdb.bin` 等冗余组件，`defconfig` 包从 `136` 精简至 `35`（解析包 `315 -> 152`），`rootfs.ext4` 规格 `128 MiB`（`-O ^metadata_csum`，实际文件 payload `31,401,349 B`），集成 `adbd`、`swupdate`、冗余 `fw_printenv`、`sgw_bootctl`/`sgw_watchdog_guard`/`sgw_system_health`、`service_supervisor`、`smart_gateway`、`ota_agent` 与 `gdbserver`。
+- **主机回归与边界：** 新增 [tests/test_g3_kernel_rootfs.py](tests/test_g3_kernel_rootfs.py)（`2/2 OK`），写入 [09-g3-kernel-and-rootfs-trimming.md](bsp/docs/system-ab/09-g3-kernel-and-rootfs-trimming.md) 与 [G3-kernel-and-rootfs-trimming.md](bsp/docs/validation/platform/G3-kernel-and-rootfs-trimming.md)；上板启动耗时与真实 `/proc/meminfo` 标记为 `NOT RUN / PENDING BOARD`。
+
 ## G1 & G2 P0/P1 安全加固与证据边界对齐（HOST-TESTED，未写板）
 
 - **G1 备份保护加固（P0）：** `g1_emmc_backup_verify.sh` 在创建目录前检查目标所在文件系统，修复板端 `df` 返回 `/dev/root` 时可能漏判 eMMC 根挂载的问题，默认 Fail-Closed 拒绝向未证明离板的 `/dev/root` 写入；新增 `tests/test_g1_backup_guard.py`。

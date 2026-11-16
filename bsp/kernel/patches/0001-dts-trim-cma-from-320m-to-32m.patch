@@ -1,0 +1,11 @@
+--- a/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
++++ b/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
+@@ -31,7 +31,7 @@
+         linux,cma {
+             compatible = "shared-dma-pool";
+             reusable;
+-            size = <0x14000000>;
++            size = <0x02000000>; /* G3 trimmed: 32 MiB CMA (was 320 MiB) */
+             linux,cma-default;
+         };
+     };

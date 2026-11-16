@@ -1,0 +1,21 @@
+--- a/lib/c-stack.c
++++ b/lib/c-stack.c
+@@ -50,15 +50,9 @@
+ #if ! HAVE_STACK_T && ! defined stack_t
+ typedef struct sigaltstack stack_t;
+ #endif
+-#ifndef SIGSTKSZ
+-# define SIGSTKSZ 16384
+-#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
+-/* libsigsegv 2.6 through 2.8 have a bug where some architectures use
+-   more than the Linux default of an 8k alternate stack when deciding
+-   if a fault was caused by stack overflow.  */
+-# undef SIGSTKSZ
+-# define SIGSTKSZ 16384
+-#endif
++/* glibc 2.34+ defines SIGSTKSZ as sysconf(_SC_SIGSTKSZ), which is not a constant expr */
++#undef SIGSTKSZ
++#define SIGSTKSZ 16384
+ 
+ #include <stdlib.h>
+ #include <string.h>

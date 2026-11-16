@@ -4,6 +4,10 @@
 
 ## 当前开发文档
 
+### 项目整体规划
+
+- [SmartGateway 完整项目规划](project-roadmap/complete-project-plan.md)：既有成果、G0–G6 阶段任务、G2-R3C 可信确认闭环、恢复与板端验收门槛。
+
 ### System customization and A/B OTA
 
 `system-ab/` 是当前开发主线，覆盖平台基线、U-Boot、存储布局、Kernel/RootFS 定制和系统 OTA。
@@ -19,6 +23,8 @@
 - [G2：U-Boot A/B 启动管理与 Watchdog](system-ab/08-g2-uboot-ab-boot-and-watchdog.md)
 - [G1 主机验收报告](validation/platform/G1-baseline-and-recovery-prep.md)
 - [G2 U-Boot A/B 主机验收报告](validation/ota/G2-uboot-ab-host-validation.md)
+- [G3：Linux 4.9.88 内核与 Buildroot RootFS 裁剪定制](system-ab/09-g3-kernel-and-rootfs-trimming.md)
+- [G3 内核与根文件系统裁剪主机验收报告](validation/platform/G3-kernel-and-rootfs-trimming.md)
 
 ## 技术参考
 
