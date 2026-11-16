@@ -1,8 +1,11 @@
 CC := gcc
 CFLAGS := -std=gnu11 -O0 -g -Wall -Wextra -Werror
 
-SRCS := sgw_bootctl.c ab_state.c fw_env_backend.c
-HDRS := ab_state.h fw_env_backend.h
+COMMON_DIR := ../../../common
+INC_FLAGS := -I. -I$(COMMON_DIR)
+
+COMMON_SRCS := ab_state.c ab_health.c fw_env_backend.c $(COMMON_DIR)/service_ipc.c
+COMMON_HDRS := ab_state.h ab_health.h fw_env_backend.h $(COMMON_DIR)/service_ipc.h
 
 ARM_SDK_DIR ?= $(HOME)/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot
 ARM_CROSS   ?= $(ARM_SDK_DIR)/bin/arm-buildroot-linux-gnueabihf-
@@ -15,32 +18,42 @@ TEST_TIMEOUT ?= 60
 
 .PHONY: all clean clean-arm arm arm-check test
 
-all: sgw_bootctl
+all: sgw_bootctl sgw_watchdog_guard
 
-sgw_bootctl: $(SRCS) $(HDRS)
-	$(CC) $(CFLAGS) -I. $(SRCS) -o $@
+sgw_bootctl: sgw_bootctl.c $(COMMON_SRCS) $(COMMON_HDRS)
+	$(CC) $(CFLAGS) $(INC_FLAGS) sgw_bootctl.c $(COMMON_SRCS) -o $@
+
+sgw_watchdog_guard: sgw_watchdog_guard.c $(COMMON_SRCS) $(COMMON_HDRS)
+	$(CC) $(CFLAGS) $(INC_FLAGS) sgw_watchdog_guard.c $(COMMON_SRCS) -o $@
 
 arm:
 	@mkdir -p $(ARM_BUILD_DIR)
 	$(ARM_CC) $(CFLAGS) \
 		$(ARM_ARCH_FLAGS) \
 		--sysroot=$(ARM_SYSROOT) \
-		-I. \
-		$(SRCS) \
+		$(INC_FLAGS) \
+		sgw_bootctl.c $(COMMON_SRCS) \
 		-o $(ARM_BUILD_DIR)/sgw_bootctl
-	@ls -lh $(ARM_BUILD_DIR)/sgw_bootctl
+	$(ARM_CC) $(CFLAGS) \
+		$(ARM_ARCH_FLAGS) \
+		--sysroot=$(ARM_SYSROOT) \
+		$(INC_FLAGS) \
+		sgw_watchdog_guard.c $(COMMON_SRCS) \
+		-o $(ARM_BUILD_DIR)/sgw_watchdog_guard
+	@ls -lh $(ARM_BUILD_DIR)/sgw_bootctl $(ARM_BUILD_DIR)/sgw_watchdog_guard
 
 arm-check: arm
-	@$(ARM_CROSS)readelf -h $(ARM_BUILD_DIR)/sgw_bootctl \
-		| grep -E "Class|Machine|Type"
-	@$(ARM_CROSS)readelf -d $(ARM_BUILD_DIR)/sgw_bootctl \
-		| grep NEEDED || true
-	@$(ARM_CROSS)readelf --version-info $(ARM_BUILD_DIR)/sgw_bootctl \
-		| grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1 || true
+	@for bin in sgw_bootctl sgw_watchdog_guard; do \
+		echo "== $$bin =="; \
+		$(ARM_CROSS)readelf -h $(ARM_BUILD_DIR)/$$bin | grep -E "Class|Machine|Type"; \
+		$(ARM_CROSS)readelf -d $(ARM_BUILD_DIR)/$$bin | grep NEEDED || true; \
+		$(ARM_CROSS)readelf --version-info $(ARM_BUILD_DIR)/$$bin | grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1 || true; \
+	done
 
-test: ab_state_test fw_env_backend_test sgw_bootctl
+test: ab_state_test fw_env_backend_test ab_health_test sgw_bootctl sgw_watchdog_guard
 	@timeout $(TEST_TIMEOUT) ./ab_state_test
 	@timeout $(TEST_TIMEOUT) ./fw_env_backend_test
+	@timeout $(TEST_TIMEOUT) ./ab_health_test
 
 ab_state_test: tests/ab_state_test.c ab_state.c ab_state.h
 	$(CC) $(CFLAGS) -I. tests/ab_state_test.c ab_state.c -o $@
@@ -48,8 +61,11 @@ ab_state_test: tests/ab_state_test.c ab_state.c ab_state.h
 fw_env_backend_test: tests/fw_env_backend_test.c fw_env_backend.c fw_env_backend.h ab_state.c ab_state.h
 	$(CC) $(CFLAGS) -I. tests/fw_env_backend_test.c fw_env_backend.c ab_state.c -o $@
 
+ab_health_test: tests/ab_health_test.c ab_health.c ab_health.h ab_state.c ab_state.h $(COMMON_DIR)/service_ipc.c $(COMMON_DIR)/service_ipc.h
+	$(CC) $(CFLAGS) $(INC_FLAGS) tests/ab_health_test.c ab_health.c ab_state.c $(COMMON_DIR)/service_ipc.c -o $@
+
 clean:
-	rm -f sgw_bootctl ab_state_test fw_env_backend_test
+	rm -f sgw_bootctl sgw_watchdog_guard ab_state_test fw_env_backend_test ab_health_test
 
 clean-arm:
 	rm -rf $(ARM_BUILD_DIR)

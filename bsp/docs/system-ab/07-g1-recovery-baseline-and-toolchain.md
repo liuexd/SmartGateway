@@ -47,7 +47,7 @@ G1 建立可追溯、可恢复的开发基线，不再以原厂 `.swu` 或 `sw-d
 
 新增板端只读采集与校验脚本 [bsp/tools/g1_emmc_backup_verify.sh](../../tools/g1_emmc_backup_verify.sh)：
 
-1. **只读保护**：对 `/dev/mmcblk1` 仅执行只读读取，拒绝将备份目标目录置于 `/dev/mmcblk1*`。
+1. **只读保护（含 `/dev/root` 与 Fail-Closed 防护）**：在创建任何输出目录前，先向上解析目标祖先路径并检查 `df` 与 `/proc/mounts`、`/proc/cmdline`。不仅拦截 `/dev/mmcblk1*`，当板端返回 `/dev/root` 或 `rootfs` 时同样结合 `/proc/cmdline` 检查——仅在明确证明根设备位于 `/dev/mmcblk0*`/`/dev/sd*`/`/dev/nfs*` 等非 eMMC 介质时放行，**默认按 Fail-Closed 拒绝向 `/dev/root` 写入**（由 `tests/test_g1_backup_guard.py` 回归覆盖）。
 2. **`metadata` 模式**（默认）：导出 `sfdisk -d`、`fdisk -l`、`fw_printenv`、`/proc/partitions`、`/proc/mounts` 以及 `pre-p1` 前 `4,098` sectors（`emmc-reserved-pre-p1.bin`），生成并校验 `SHA256SUMS`。
 3. **`full` 模式**：备份 `p1`/`p2`/`p3` 及 `boot0`/`boot1` 并执行 `sha256sum -c SHA256SUMS`。脚本默认检测 `/` 若以 `rw` 挂载在 `mmcblk1p2` 则拒绝生成 `full` 镜像（防止不一致快照），要求从外部 SD 恢复介质启动或以 `ro` 只读重挂后采集（显式传入 `--allow-rw-snapshot` 仅用于非一致性诊断）。
 4. **恢复路径顺序**：

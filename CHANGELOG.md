@@ -6,6 +6,12 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G1 & G2 P0/P1 安全加固与证据边界对齐（HOST-TESTED，未写板）
+
+- **G1 备份保护加固（P0）：** `g1_emmc_backup_verify.sh` 在创建目录前检查目标所在文件系统，修复板端 `df` 返回 `/dev/root` 时可能漏判 eMMC 根挂载的问题，默认 Fail-Closed 拒绝向未证明离板的 `/dev/root` 写入；新增 `tests/test_g1_backup_guard.py`。
+- **G2 Fail-Closed 健康确认与 Watchdog 守护（P0）：** 移除 `sgw_bootctl confirm` 的 `health_ok=1` 默认值，新增 `ab_health.c` 校验 `/proc/cmdline` + `/proc/mounts` 运行槽位、系统文件及 `service_supervisor` 实时 IPC 存活 PID；新增 `sgw_watchdog_guard` 接管 `/dev/watchdog` 并验证超时停喂不写 `'V'` 魔术字复位路径。
+- **单份环境迁移与编号统一（P1 / 文档）：** 新增 `migrate_single_to_redund_env.sh` 与单区->双区迁移实测；统一 `02-g1-g6-implementation-plan.md` 与当前阶段编号，明确 G3 裁剪前须先完成裁剪前基线构建（G3-0），并单独列出板端真机待补齐项（外部 SD 启动备份、真机 U-Boot `bootcmd`、`p1` 启动与 `WDOG1` 冷断电串口日志）。
+
 ## G1 & G2 — U-Boot A/B 启动管理与主机端验收（HOST-TESTED，未写板）
 
 - **G1 恢复基线与工程准备（HOST-VERIFIED）：**

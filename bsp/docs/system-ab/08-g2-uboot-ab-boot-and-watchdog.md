@@ -70,7 +70,10 @@
 1. **U-Boot 阶段**：启用 `CONFIG_HW_WATCHDOG`、`CONFIG_IMX_WATCHDOG` 及 `CONFIG_WATCHDOG_TIMEOUT_MSECS=60000`（`WDOG1` 硬件倒计时 60 秒；写 `WCR.WDE` 后在下次 POR/复位前不可由软件关闭）。U-Boot 串口命令行及加载路径内置 `WATCHDOG_RESET()` 喂狗，不会妨碍串口调试。
 2. **Linux 内核与挂载失败恢复**：`mmcargs` 增加 `panic=5`。若新槽位内核 panic、缺少 ext4 rootfs 或缺少 `/sbin/init`，内核 5 秒后强制复位；若发生早期死锁无反应，`WDOG1` 在 60 秒内强制硬件复位。
 3. **关键内核细节与用户态看门狗交接**：审计 Linux 4.9.88 `watchdog_dev.c` 可知，当 `WDOG1` 已在 U-Boot 启动且用户态尚未打开 `/dev/watchdog` 时，`watchdog_need_worker()` 返回真，内核工作队列会在后台持续自动喂狗；一旦用户态打开 `/dev/watchdog`，`WDOG_ACTIVE` 置位，内核停止自动喂狗并由用户态守护进程接管心跳。
-   - **试启动健康超时策略**：试启动阶段早期用户态守护打开 `/dev/watchdog`，仅在核心服务健康检查通过并执行 `sgw_bootctl confirm` 期间正常喂狗；若超过试启动健康预算（`ab_watchdog_trial_expired()` 判定过期）仍未确认成功，守护停止喂狗（或主动停止不发送 magic close），触发 `WDOG1` 硬件复位，使 `bootcount` 累加并经 3 次失败后由 `altbootcmd` 自动回滚至旧槽位。
+   - **试启动健康超时与可信提交实现**：新增 `ab_health.c`、`sgw_watchdog_guard.c` 与 SysV 脚本 `S15sgw_ab_guard`：
+     - `sgw_bootctl confirm` **默认拒绝（`health_ok=0` fail-closed）**，已移除不校验即放行的默认开关；提交前强制由 `ab_detect_running_slot()`（联合解析 `/proc/cmdline` `root=/dev/mmcblk1p1|p2` 与 `/proc/mounts` `/`）确认真实运行槽位，并经 `common/service_ipc.c` 向 `service_supervisor` 发起 `SERVICE_IPC_STATUS` 校验服务存活与 PID 存在，任一项不匹配即拒绝确认。
+     - `sgw_watchdog_guard` 在早期启动即打开 `/dev/watchdog`（设置 `WDIOC_SETTIMEOUT` 并终止内核 worker 自动喂狗），轮询 `ab_verify_system_health()`；健康通过才确认状态并写 `'V'`（或稳态续喂）；超出 `--budget-ms` 仍未健康则记录 `sgw_last_error=health_timeout`、**停喂且不写入 `'V'` 魔术字关闭**，由硬件 `WDOG1` 复位递增 `bootcount`。
+   - **单份环境向冗余环境安全迁移**：提供 `bsp/uboot/migrate_single_to_redund_env.sh`，先用单区工具读取并校验旧 `0xE0000`（4B CRC）环境变量（保留 `ethaddr`/`eth1addr`/`panel`/`update` 等），再以双写方式初始化 `0xE0000` + `0xE2000` 5 字节冗余 CRC32+flags 双副本。
 
 ## 4. 代码与构建产物
 

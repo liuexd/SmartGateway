@@ -1,4 +1,5 @@
 #include "ab_state.h"
+#include "ab_health.h"
 #include "fw_env_backend.h"
 
 #include <errno.h>
@@ -9,12 +10,14 @@
 static void print_usage(const char *prog)
 {
     fprintf(stderr,
-            "Usage: %s [-c fw_env.config] <command> [options]\n"
+            "Usage: %s [-c fw_env.config] [--run-dir dir] [--cmdline path] [--mounts path] [--sysroot dir] <command> [options]\n"
             "Commands:\n"
             "  status [--json]\n"
             "  validate\n"
-            "  stage --target <1|2> --running <1|2>\n"
-            "  confirm --running <1|2> [--health-ok <0|1>]\n"
+            "  running-slot\n"
+            "  health-check\n"
+            "  stage --target <1|2> [--running <1|2>]\n"
+            "  confirm [--running <1|2>]\n"
             "  rollback [--reason <text>]\n"
             "  watchdog-check --elapsed-ms <n> --budget-ms <n> [--health-confirmed <0|1>]\n",
             prog);
@@ -94,21 +97,35 @@ static void print_status(const ab_env_t *env, int valid, const char *err, int as
 int main(int argc, char **argv)
 {
     fw_env_backend_cfg_t cfg;
+    ab_health_cfg_t hcfg;
     ab_env_t env;
     char errbuf[256] = {0};
     int idx = 1;
     const char *cmd;
 
     fw_env_backend_cfg_from_env(&cfg);
+    ab_health_cfg_init(&hcfg);
 
-    while (idx < argc && (strcmp(argv[idx], "-c") == 0 ||
-                          strcmp(argv[idx], "--config") == 0)) {
-        if (idx + 1 >= argc) {
-            print_usage(argv[0]);
-            return 2;
+    while (idx < argc) {
+        if ((strcmp(argv[idx], "-c") == 0 || strcmp(argv[idx], "--config") == 0) &&
+            idx + 1 < argc) {
+            cfg.config_path = argv[idx + 1];
+            idx += 2;
+        } else if (strcmp(argv[idx], "--run-dir") == 0 && idx + 1 < argc) {
+            hcfg.supervisor_run_dir = argv[idx + 1];
+            idx += 2;
+        } else if (strcmp(argv[idx], "--cmdline") == 0 && idx + 1 < argc) {
+            hcfg.proc_cmdline_path = argv[idx + 1];
+            idx += 2;
+        } else if (strcmp(argv[idx], "--mounts") == 0 && idx + 1 < argc) {
+            hcfg.proc_mounts_path = argv[idx + 1];
+            idx += 2;
+        } else if (strcmp(argv[idx], "--sysroot") == 0 && idx + 1 < argc) {
+            hcfg.sysroot_prefix = argv[idx + 1];
+            idx += 2;
+        } else {
+            break;
         }
-        cfg.config_path = argv[idx + 1];
-        idx += 2;
     }
 
     if (idx >= argc) {
@@ -155,6 +172,17 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (strcmp(cmd, "running-slot") == 0) {
+        ab_slot_t detected = AB_SLOT_NONE;
+        if (ab_detect_running_slot(&hcfg, &detected, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "RUNNING SLOT ERROR: %s\n", errbuf);
+            return 1;
+        }
+        printf("running_slot=%s device=%s\n",
+               ab_slot_str(detected), ab_slot_device(detected));
+        return 0;
+    }
+
     if (fw_env_backend_load(&cfg, &env, errbuf, sizeof(errbuf)) != 0) {
         fprintf(stderr, "ERROR: %s\n", errbuf);
         return 1;
@@ -190,9 +218,25 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (strcmp(cmd, "health-check") == 0) {
+        ab_slot_t detected = AB_SLOT_NONE;
+        unsigned long long svc_pid = 0;
+
+        if (ab_verify_system_health(&hcfg, &env, &detected, &svc_pid,
+                                    errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "HEALTH FAILED: %s\n", errbuf);
+            return 1;
+        }
+        printf("HEALTH_OK slot=%s device=%s supervisor_service_pid=%llu\n",
+               ab_slot_str(detected), ab_slot_device(detected), svc_pid);
+        return 0;
+    }
+
     if (strcmp(cmd, "stage") == 0) {
         ab_slot_t target = AB_SLOT_NONE;
-        ab_slot_t running = AB_SLOT_NONE;
+        ab_slot_t caller_running = AB_SLOT_NONE;
+        ab_slot_t detected_running = AB_SLOT_NONE;
+        int has_caller_running = 0;
 
         while (idx < argc) {
             if (strcmp(argv[idx], "--target") == 0 && idx + 1 < argc) {
@@ -200,15 +244,26 @@ int main(int argc, char **argv)
                     return 2;
                 idx += 2;
             } else if (strcmp(argv[idx], "--running") == 0 && idx + 1 < argc) {
-                if (ab_slot_parse(argv[idx + 1], &running) != 0)
+                if (ab_slot_parse(argv[idx + 1], &caller_running) != 0)
                     return 2;
+                has_caller_running = 1;
                 idx += 2;
             } else {
                 print_usage(argv[0]);
                 return 2;
             }
         }
-        if (ab_stage_trial(&env, target, running, errbuf, sizeof(errbuf)) != 0) {
+        if (ab_detect_running_slot(&hcfg, &detected_running, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "STAGE ERROR: %s\n", errbuf);
+            return 1;
+        }
+        if (has_caller_running && caller_running != detected_running) {
+            fprintf(stderr,
+                    "STAGE ERROR: caller --running %s disagrees with verified OS root slot %s\n",
+                    ab_slot_str(caller_running), ab_slot_str(detected_running));
+            return 1;
+        }
+        if (ab_stage_trial(&env, target, detected_running, errbuf, sizeof(errbuf)) != 0) {
             fprintf(stderr, "STAGE ERROR: %s\n", errbuf);
             return 1;
         }
@@ -225,23 +280,36 @@ int main(int argc, char **argv)
     }
 
     if (strcmp(cmd, "confirm") == 0) {
-        ab_slot_t running = AB_SLOT_NONE;
-        int health_ok = 1;
+        ab_slot_t caller_running = AB_SLOT_NONE;
+        ab_slot_t detected_running = AB_SLOT_NONE;
+        unsigned long long svc_pid = 0;
+        int has_caller_running = 0;
+        int health_ok = 0; /* FAIL-CLOSED by default */
 
         while (idx < argc) {
             if (strcmp(argv[idx], "--running") == 0 && idx + 1 < argc) {
-                if (ab_slot_parse(argv[idx + 1], &running) != 0)
+                if (ab_slot_parse(argv[idx + 1], &caller_running) != 0)
                     return 2;
-                idx += 2;
-            } else if (strcmp(argv[idx], "--health-ok") == 0 && idx + 1 < argc) {
-                health_ok = atoi(argv[idx + 1]) ? 1 : 0;
+                has_caller_running = 1;
                 idx += 2;
             } else {
                 print_usage(argv[0]);
                 return 2;
             }
         }
-        if (ab_confirm_trial(&env, running, health_ok, errbuf, sizeof(errbuf)) != 0) {
+        if (ab_verify_system_health(&hcfg, &env, &detected_running, &svc_pid,
+                                    errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
+            return 1;
+        }
+        if (has_caller_running && caller_running != detected_running) {
+            fprintf(stderr,
+                    "CONFIRM REJECTED: caller --running %s disagrees with verified OS root slot %s\n",
+                    ab_slot_str(caller_running), ab_slot_str(detected_running));
+            return 1;
+        }
+        health_ok = 1;
+        if (ab_confirm_trial(&env, detected_running, health_ok, errbuf, sizeof(errbuf)) != 0) {
             fprintf(stderr, "CONFIRM ERROR: %s\n", errbuf);
             return 1;
         }
@@ -249,10 +317,11 @@ int main(int argc, char **argv)
             fprintf(stderr, "SAVE ERROR: %s\n", errbuf);
             return 1;
         }
-        printf("CONFIRMED active=%s last_good=%s state=%s\n",
+        printf("CONFIRMED active=%s last_good=%s state=%s service_pid=%llu\n",
                ab_slot_str(env.active_slot),
                ab_slot_str(env.last_good_slot),
-               ab_state_str(env.ab_state));
+               ab_state_str(env.ab_state),
+               svc_pid);
         return 0;
     }
 

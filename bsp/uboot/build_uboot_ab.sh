@@ -41,6 +41,15 @@ git -C "$WORK_SRC" config user.email "build@smartgateway.local"
 git -C "$WORK_SRC" config user.name "SmartGateway Build"
 git -C "$WORK_SRC" add -A
 git -C "$WORK_SRC" commit -q -m "base $(git -C "$UBOOT_SRC" rev-parse --short HEAD)"
+SINGLE_HOST_OUT="$OUT_ROOT/host-single"
+mkdir -p "$SINGLE_HOST_OUT"
+echo "=== Building legacy single-env host fw_printenv (for migration testing) ==="
+make -C "$WORK_SRC" ARCH=arm CROSS_COMPILE="$LINARO_CROSS" mx6ull_14x14_evk_defconfig >/dev/null
+make -C "$WORK_SRC" ARCH=arm CC=gcc STRIP=strip env >/dev/null
+cp "$WORK_SRC/tools/env/fw_printenv" "$SINGLE_HOST_OUT/fw_printenv"
+ln -sf fw_printenv "$SINGLE_HOST_OUT/fw_setenv"
+make -C "$WORK_SRC" distclean >/dev/null
+
 git -C "$WORK_SRC" apply --check "$PATCH_FILE"
 git -C "$WORK_SRC" apply "$PATCH_FILE"
 

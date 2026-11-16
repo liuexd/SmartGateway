@@ -1,0 +1,28 @@
+#!/bin/sh
+# Early boot trial guard for Buildroot SysV init (/etc/init.d/S15sgw_ab_guard).
+# Starts BEFORE S99smartgateway so sgw_watchdog_guard opens /dev/watchdog,
+# cancels the Linux kernel auto-ping worker, and awaits S99 service_supervisor
+# health before confirming a trial boot (or lets WDOG1 reset after 45s).
+
+DAEMON=/usr/bin/sgw_watchdog_guard
+PIDFILE=/var/run/sgw_watchdog_guard.pid
+
+case "$1" in
+    start)
+        if [ -x "$DAEMON" ]; then
+            echo "Starting sgw_watchdog_guard..."
+            start-stop-daemon -S -b -m -p "$PIDFILE" -x "$DAEMON" --                 -c /etc/fw_env.config --wdt-dev /dev/watchdog                 --timeout-s 60 --budget-ms 45000 --poll-ms 1000 --exit-on-confirm
+        fi
+        ;;
+    stop)
+        # Never send SIGKILL/magic-close recklessly during trial; steady stop only.
+        if [ -f "$PIDFILE" ]; then
+            kill "$(cat "$PIDFILE")" 2>/dev/null || true
+            rm -f "$PIDFILE"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}" >&2
+        exit 1
+        ;;
+esac
