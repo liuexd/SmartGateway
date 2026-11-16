@@ -31,6 +31,8 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 
 ## G2-R3 系统健康检查
 
+[G2-R3B 主机增量验收](../validation/ota/G2-R3B-trusted-health-integration.md)：本地组件探针、设备与网络诊断、原始日志及尚未完成的 DATA/可信事务；HOST-ACCEPTED 和板端放行均为 BLOCKED。
+
 [只读诊断、健康模型与未关闭事项](../validation/ota/G2-R3-health-agent.md)：必需检查项、Supervisor 身份核验、DATA/事务缺口与测试边界。生产确认仍关闭。
 
 ## G1/G2 主机安全整改

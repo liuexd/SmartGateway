@@ -5,4 +5,7 @@ fw_env_backend_test
 ab_health_test
 sgw_system_health
 supervisor_probe_cli
+gateway_probe_cli
 system_health_test
+health_devices_test
+health_network_test

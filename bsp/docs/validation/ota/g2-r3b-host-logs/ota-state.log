@@ -1,0 +1,4 @@
+=== Test 1: save STAGED ===
+=== Test 2: update ACTIVATED ===
+=== Test 3: begin new upgrade ===
+PASS: state IO module tests

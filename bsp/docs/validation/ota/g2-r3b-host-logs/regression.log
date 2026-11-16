@@ -1,0 +1,63 @@
+test_block_readonly_flag_is_required (tests.test_g1_backup_guard.TopologyTests.test_block_readonly_flag_is_required) ... ok
+test_copy_checks_full_length_and_readback (tests.test_g1_backup_guard.TopologyTests.test_copy_checks_full_length_and_readback) ... ok
+test_destination_on_emmc_rejected_before_directory_creation (tests.test_g1_backup_guard.TopologyTests.test_destination_on_emmc_rejected_before_directory_creation) ... ok
+test_device_mapper_to_emmc_is_rejected (tests.test_g1_backup_guard.TopologyTests.test_device_mapper_to_emmc_is_rejected) ... ok
+test_direct_and_uuid_alias_have_same_underlying_identity (tests.test_g1_backup_guard.TopologyTests.test_direct_and_uuid_alias_have_same_underlying_identity) ... ok
+test_malformed_mountinfo_rejected (tests.test_g1_backup_guard.TopologyTests.test_malformed_mountinfo_rejected) ... ok
+test_missing_p3_aborts_validation (tests.test_g1_backup_guard.TopologyTests.test_missing_p3_aborts_validation) ... ok
+test_p2_rw_at_nonroot_mount_fails (tests.test_g1_backup_guard.TopologyTests.test_p2_rw_at_nonroot_mount_fails) ... ok
+test_read_only_emmc_and_external_sd_allowed (tests.test_g1_backup_guard.TopologyTests.test_read_only_emmc_and_external_sd_allowed) ... ok
+test_rejects_existing_target_and_missing_parent (tests.test_g1_backup_guard.TopologyTests.test_rejects_existing_target_and_missing_parent) ... ok
+test_unknown_and_overlay_fail_closed (tests.test_g1_backup_guard.TopologyTests.test_unknown_and_overlay_fail_closed) ... ok
+test_both_redundant_copies_corrupt_fails_closed (tests.test_g2_uboot_ab.TestG2UbootAB.test_both_redundant_copies_corrupt_fails_closed) ... ok
+test_fail_closed_confirm_and_trusted_health_checks (tests.test_g2_uboot_ab.TestG2UbootAB.test_fail_closed_confirm_and_trusted_health_checks) ... ok
+test_redundant_env_powerloss_corruption_recovery (tests.test_g2_uboot_ab.TestG2UbootAB.test_redundant_env_powerloss_corruption_recovery) ... ok
+test_single_to_redundant_env_migration (tests.test_g2_uboot_ab.TestG2UbootAB.test_single_to_redundant_env_migration) ... ok
+test_trial_bootlimit_rollback_and_swupdate_isolation (tests.test_g2_uboot_ab.TestG2UbootAB.test_trial_bootlimit_rollback_and_swupdate_isolation) ... ok
+test_uboot_2017_03_backends_and_compiled_scripts (tests.test_g2_uboot_ab.TestG2UbootAB.test_uboot_2017_03_backends_and_compiled_scripts) ... ok
+test_watchdog_guard_takeover_confirm_and_timeout_reset_path (tests.test_g2_uboot_ab.TestG2UbootAB.test_watchdog_guard_takeover_confirm_and_timeout_reset_path) ... ok
+test_actual_supervisor_socket_and_child_identity (tests.test_g2r3_health.G2R3Tests.test_actual_supervisor_socket_and_child_identity) ... ok
+test_diagnostic_never_confirms_or_trusts_cli_health_flags (tests.test_g2r3_health.G2R3Tests.test_diagnostic_never_confirms_or_trusts_cli_health_flags) ... ERROR
+test_gateway_not_owned_by_supervisor_rejected (tests.test_g2r3_health.G2R3Tests.test_gateway_not_owned_by_supervisor_rejected) ... ok
+test_stale_pid_stopped_and_timeout_rejected (tests.test_g2r3_health.G2R3Tests.test_stale_pid_stopped_and_timeout_rejected) ... ok
+test_symlink_in_untrusted_parent_is_rejected (tests.test_g2r3_health.G2R3Tests.test_symlink_in_untrusted_parent_is_rejected) ... ok
+test_writable_socket_directory_is_rejected (tests.test_g2r3_health.G2R3Tests.test_writable_socket_directory_is_rejected) ... ok
+test_wrong_peer_uid_and_wrong_gateway_executable_rejected (tests.test_g2r3_health.G2R3Tests.test_wrong_peer_uid_and_wrong_gateway_executable_rejected) ... ok
+
+======================================================================
+ERROR: test_diagnostic_never_confirms_or_trusts_cli_health_flags (tests.test_g2r3_health.G2R3Tests.test_diagnostic_never_confirms_or_trusts_cli_health_flags)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/sgw-g2r3b-GCn1u7/repo/tests/test_g2r3_health.py", line 174, in test_diagnostic_never_confirms_or_trusts_cli_health_flags
+    result = subprocess.run([str(AGENT), "--once"], capture_output=True, text=True, timeout=5)
+  File "/usr/lib/python3.14/subprocess.py", line 555, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 1875, in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                      p2cread, p2cwrite,
+                      ^^^^^^^^^^^^^^^^^^
+                      c2pread, c2pwrite,
+                      ^^^^^^^^^^^^^^^^^^
+                      errread, errwrite)
+                      ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 1819, in _posix_spawn
+    self.pid = os.posix_spawn(executable, args, env, **kwargs)
+               ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: '/tmp/sgw-g2r3b-GCn1u7/repo/bsp/apps/boot_ab/sgw_system_health'
+
+----------------------------------------------------------------------
+Ran 25 tests in 1.123s
+
+FAILED (errors=1)

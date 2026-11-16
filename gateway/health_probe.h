@@ -1,0 +1,22 @@
+#ifndef SGW_GATEWAY_HEALTH_PROBE_H
+#define SGW_GATEWAY_HEALTH_PROBE_H
+
+#include "device_manager.h"
+#include "message_queue.h"
+
+/* Local-only read-only diagnostic, serviced by Gateway's existing main loop. */
+typedef struct {
+    int fd;
+    char path[108];
+    unsigned long long socket_device;
+    unsigned long long socket_inode;
+} gateway_health_listener_t;
+
+void gateway_health_listener_init(gateway_health_listener_t *listener);
+int gateway_health_listener_open(gateway_health_listener_t *listener);
+void gateway_health_listener_service(gateway_health_listener_t *listener,
+                                     message_queue_t *queue,
+                                     device_manager_t *devices);
+void gateway_health_listener_close(gateway_health_listener_t *listener);
+
+#endif

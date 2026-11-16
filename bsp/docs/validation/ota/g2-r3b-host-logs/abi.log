@@ -1,0 +1,18 @@
+== ELF 架构 ==
+build/arm-d25/smart_gateway: ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-armhf.so.3, for GNU/Linux 4.9.0, with debug_info, not stripped
+== 动态解释器 ==
+      [Requesting program interpreter: /lib/ld-linux-armhf.so.3]
+== 依赖库 ==
+ 0x00000001 (NEEDED)                     Shared library: [libpthread.so.0]
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+== ABI 属性 ==
+  Tag_CPU_arch: v7
+  Tag_CPU_arch_profile: Application
+  Tag_FP_arch: VFPv4
+  Tag_ABI_VFP_args: VFP registers
+== 所需 glibc 符号版本 ==
+GLIBC_2.4
+GLIBC_2.10
+GLIBC_2.17
+GLIBC_2.28
+production-test-override-absent

@@ -173,10 +173,14 @@ class G2R3Tests(unittest.TestCase):
     def test_diagnostic_never_confirms_or_trusts_cli_health_flags(self):
         result = subprocess.run([str(AGENT), "--once"], capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 3)
-        self.assertIn("overall=UNKNOWN", result.stdout)
+        self.assertTrue("overall=UNKNOWN" in result.stdout or
+                        "overall=UNHEALTHY" in result.stdout)
         self.assertIn("confirmation=DISABLED", result.stdout)
-        for item in ("gateway_business", "gpio", "ap3216_i2c", "local_network", "data"):
+        for item in ("gateway_business", "local_network", "data"):
             self.assertIn(item + "=UNKNOWN", result.stdout)
+        for item in ("gpio", "ap3216_i2c"):
+            self.assertTrue(any(item + "=" + value in result.stdout
+                                for value in ("HEALTHY", "UNHEALTHY", "UNKNOWN")))
         result = subprocess.run([str(AGENT), "--health-ok", "1"], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
 

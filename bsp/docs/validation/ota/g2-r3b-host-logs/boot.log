@@ -1,0 +1,45 @@
+make: Entering directory '/tmp/sgw-g2r3b-GCn1u7/repo/bsp/apps/boot_ab'
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/health_devices_test.c health_devices.c -o health_devices_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c -o sgw_system_health
+ab_state_test: PASS=100 FAIL=0
+fw_env_backend_test: PASS=31 FAIL=0
+ab_health_test: FAIL=0; unverified roots and missing health rejected
+system_health_test: checks=195 failures=0
+health_devices_test: checks=21 failures=0
+health_network_test: checks=5 failures=0
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror \
+	-mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm \
+	--sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
+	-I. -I../../../common \
+	sgw_bootctl.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
+	-o ../../../build/arm-ab/sgw_bootctl
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror \
+	-mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm \
+	--sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
+	-I. -I../../../common \
+	sgw_watchdog_guard.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
+	-o ../../../build/arm-ab/sgw_watchdog_guard
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
+	-I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
+	-o ../../../build/arm-ab/sgw_system_health
+-rwxrwxr-x 1 ubuntu ubuntu 82K Nov 16 16:22 ../../../build/arm-ab/sgw_bootctl
+-rwxrwxr-x 1 ubuntu ubuntu 96K Nov 16 16:22 ../../../build/arm-ab/sgw_watchdog_guard
+== sgw_bootctl ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.28
+== sgw_watchdog_guard ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.28
+== sgw_system_health ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.28
+make: Leaving directory '/tmp/sgw-g2r3b-GCn1u7/repo/bsp/apps/boot_ab'

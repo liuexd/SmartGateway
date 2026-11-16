@@ -1,0 +1,82 @@
+========================================================================
+S5 端到端：Service Supervisor 与 IPC
+========================================================================
+
+========================================================================
+用例一：supervisor 未运行时的错误提示
+========================================================================
+FAIL: cannot reach service supervisor
+      /tmp/sgw-g2r3b-GCn1u7/repo/build/s5-test/e2e/run/supervisor.sock does not exist
+      the supervisor is not running
+
+[PASS] 未运行时返回失败: exit=1
+[PASS] 指出 socket 不存在（而非笼统的连接失败）
+
+========================================================================
+用例二：完整生命周期
+========================================================================
+[PASS] supervisor 已启动并创建 socket
+[PASS] 初始状态为 stopped: status: stopped pid=0 starttime=0
+start: OK started
+
+[PASS] start 成功: exit=0
+[PASS] Gateway 端口已就绪
+[PASS] Gateway 进程存在: pids=[285338]
+[PASS] pidfile 已写入: 285338 122904543
+[PASS] pidfile 的 pid 与实际进程一致: pidfile=285338 actual=285338
+start: ALREADY already running (pid=285338)
+
+[PASS] 重复 start 返回幂等（ALREADY 或 OK）: start: ALREADY already running (pid=285338)
+[PASS] 重复 start 未产生第二个实例: count=1
+stop: OK stopped
+
+[PASS] stop 成功: exit=0
+[PASS] Gateway 已退出: pids=[]
+[PASS] 端口已释放
+[PASS] pidfile 已清理
+[PASS] 重复 stop 不报失败: exit=0
+
+========================================================================
+用例三：Gateway 崩溃后的状态一致性
+========================================================================
+[PASS] 重新启动成功
+[PASS] Gateway 在运行
+status: stopped pid=0 starttime=0
+
+[PASS] 崩溃后 STATUS 报告 stopped: status: stopped pid=0 starttime=0
+[PASS] 崩溃后 pidfile 已清理
+[PASS] 崩溃后可重新启动: start: OK started
+
+========================================================================
+用例四：忽略 SIGTERM -> SIGKILL
+========================================================================
+[PASS] 构造忽略 SIGTERM 的进程
+[PASS] 顽固进程启动成功: start: OK started
+[PASS] 顽固进程在运行: pids=[285363]
+stop: OK stopped (SIGKILL)
+
+[PASS] stop 最终成功: exit=0
+[PASS] 顽固进程确实已终止: remaining=0
+[PASS] 耗时包含 SIGTERM 宽限期: elapsed=3.04s
+[PASS] 报告使用 SIGKILL: stop: OK stopped (SIGKILL)
+
+========================================================================
+用例五：supervisor 崩溃后的陈旧 socket
+========================================================================
+[PASS] supervisor 启动
+[PASS] 崩溃后 socket 文件残留
+status: stopped pid=0 starttime=0
+
+[PASS] 陈旧 socket 自动恢复，supervisor 可用: status: stopped pid=0 starttime=0
+
+========================================================================
+用例六：重复 supervisor 被拒绝
+========================================================================
+FAIL: another supervisor is already running
+
+[PASS] 第二个 supervisor 被拒绝: exit=1
+[PASS] 报告已有实例在运行: FAIL: another supervisor is already running
+
+========================================================================
+合计 33 项, 通过 33, 失败 0
+结论: PASS

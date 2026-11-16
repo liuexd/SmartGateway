@@ -50,7 +50,7 @@ static int path_components(const char *path, uid_t uid, int socket_file,
     return 0;
 }
 
-static int trusted_path(const char *path, uid_t uid, int socket_file)
+int sgw_health_trusted_path(const char *path, uid_t uid, int socket_file)
 {
     char resolved[PATH_MAX];
     if (!path || path_components(path, uid, socket_file, 1) != 0 ||
@@ -68,8 +68,8 @@ static int same_process_executable(pid_t pid, const char *expected)
            live.st_ino == file.st_ino;
 }
 
-static int process_snapshot(pid_t pid, char *state, pid_t *ppid,
-                            unsigned long long *start)
+int sgw_health_process_snapshot(pid_t pid, char *state, pid_t *ppid,
+                                unsigned long long *start)
 {
     char path[64], buf[2048], *end, *token, *save = NULL;
     FILE *fp;
@@ -135,7 +135,8 @@ int sgw_health_supervisor_status(const char *socket_path,
                                  const char *gateway_executable,
                                  uid_t trusted_uid,
                                  int timeout_ms,
-                                 pid_t *gateway_pid)
+                                 pid_t *gateway_pid,
+                                 unsigned long long *gateway_starttime)
 {
     struct sockaddr_un addr;
     struct ucred peer;
@@ -150,12 +151,13 @@ int sgw_health_supervisor_status(const char *socket_path,
     static const char request[] = "STATUS\n";
 
     if (gateway_pid) *gateway_pid = 0;
+    if (gateway_starttime) *gateway_starttime = 0;
     if (!socket_path || !supervisor_executable || !gateway_executable ||
         timeout_ms <= 0 || timeout_ms > 10000 ||
         strlen(socket_path) >= sizeof(addr.sun_path) ||
-        trusted_path(socket_path, trusted_uid, 1) != 0 ||
-        trusted_path(supervisor_executable, trusted_uid, 0) != 0 ||
-        trusted_path(gateway_executable, trusted_uid, 0) != 0)
+        sgw_health_trusted_path(socket_path, trusted_uid, 1) != 0 ||
+        sgw_health_trusted_path(supervisor_executable, trusted_uid, 0) != 0 ||
+        sgw_health_trusted_path(gateway_executable, trusted_uid, 0) != 0)
         return -1;
     start = monotonic_ms();
     if (start < 0) return -1;
@@ -174,7 +176,7 @@ int sgw_health_supervisor_status(const char *socket_path,
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &len) != 0 ||
         len != sizeof(peer) || peer.uid != trusted_uid || peer.pid <= 1 ||
         !same_process_executable(peer.pid, supervisor_executable) ||
-        process_snapshot(peer.pid, &peer_state, &peer_parent, &peer_start) != 0 ||
+        sgw_health_process_snapshot(peer.pid, &peer_state, &peer_parent, &peer_start) != 0 ||
         peer_state == 'Z' || peer_state == 'X' || peer_state == 'x') goto out;
 
     while (sent < sizeof(request) - 1) {
@@ -197,20 +199,21 @@ int sgw_health_supervisor_status(const char *socket_path,
     line[used] = '\0';
     if (service_ipc_decode_reply(line, &reply) != 0 ||
         reply.result != SERVICE_IPC_OK || reply.pid <= 1 || reply.starttime == 0 ||
-        process_snapshot(reply.pid, &state, &parent, &started) != 0 ||
+        sgw_health_process_snapshot(reply.pid, &state, &parent, &started) != 0 ||
         state == 'Z' || state == 'X' || state == 'x' ||
         parent != peer.pid || started != reply.starttime ||
         !same_process_executable(reply.pid, gateway_executable) ||
-        process_snapshot(reply.pid, &state2, &parent2, &started2) != 0 ||
+        sgw_health_process_snapshot(reply.pid, &state2, &parent2, &started2) != 0 ||
         state2 == 'Z' || state2 == 'X' || state2 == 'x' ||
         parent2 != parent || started2 != started ||
-        process_snapshot(peer.pid, &peer_state2, &peer_parent2, &peer_start2) != 0 ||
+        sgw_health_process_snapshot(peer.pid, &peer_state2, &peer_parent2, &peer_start2) != 0 ||
         peer_state2 == 'Z' || peer_state2 == 'X' || peer_state2 == 'x' ||
         peer_parent2 != peer_parent || peer_start2 != peer_start ||
         !same_process_executable(peer.pid, supervisor_executable) ||
         !same_process_executable(reply.pid, gateway_executable))
         goto out;
     if (gateway_pid) *gateway_pid = reply.pid;
+    if (gateway_starttime) *gateway_starttime = started;
     rc = 0;
 out:
     if (fd >= 0) close(fd);

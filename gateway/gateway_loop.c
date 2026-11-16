@@ -8,6 +8,7 @@
 #include "message_queue.h"
 #include "server_link.h"
 #include "device_manager.h"
+#include "health_probe.h"
 
 #include  <stdlib.h>
 #include <errno.h>
@@ -38,6 +39,7 @@ int gateway_loop_run(
     // wifi_node-gateway通信专用
     //后续由于程序改为多线程，导致wifi_buffer、wifi_length、client_fd只属于每个work自己
     int wifi_listen_fd;
+    gateway_health_listener_t health_listener;
     wifi_worker_group_t wifi_workers;
 
     device_manager_t device_manager;
@@ -123,6 +125,10 @@ int gateway_loop_run(
         return -1;
     }
 
+    /* Open before creating worker threads so temporary umask changes are safe. */
+    gateway_health_listener_init(&health_listener);
+    (void)gateway_health_listener_open(&health_listener);
+
     server_context.gateway_context = context;
     server_context.upstream_queue = &upstream_queue;
     server_context.running = running;
@@ -139,6 +145,7 @@ int gateway_loop_run(
                 "[SERVER LINK] pthread_create failed: %s\n",
                 strerror(pthread_result));
 
+                gateway_health_listener_close(&health_listener);
                 message_queue_destroy(&upstream_queue);
 
                 wifi_worker_group_destroy(&wifi_workers);
@@ -178,6 +185,7 @@ int gateway_loop_run(
                     "[BT] pthread_create failed: %s\n",
                     strerror(pthread_result)
                 );
+                gateway_health_listener_close(&health_listener);
                 message_queue_shutdown(&upstream_queue);
 
                 if(server_thread_created)
@@ -206,15 +214,18 @@ int gateway_loop_run(
             *   - 北向 TCP        -> server_link_worker
             *   - WiFi 客户端数据 -> wifi_client_worker
             */
-        struct pollfd pollfds;
+        struct pollfd pollfds[2];
         int poll_result;
 
-        pollfds.fd = wifi_listen_fd;
-        pollfds.events = POLLIN;
-        pollfds.revents = 0;
+        pollfds[0].fd = wifi_listen_fd;
+        pollfds[0].events = POLLIN;
+        pollfds[0].revents = 0;
+        pollfds[1].fd = health_listener.fd;
+        pollfds[1].events = POLLIN;
+        pollfds[1].revents = 0;
 
 
-        poll_result = poll(&pollfds, 1, 1000);
+        poll_result = poll(pollfds, 2, 1000);
 
         if (poll_result < 0)
         {
@@ -236,7 +247,17 @@ int gateway_loop_run(
             continue;
         }
 
-        if ((pollfds.revents & POLLIN) != 0)
+        if ((pollfds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            gateway_health_listener_close(&health_listener);
+        }
+        else if ((pollfds[1].revents & POLLIN) != 0)
+        {
+            gateway_health_listener_service(&health_listener, &upstream_queue,
+                                            &device_manager);
+        }
+
+        if ((pollfds[0].revents & POLLIN) != 0)
         {
             int new_client_fd;
 
@@ -317,6 +338,7 @@ int gateway_loop_run(
     /*
      * 退出主循环后清理WiFi资源。不再接收新的wifi节点进行连接
      */
+    gateway_health_listener_close(&health_listener);
     wifi_server_close(wifi_listen_fd);
 
     printf("[BT] waitting for Bluetooth worker...\n");

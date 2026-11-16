@@ -13,6 +13,12 @@ int sgw_health_supervisor_status(const char *socket_path,
                                  const char *gateway_executable,
                                  uid_t trusted_uid,
                                  int timeout_ms,
-                                 pid_t *gateway_pid);
+                                 pid_t *gateway_pid,
+                                 unsigned long long *gateway_starttime);
+
+/* Shared identity primitives; no user-controlled production paths. */
+int sgw_health_trusted_path(const char *path, uid_t uid, int socket_file);
+int sgw_health_process_snapshot(pid_t pid, char *state, pid_t *ppid,
+                                unsigned long long *starttime);
 
 #endif

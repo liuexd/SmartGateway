@@ -1,0 +1,5 @@
+Test upstream port: 51863
+Gateway PID: 285233
+Probe sent: node=OTA01, seq=275308458
+Gateway exit code: 0
+PASS: OTA L2 business health
