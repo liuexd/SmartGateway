@@ -29,6 +29,10 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 
 **本次只需回传报告内容。不要执行分区创建、格式化、dd 写入、saveenv 或 fw_setenv。**
 
+## G2-R3 系统健康检查
+
+[只读诊断、健康模型与未关闭事项](../validation/ota/G2-R3-health-agent.md)：必需检查项、Supervisor 身份核验、DATA/事务缺口与测试边界。生产确认仍关闭。
+
 ## G1/G2 主机安全整改
 
 [最新安全整改与未关闭事项](../validation/ota/G1-G2-host-safety-remediation.md)：根设备及备份安全检查、主机测试证据、尚未实现的可信健康服务和板端阻断项。

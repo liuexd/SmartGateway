@@ -116,6 +116,32 @@ int main(void)
     ASSERT_STREQ(env.swu_update, "yes");
     ASSERT_STREQ(env.swu_recovery_status, "idle_sentinel");
 
+    /* Missing, duplicated or malformed state must not inherit C defaults. */
+    {
+        FILE *fp = fopen(store_path, "w");
+        ASSERT_TRUE(fp != NULL);
+        fputs("sgw_active_slot=2\n", fp);
+        fclose(fp);
+        ASSERT_TRUE(fw_env_backend_load(&cfg, &env, err, sizeof(err)) != 0);
+
+        fp = fopen(store_path, "w");
+        ASSERT_TRUE(fp != NULL);
+        fputs("sgw_active_slot=2\nsgw_active_slot=1\n"
+              "sgw_last_good_slot=2\nsgw_pending_slot=none\n"
+              "sgw_ab_state=confirmed\nbootlimit=3\nbootcount=0\n"
+              "upgrade_available=0\n", fp);
+        fclose(fp);
+        ASSERT_TRUE(fw_env_backend_load(&cfg, &env, err, sizeof(err)) != 0);
+
+        fp = fopen(store_path, "w");
+        ASSERT_TRUE(fp != NULL);
+        fputs("sgw_active_slot=2\nsgw_last_good_slot=2\n"
+              "sgw_pending_slot=none\nsgw_ab_state=confirmed\n"
+              "bootlimit=3\nbootcount=-1\nupgrade_available=0\n", fp);
+        fclose(fp);
+        ASSERT_TRUE(fw_env_backend_load(&cfg, &env, err, sizeof(err)) != 0);
+    }
+
     unlink(store_path);
     unlink(print_bin);
     unlink(set_bin);

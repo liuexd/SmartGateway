@@ -92,7 +92,7 @@ static int parse_ulong_strict(const char *val, unsigned long *out)
     char *end = NULL;
     unsigned long parsed;
 
-    if (!val || !val[0] || !out)
+    if (!val || !isdigit((unsigned char)val[0]) || !out)
         return -1;
     errno = 0;
     parsed = strtoul(val, &end, 10);
@@ -278,6 +278,7 @@ int fw_env_backend_load(const fw_env_backend_cfg_t *cfg,
     int exit_code = -1;
     char *line;
     char *saveptr = NULL;
+    unsigned int required_seen = 0;
 
     if (!env) {
         set_err(errbuf, errlen, "null env");
@@ -324,6 +325,10 @@ int fw_env_backend_load(const fw_env_backend_cfg_t *cfg,
                  stderr_buf);
         return -1;
     }
+    if (strlen(stdout_buf) >= sizeof(stdout_buf) - 1) {
+        set_err(errbuf, errlen, "fw_printenv output may be truncated");
+        return -1;
+    }
 
     line = strtok_r(stdout_buf, "\n", &saveptr);
     while (line) {
@@ -334,12 +339,51 @@ int fw_env_backend_load(const fw_env_backend_cfg_t *cfg,
             line[n - 1] = '\0';
         eq = strchr(line, '=');
         if (eq) {
+            unsigned int bit = 0;
+            unsigned long numeric;
+            ab_slot_t parsed_slot;
+            ab_state_kind_t parsed_state;
             *eq = '\0';
+            if (strcmp(line, "sgw_active_slot") == 0) bit = 1u << 0;
+            else if (strcmp(line, "sgw_last_good_slot") == 0) bit = 1u << 1;
+            else if (strcmp(line, "sgw_pending_slot") == 0) bit = 1u << 2;
+            else if (strcmp(line, "sgw_ab_state") == 0) bit = 1u << 3;
+            else if (strcmp(line, "bootlimit") == 0) bit = 1u << 4;
+            else if (strcmp(line, "bootcount") == 0) bit = 1u << 5;
+            else if (strcmp(line, "upgrade_available") == 0) bit = 1u << 6;
+            if (bit && (required_seen & bit)) {
+                set_err(errbuf, errlen, "duplicate required A/B variable");
+                return -1;
+            }
+            if (bit && bit <= (1u << 2) &&
+                (ab_slot_parse(eq + 1, &parsed_slot) != 0 ||
+                 (bit != (1u << 2) && parsed_slot == AB_SLOT_NONE) ||
+                 (bit == (1u << 2) && !(eq + 1)[0]))) {
+                set_err(errbuf, errlen, "invalid required A/B slot");
+                return -1;
+            }
+            if (bit == (1u << 3) && ab_state_parse(eq + 1, &parsed_state) != 0) {
+                set_err(errbuf, errlen, "invalid required A/B state");
+                return -1;
+            }
+            if (bit >= (1u << 4) &&
+                (parse_ulong_strict(eq + 1, &numeric) != 0 ||
+                 (bit == (1u << 6) && numeric > 1))) {
+                set_err(errbuf, errlen, "invalid required A/B number");
+                return -1;
+            }
+            required_seen |= bit;
             apply_kv(env, line, eq + 1);
         }
         line = strtok_r(NULL, "\n", &saveptr);
     }
 
+    if (required_seen != 0x7fu) {
+        set_err(errbuf, errlen, "missing required persistent A/B variables");
+        return -1;
+    }
+    if (ab_env_validate(env, errbuf, errlen) != 0)
+        return -1;
     return 0;
 }
 
