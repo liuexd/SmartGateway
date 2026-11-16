@@ -29,6 +29,10 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 
 **本次只需回传报告内容。不要执行分区创建、格式化、dd 写入、saveenv 或 fw_setenv。**
 
+## G1/G2 主机安全整改
+
+[最新安全整改与未关闭事项](../validation/ota/G1-G2-host-safety-remediation.md)：根设备及备份安全检查、主机测试证据、尚未实现的可信健康服务和板端阻断项。
+
 ## 文档导航
 
 | 文档 | 内容 | 状态 |

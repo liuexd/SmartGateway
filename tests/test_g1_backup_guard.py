@@ -1,103 +1,171 @@
 #!/usr/bin/env python3
+"""Host-only safety tests: no block devices or board are touched."""
+import importlib.util
 import os
-import shutil
-import subprocess
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
+from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BACKUP_SCRIPT = REPO_ROOT / "bsp/tools/g1_emmc_backup_verify.sh"
+ROOT = Path(__file__).resolve().parents[1]
+HELPER = ROOT / "bsp/tools/g1_emmc_backup_verify.py"
+spec = importlib.util.spec_from_file_location("g1backup", HELPER)
+g1 = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g1)
 
 
-class TestG1BackupGuard(unittest.TestCase):
+class TopologyTests(unittest.TestCase):
     def setUp(self):
-        self.tmpdir = Path(tempfile.mkdtemp(prefix="sgw_g1_guard_"))
-        self.bin_dir = self.tmpdir / "bin"
-        self.bin_dir.mkdir()
-        self.emmc_file = self.tmpdir / "mmcblk1"
-        self.emmc_file.write_bytes(b"\x55\xaa" * (4098 * 256))
-        for suffix in ("p1", "p2", "p3", "boot0", "boot1"):
-            (self.tmpdir / f"mmcblk1{suffix}").write_bytes(b"DATA" * 1024)
-
-        self.mounts_file = self.tmpdir / "proc_mounts"
-        self.cmdline_file = self.tmpdir / "proc_cmdline"
+        self.tmp = tempfile.TemporaryDirectory(prefix="g1-topology-")
+        self.root = Path(self.tmp.name)
+        self.sys = self.root / "sys"
+        (self.sys / "dev/block").mkdir(parents=True)
+        self.emmc = self.make_disk("mmcblk1", (179, 8))
+        self.sd = self.make_disk("mmcblk0", (179, 0))
+        self.p1 = self.make_part(self.emmc, "mmcblk1p1", (179, 9))
+        self.p2 = self.make_part(self.emmc, "mmcblk1p2", (179, 10))
+        self.p3 = self.make_part(self.emmc, "mmcblk1p3", (179, 11))
 
     def tearDown(self):
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        self.tmp.cleanup()
 
-    def make_mock_df(self, df_dev: str, df_mnt: str = "/"):
-        df_bin = self.bin_dir / "df"
-        df_bin.write_text(
-            f"#!/bin/sh\n"
-            f"echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'\n"
-            f"echo '{df_dev} 1500000 700000 800000 47% {df_mnt}'\n",
-            encoding="utf-8",
-        )
-        df_bin.chmod(0o755)
+    def register(self, path, dev):
+        (path / "dev").write_text("%d:%d" % dev)
+        (self.sys / "dev/block" / ("%d:%d" % dev)).symlink_to(path, target_is_directory=True)
 
-    def run_backup(self, dest: Path, mode: str = "metadata", extra_args=()):
-        env = os.environ.copy()
-        env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '')}"
-        env["EMMC_DEV"] = str(self.emmc_file)
-        env["PROC_MOUNTS"] = str(self.mounts_file)
-        env["PROC_CMDLINE"] = str(self.cmdline_file)
-        env["SGW_ALLOW_FILE_BACKED_TEST"] = "1"
-        return subprocess.run(
-            ["sh", str(BACKUP_SCRIPT), "--dest", str(dest), "--mode", mode, *extra_args],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+    def make_disk(self, name, dev):
+        path = self.sys / "devices/platform/host/block" / name
+        (path / "slaves").mkdir(parents=True)
+        self.register(path, dev)
+        return path
 
-    def test_refuses_dev_root_backed_by_mmcblk1p2(self):
-        self.make_mock_df("/dev/root", "/")
-        self.mounts_file.write_text("/dev/root / ext4 rw,relatime 0 0\n", encoding="utf-8")
-        self.cmdline_file.write_text("console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw\n", encoding="utf-8")
-        dest = self.tmpdir / "forbidden_on_root/sub"
-        res = self.run_backup(dest)
-        self.assertNotEqual(res.returncode, 0)
-        self.assertIn("refusing potential eMMC self-backup", res.stderr)
-        self.assertFalse(dest.exists())
+    def make_part(self, disk, name, dev):
+        path = disk / name
+        path.mkdir()
+        (path / "partition").write_text("1")
+        self.register(path, dev)
+        return path
 
-    def test_refuses_dev_root_when_cmdline_unproven(self):
-        self.make_mock_df("/dev/root", "/")
-        self.mounts_file.write_text("/dev/root / ext4 rw,relatime 0 0\n", encoding="utf-8")
-        self.cmdline_file.write_text("console=ttymxc0,115200 root=PARTUUID=deadbeef\n", encoding="utf-8")
-        res = self.run_backup(self.tmpdir / "out")
-        self.assertNotEqual(res.returncode, 0)
-        self.assertIn("refusing potential eMMC self-backup", res.stderr)
+    def test_direct_and_uuid_alias_have_same_underlying_identity(self):
+        # mountinfo contains major:minor regardless of whether the source was
+        # /dev/mmcblk1p2, /dev/root, or a /dev/disk/by-uuid symlink.
+        self.assertEqual(g1.physical_devices((179, 10), self.sys), {self.emmc})
+        mounts = g1.parse_mountinfo(["42 1 179:10 / /mnt rw - ext4 /dev/disk/by-uuid/fake rw"])
+        with self.assertRaises(g1.SafetyError):
+            g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
 
-    def test_refuses_direct_mmcblk1_partitions(self):
-        self.mounts_file.write_text("/dev/mmcblk1p1 /mnt/p1 ext4 rw 0 0\n", encoding="utf-8")
-        self.cmdline_file.write_text("root=/dev/mmcblk0p2\n", encoding="utf-8")
-        for dev in ("/dev/mmcblk1p1", "/dev/mmcblk1p2", "/dev/mmcblk1p3"):
-            self.make_mock_df(dev, "/mnt/p1")
-            res = self.run_backup(self.tmpdir / "out")
-            self.assertNotEqual(res.returncode, 0)
-            self.assertIn("must be off-eMMC", res.stderr)
+    def test_p2_rw_at_nonroot_mount_fails(self):
+        mounts = g1.parse_mountinfo(["42 1 179:10 / /mnt/p2 rw - ext4 /dev/root rw"])
+        with self.assertRaisesRegex(g1.SafetyError, "mounted rw"):
+            g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
 
-    def test_full_mode_refuses_rw_p2_and_succeeds_from_sd_card(self):
-        # 1. Even if --dest is external SD (/dev/mmcblk0p1), refuse full backup while mmcblk1p2 is rw root
-        self.make_mock_df("/dev/mmcblk0p1", "/mnt/sd")
-        self.mounts_file.write_text("/dev/root / ext4 rw,relatime 0 0\n/dev/mmcblk0p1 /mnt/sd vfat rw 0 0\n", encoding="utf-8")
-        self.cmdline_file.write_text("root=/dev/mmcblk1p2 rootwait rw\n", encoding="utf-8")
-        sd_dest = self.tmpdir / "sd_backup_rw"
-        res_rw = self.run_backup(sd_dest, mode="full")
-        self.assertNotEqual(res_rw.returncode, 0)
-        self.assertIn("mounted rw", res_rw.stderr)
+    def test_read_only_emmc_and_external_sd_allowed(self):
+        mounts = g1.parse_mountinfo([
+            "42 1 179:10 / /mnt/p2 ro - ext4 /dev/root ro",
+            "43 1 179:0 / /mnt/sd rw - ext4 /dev/mmcblk0 rw",
+        ])
+        g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
+        self.assertEqual(g1.physical_devices((179, 0), self.sys), {self.sd})
 
-        # 2. Booted from external SD card (root=/dev/mmcblk0p2), backing up eMMC onto SD succeeds & verifies SHA256
-        self.mounts_file.write_text("/dev/root / ext4 rw,relatime 0 0\n/dev/mmcblk0p1 /mnt/sd vfat rw 0 0\n", encoding="utf-8")
-        self.cmdline_file.write_text("root=/dev/mmcblk0p2 rootwait rw\n", encoding="utf-8")
-        sd_ok_dest = self.tmpdir / "sd_backup_ok"
-        res_ok = self.run_backup(sd_ok_dest, mode="full")
-        self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
-        self.assertIn("Backup and SHA-256 verification completed", res_ok.stdout)
-        self.assertIn("emmc-p2.img: OK", res_ok.stdout)
-        self.assertTrue((sd_ok_dest / "emmc-reserved-pre-p1.bin").exists())
-        self.assertTrue((sd_ok_dest / "emmc-p2.img").exists())
-        self.assertTrue((sd_ok_dest / "SHA256SUMS").exists())
+    def test_unknown_and_overlay_fail_closed(self):
+        with self.assertRaises(g1.SafetyError):
+            g1.physical_devices((7, 42), self.sys)
+        mounts = g1.parse_mountinfo(["42 1 0:30 / / rw - overlay overlay rw"])
+        with self.assertRaises(g1.SafetyError):
+            g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
+
+    def test_device_mapper_to_emmc_is_rejected(self):
+        dm = self.sys / "devices/virtual/block/dm-0"
+        (dm / "slaves").mkdir(parents=True)
+        self.register(dm, (253, 0))
+        (dm / "slaves/mmcblk1p2").symlink_to(self.p2, target_is_directory=True)
+        self.assertEqual(g1.physical_devices((253, 0), self.sys), {self.emmc})
+
+    def test_missing_p3_aborts_validation(self):
+        (self.emmc / "size").write_text(str(g1.USER_SECTORS))
+        for path, (start, size) in zip((self.p1, self.p2), list(g1.GEOMETRY.values())[:2]):
+            (path / "start").write_text(str(start))
+            (path / "size").write_text(str(size))
+        devices = {"/dev/mmcblk1": (179, 8), "/dev/mmcblk1p1": (179, 9),
+                   "/dev/mmcblk1p2": (179, 10)}
+        def device(path):
+            if path == "/dev/mmcblk1p3":
+                raise FileNotFoundError(path)
+            return devices[path]
+        original_sys = g1.sys_block
+        original_physical = g1.physical_devices
+        def fake_sys(dev, sysroot=None):
+            return original_sys(dev, self.sys)
+        def fake_physical(dev, sysroot=None, seen=None):
+            return original_physical(dev, self.sys, seen)
+        with patch.object(g1, "device_info", side_effect=device) as info, \
+             patch.object(g1, "sys_block", side_effect=fake_sys), \
+             patch.object(g1, "physical_devices", side_effect=fake_physical):
+            with self.assertRaises(FileNotFoundError):
+                g1.validate_devices()
+            self.assertEqual(info.call_args.args[0], "/dev/mmcblk1p3")
+
+    def test_rejects_existing_target_and_missing_parent(self):
+        mounts = [((179, 0), {"rw"}, "ext4", "/")]
+        with self.assertRaises(g1.SafetyError):
+            g1.approved_destination(self.root, self.emmc, mounts, self.sys)
+        with self.assertRaises(g1.SafetyError):
+            g1.approved_destination(self.root / "missing/out", self.emmc, mounts, self.sys)
+
+    def test_destination_on_emmc_rejected_before_directory_creation(self):
+        # Map the test directory's actual st_dev to a simulated eMMC partition.
+        # It represents the same mount identity whether df reports a direct
+        # device name, /dev/root, or a UUID alias.
+        dev = os.stat(self.root).st_dev
+        major_minor = (os.major(dev), os.minor(dev))
+        alias = self.sys / "dev/block" / ("%d:%d" % major_minor)
+        if alias.exists() or alias.is_symlink():
+            alias.unlink()
+        alias.symlink_to(self.p2, target_is_directory=True)
+        (self.p2 / "dev").write_text("%d:%d" % major_minor)
+        mounts = [(major_minor, {"rw"}, "ext4", "/")]
+        target = self.root / "must-not-be-created"
+        with self.assertRaisesRegex(g1.SafetyError, "protected eMMC"):
+            g1.approved_destination(target, self.emmc, mounts, self.sys)
+        self.assertFalse(target.exists())
+
+    def test_malformed_mountinfo_rejected(self):
+        with self.assertRaises(g1.SafetyError):
+            g1.parse_mountinfo(["invalid"])
+        with self.assertRaises(g1.SafetyError):
+            g1.parse_mountinfo([])
+
+    def test_copy_checks_full_length_and_readback(self):
+        source = self.root / "source"
+        source.write_bytes(b"source data")
+        dfd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with patch.object(g1.stat, "S_ISBLK", return_value=True):
+                digest = g1.copy_exact(str(source), "backup", 0, 11, dfd,
+                                       (0, 0), os.stat(self.root).st_dev)
+                self.assertEqual((self.root / "backup").read_bytes(), b"source data")
+                self.assertEqual(len(digest), 64)
+                with self.assertRaisesRegex(g1.SafetyError, "short read"):
+                    g1.copy_exact(str(source), "truncated", 0, 12, dfd,
+                                  (0, 0), os.stat(self.root).st_dev)
+        finally:
+            os.close(dfd)
+
+    def test_block_readonly_flag_is_required(self):
+        source = self.root / "source-ro"
+        source.write_bytes(b"x")
+        def ioctl_value(value):
+            def call(fd, request, output, mutate):
+                self.assertEqual(request, 0x125e)
+                output[0] = value
+                return 0
+            return call
+        with patch.object(g1.stat, "S_ISBLK", return_value=True):
+            with patch.object(g1.fcntl, "ioctl", side_effect=ioctl_value(0)):
+                with self.assertRaisesRegex(g1.SafetyError, "not read-only"):
+                    g1.assert_readonly(str(source), (0, 0))
+            with patch.object(g1.fcntl, "ioctl", side_effect=ioctl_value(1)):
+                g1.assert_readonly(str(source), (0, 0))
 
 
 if __name__ == "__main__":

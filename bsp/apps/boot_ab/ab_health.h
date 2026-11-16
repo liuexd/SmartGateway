@@ -18,6 +18,12 @@ typedef struct {
 
 void ab_health_cfg_init(ab_health_cfg_t *cfg);
 
+/* Compare VFS root, block node and root mountinfo identities. */
+int ab_root_identity_matches(int slot_is_block,
+                             unsigned int root_major, unsigned int root_minor,
+                             unsigned int slot_major, unsigned int slot_minor,
+                             unsigned int mount_major, unsigned int mount_minor);
+
 int ab_detect_running_slot(const ab_health_cfg_t *cfg,
                            ab_slot_t *out_slot,
                            char *errbuf,

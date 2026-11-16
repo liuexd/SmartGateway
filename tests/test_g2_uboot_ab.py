@@ -267,122 +267,65 @@ class TestG2UbootAB(unittest.TestCase):
         self.assertIn("setexpr sgw_rollback_count", kv["altbootcmd"])
         self.assertIn("saveenv;", kv["altbootcmd"])
 
+    def seed_simulated_trial(self):
+        # File-backed fw_env simulation only; this does not stage a real slot.
+        self.run_fw_setenv_batch({
+            "sgw_active_slot": "1",
+            "sgw_last_good_slot": "2",
+            "sgw_pending_slot": "1",
+            "sgw_ab_state": "trial",
+            "bootcount": "0",
+            "upgrade_available": "1",
+        })
+
     def test_fail_closed_confirm_and_trusted_health_checks(self):
         self.run_fw_setenv_batch({"sgw_last_error": "none"})
-        self.run_bootctl("stage", "--target", "1")
-        slot, rolled, bc = self.simulate_uboot_boot()
-        self.assertEqual((slot, rolled, bc), ("1", False, 1))
-
-        # 1. Fail-closed WITHOUT OS/supervisor context (default host paths lack /dev/mmcblk1p* & supervisor.sock)
-        untrusted = self.run_bootctl("confirm", with_os_ctx=False, check=False)
-        self.assertNotEqual(untrusted.returncode, 0)
-        self.assertIn("CONFIRM REJECTED", untrusted.stderr)
-
-        # 2. Booted p2 (mismatching pending p1) must reject confirm
-        self.set_os_running_slot("2")
-        mismatch_slot = self.run_bootctl("confirm", check=False)
-        self.assertNotEqual(mismatch_slot.returncode, 0)
-
-        # 3. Booted p1, but caller spoofs --running 2 -> rejected
+        self.seed_simulated_trial()
         self.set_os_running_slot("1")
-        spoof = self.run_bootctl("confirm", "--running", "2", check=False)
-        self.assertNotEqual(spoof.returncode, 0)
-        self.assertIn("disagrees with verified OS root slot", spoof.stderr)
+        before = self.run_fw_printenv()
 
-        # 4. Booted p1, but supervisor reports NOT_RUNNING -> rejected
-        self.supervisor.healthy = False
-        unhealthy = self.run_bootctl("confirm", check=False)
-        self.assertNotEqual(unhealthy.returncode, 0)
-        self.assertIn("NOT_RUNNING", unhealthy.stderr)
+        # A mock cmdline + mock Supervisor is not an actual mounted slot or
+        # a trusted system/business health provider.
+        result = self.run_bootctl("confirm", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONFIRM REJECTED", result.stderr)
+        self.assertEqual(self.run_fw_printenv(), before)
 
-        # 5. Booted p1 + healthy live supervisor -> confirm succeeds
-        self.supervisor.healthy = True
-        ok = self.run_bootctl("confirm")
-        self.assertEqual(ok.returncode, 0, ok.stderr)
-        self.assertIn("CONFIRMED active=1 last_good=1 state=confirmed", ok.stdout)
+        bypass = self.run_bootctl("confirm", "--health-ok", "1", check=False)
+        self.assertNotEqual(bypass.returncode, 0)
+        self.assertEqual(self.run_fw_printenv(), before)
 
-        # 6. Spoofed --running on stage also rejected
-        spoof_stage = self.run_bootctl("stage", "--target", "2", "--running", "2", check=False)
-        self.assertNotEqual(spoof_stage.returncode, 0)
+        # stage is also rejected when actual root identity is not proven.
+        stage = self.run_bootctl("stage", "--target", "2", check=False)
+        self.assertNotEqual(stage.returncode, 0)
+        self.assertEqual(self.run_fw_printenv(), before)
 
     def test_watchdog_guard_takeover_confirm_and_timeout_reset_path(self):
         self.run_fw_setenv_batch({"sgw_last_error": "none"})
-        self.run_bootctl("stage", "--target", "1")
-        self.simulate_uboot_boot()
+        self.seed_simulated_trial()
         self.set_os_running_slot("1")
-
-        # Part A: Timeout case (supervisor stays unhealthy -> stops kicking, NO magic-close 'V')
-        self.supervisor.healthy = False
-        wdt_log_fail = self.tmpdir / "wdt_fail.bin"
-        wdt_log_fail.touch()
-        res_exp = subprocess.run(
-            [
-                str(WDT_GUARD_BIN),
-                "-c", str(self.cfg_path),
-                "--wdt-dev", str(wdt_log_fail),
-                "--budget-ms", "300",
-                "--poll-ms", "60",
-                "--run-dir", str(self.run_dir),
-                "--cmdline", str(self.cmdline_path),
-                "--mounts", str(self.mounts_path),
-                "--sysroot", str(self.sysroot),
-                "--exit-on-confirm",
-            ],
-            env=self.env,
-            capture_output=True,
-            text=True,
+        # An apparently healthy mock process must not confirm an untrusted slot.
+        self.supervisor.healthy = True
+        wdt_file = self.tmpdir / "watchdog-file"
+        wdt_file.touch()
+        res = subprocess.run(
+            [str(WDT_GUARD_BIN), "-c", str(self.cfg_path),
+             "--wdt-dev", str(wdt_file), "--budget-ms", "250",
+             "--poll-ms", "50", "--run-dir", str(self.run_dir),
+             "--cmdline", str(self.cmdline_path), "--mounts", str(self.mounts_path),
+             "--sysroot", str(self.sysroot), "--exit-on-confirm"],
+            env=self.env, capture_output=True, text=True,
         )
-        self.assertEqual(res_exp.returncode, 3)
-        self.assertIn("WATCHDOG_TAKEOVER", res_exp.stdout)
-        self.assertIn("WATCHDOG_EXPIRED", res_exp.stderr)
-        raw_fail = wdt_log_fail.read_bytes()
-        self.assertGreaterEqual(raw_fail.count(b"k"), 3)
-        self.assertNotIn(b"V", raw_fail)
-        st = json.loads(self.run_bootctl("status", "--json").stdout)
-        self.assertEqual(st["sgw_last_error"], "health_timeout")
-        self.assertEqual(st["upgrade_available"], 1)
-        self.assertEqual(st["bootcount"], 1)
-
-        # Part B: Delayed healthy service comes up during trial grace period -> confirms & sends 'V'
-        wdt_log_ok = self.tmpdir / "wdt_ok.bin"
-        wdt_log_ok.touch()
-        def enable_later():
-            time.sleep(0.18)
-            self.supervisor.healthy = True
-
-        t = threading.Thread(target=enable_later, daemon=True)
-        t.start()
-        res_ok = subprocess.run(
-            [
-                str(WDT_GUARD_BIN),
-                "-c", str(self.cfg_path),
-                "--wdt-dev", str(wdt_log_ok),
-                "--budget-ms", "2000",
-                "--poll-ms", "50",
-                "--run-dir", str(self.run_dir),
-                "--cmdline", str(self.cmdline_path),
-                "--mounts", str(self.mounts_path),
-                "--sysroot", str(self.sysroot),
-                "--exit-on-confirm",
-            ],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        t.join(timeout=2)
-        self.assertIn("TRIAL_CONFIRMED slot=1", res_ok.stdout)
-        raw_ok = wdt_log_ok.read_bytes()
-        self.assertGreaterEqual(raw_ok.count(b"k"), 2)
-        self.assertTrue(raw_ok.endswith(b"V"))
-        st2 = json.loads(self.run_bootctl("status", "--json").stdout)
-        self.assertEqual(st2["sgw_ab_state"], "confirmed")
-        self.assertEqual(st2["upgrade_available"], 0)
-        self.assertEqual(st2["bootcount"], 0)
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("WATCHDOG_EXPIRED", res.stderr)
+        self.assertNotIn(b"V", wdt_file.read_bytes())
+        status = json.loads(self.run_bootctl("status", "--json").stdout)
+        self.assertEqual(status["sgw_ab_state"], "trial")
+        self.assertEqual(status["upgrade_available"], 1)
 
     def test_trial_bootlimit_rollback_and_swupdate_isolation(self):
         self.run_fw_setenv_batch({"recovery_status": "idle_sentinel", "sgw_last_error": "none"})
-        self.run_bootctl("stage", "--target", "1")
+        self.seed_simulated_trial()
 
         for expected_bc in (1, 2, 3):
             slot, rolled, bc = self.simulate_uboot_boot()
@@ -466,7 +409,7 @@ class TestG2UbootAB(unittest.TestCase):
     def test_redundant_env_powerloss_corruption_recovery(self):
         self.run_fw_setenv_batch({"sgw_last_error": "none"})
         self.run_fw_setenv_batch({"sgw_active_slot": "2"})
-        self.run_bootctl("stage", "--target", "1")
+        self.seed_simulated_trial()
         img = bytearray(self.img_path.read_bytes())
         _, _, flag0 = read_redund_copy_info(bytes(img), ENV_OFFSET_0)
         _, _, flag1 = read_redund_copy_info(bytes(img), ENV_OFFSET_1)
@@ -477,6 +420,23 @@ class TestG2UbootAB(unittest.TestCase):
         res = self.run_bootctl("validate")
         self.assertEqual(res.returncode, 0)
         self.assertIn("VALID", res.stdout)
+
+    def test_both_redundant_copies_corrupt_fails_closed(self):
+        self.run_fw_setenv_batch({"sgw_last_error": "none"})
+        self.run_fw_setenv_batch({"sgw_active_slot": "2"})
+        img = bytearray(self.img_path.read_bytes())
+        for offset in (ENV_OFFSET_0, ENV_OFFSET_1):
+            img[offset:offset + 128] = b"\x00" * 128
+        self.img_path.write_bytes(bytes(img))
+
+        # fw_printenv 2017.03 may return zero while warning that it used
+        # compiled defaults. The A/B controller must reject those defaults.
+        result = self.run_bootctl("validate", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("state untrusted", result.stderr)
+        result = self.run_bootctl("confirm", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.img_path.read_bytes(), bytes(img))
 
 
 if __name__ == "__main__":

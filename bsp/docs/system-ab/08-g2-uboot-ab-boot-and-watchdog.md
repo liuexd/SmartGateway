@@ -1,5 +1,7 @@
 # G2：U-Boot A/B 启动管理、持久化计数与 Watchdog 回滚设计
 
+> **2026-11-16 安全整改说明：** 以下为历史记录，其中的通过结论和操作说明以[最新主机安全整改记录](../validation/ota/G1-G2-host-safety-remediation.md)为准。G1/G2 均为 BLOCKED；备份脚本接口已变化，G2 可信健康服务尚未实现，当前不得部署或写板。
+
 **状态：** HOST-TESTED（主机侧交叉编译、真实 U-Boot 2017.03 `fw_printenv`/`fw_setenv` 二进制环境镜像仿真及 C/Python 单元测试全部通过；尚未刷写开发板）
 
 ## 1. U-Boot 2017.03 真实持久化 `bootcount` 后端调研结论

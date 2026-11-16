@@ -313,6 +313,18 @@ int fw_env_backend_load(const fw_env_backend_cfg_t *cfg,
         return -1;
     }
 
+    /*
+     * U-Boot fw_printenv can exit zero after a bad CRC by returning compiled
+     * defaults.  Such output is not a validated persistent boot state.
+     * Treat any diagnostic as untrusted rather than silently accepting it.
+     */
+    if (stderr_buf[0] != '\0') {
+        snprintf(errbuf, errlen ? errlen : 0,
+                 "fw_printenv emitted a diagnostic; state untrusted: %.180s",
+                 stderr_buf);
+        return -1;
+    }
+
     line = strtok_r(stdout_buf, "\n", &saveptr);
     while (line) {
         size_t n = strlen(line);

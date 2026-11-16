@@ -1,5 +1,7 @@
 # G2：U-Boot A/B 启动管理与主机端仿真验收报告
 
+> **2026-11-16 安全整改说明：** 以下为历史记录，其中的通过结论和操作说明以[最新主机安全整改记录](G1-G2-host-safety-remediation.md)为准。G1/G2 均为 BLOCKED；备份脚本接口已变化，G2 可信健康服务尚未实现，当前不得部署或写板。
+
 **状态：** HOST-TESTED（已完成 fail-closed 健康确认、`/dev/watchdog` 用户态守护与单份->冗余 env 迁移的主机测试；板端真机 U-Boot 启动、`p1` 实机启动与 `WDOG1` 硬件复位尚未执行）  
 **分支：** `feature/imx6ull-system-ab-ota`  
 **设计文档：** [08-g2-uboot-ab-boot-and-watchdog.md](../../system-ab/08-g2-uboot-ab-boot-and-watchdog.md)

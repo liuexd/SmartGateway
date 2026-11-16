@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 static void set_err(char *errbuf, size_t errlen, const char *msg)
 {
@@ -53,6 +55,15 @@ static int parse_slot_from_dev(const char *dev, ab_slot_t *out_slot)
         return 0;
     }
     return -1;
+}
+
+int ab_root_identity_matches(int slot_is_block,
+                             unsigned int root_major, unsigned int root_minor,
+                             unsigned int slot_major, unsigned int slot_minor,
+                             unsigned int mount_major, unsigned int mount_minor)
+{
+    return slot_is_block && root_major == slot_major && root_minor == slot_minor &&
+           root_major == mount_major && root_minor == mount_minor;
 }
 
 static int read_first_line(const char *path, char *buf, size_t cap)
@@ -186,6 +197,46 @@ int ab_detect_running_slot(const ab_health_cfg_t *cfg,
         return -1;
     }
 
+    /*
+     * cmdline describes boot intent.  The VFS root device and mountinfo are
+     * authoritative for what is actually mounted.  Reject overlays, tmpfs,
+     * device-mapper, missing nodes, and any other unproven mapping.
+     */
+    {
+        struct stat root_st, slot_st;
+        FILE *fp;
+        char line[4096];
+        unsigned int ma, mi;
+        char mountpoint[1024];
+        int found = 0;
+        const char *slot_path = ab_slot_device(cmdline_slot);
+
+        if (!slot_path || stat("/", &root_st) != 0 ||
+            stat(slot_path, &slot_st) != 0 || !S_ISBLK(slot_st.st_mode)) {
+            set_err(errbuf, errlen, "actual root device does not match requested slot");
+            return -1;
+        }
+        fp = fopen("/proc/self/mountinfo", "r");
+        if (!fp) {
+            set_err(errbuf, errlen, "cannot read root mount identity");
+            return -1;
+        }
+        while (fgets(line, sizeof(line), fp)) {
+            if (sscanf(line, "%*u %*u %u:%u %*s %1023s", &ma, &mi,
+                       mountpoint) == 3 && strcmp(mountpoint, "/") == 0 &&
+                ab_root_identity_matches(S_ISBLK(slot_st.st_mode),
+                    major(root_st.st_dev), minor(root_st.st_dev),
+                    major(slot_st.st_rdev), minor(slot_st.st_rdev), ma, mi)) {
+                found = 1;
+            }
+        }
+        fclose(fp);
+        if (!found) {
+            set_err(errbuf, errlen, "root mountinfo identity missing or mismatched");
+            return -1;
+        }
+    }
+
     *out_slot = cmdline_slot;
     return 0;
 }
@@ -293,10 +344,13 @@ int ab_verify_system_health(const ab_health_cfg_t *cfg,
         }
     }
 
-    if (out_running_slot)
-        *out_running_slot = running_slot;
-    if (out_supervisor_pid)
-        *out_supervisor_pid = (unsigned long long)reply.pid;
-
-    return 0;
+    /*
+     * STATUS confirms only process state, not Gateway business, devices,
+     * data compatibility, or a stability window.  Until a trusted provider
+     * of those checks is integrated, never promote a trial to confirmed.
+     */
+    (void)out_running_slot;
+    (void)out_supervisor_pid;
+    set_err(errbuf, errlen, "trusted system and business health provider not implemented");
+    return -1;
 }

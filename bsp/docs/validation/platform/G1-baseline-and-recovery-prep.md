@@ -1,5 +1,7 @@
 # G1：恢复基线与主机工程准备验收报告
 
+> **2026-11-16 安全整改说明：** 以下为历史记录，其中的通过结论和操作说明以[最新主机安全整改记录](../../validation/ota/G1-G2-host-safety-remediation.md)为准。G1/G2 均为 BLOCKED；备份脚本接口已变化，G2 可信健康服务尚未实现，当前不得部署或写板。
+
 **状态：** HOST-VERIFIED（主机侧检查与 `/dev/root` 防误写回归已通过；板端真机外部恢复与全量备份仍为 **PENDING BOARD**）  
 **分支：** `feature/imx6ull-system-ab-ota`  
 **设计文档：** [07-g1-recovery-baseline-and-toolchain.md](../../system-ab/07-g1-recovery-baseline-and-toolchain.md)

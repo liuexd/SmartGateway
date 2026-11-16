@@ -82,7 +82,7 @@ test: test-ipc
 	@timeout $(TEST_TIMEOUT) ./service_supervisor_test || \
 		{ echo "FAIL: service_supervisor_test"; exit 1; }
 
-test-ipc: service_supervisor_test
+test-ipc: service_supervisor_test service_ipc_test
 	@echo "== IPC 协议测试 =="
 	@timeout $(TEST_TIMEOUT) ./service_ipc_test || \
 		{ echo "FAIL: service_ipc_test"; exit 1; }
