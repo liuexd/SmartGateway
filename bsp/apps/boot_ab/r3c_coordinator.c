@@ -19,6 +19,33 @@
 #include <time.h>
 #include <unistd.h>
 
+
+static int detect_root_is_rw(const char *mounts_path)
+{
+    FILE *fp = fopen((mounts_path && mounts_path[0]) ? mounts_path : "/proc/mounts", "re");
+    char line[512];
+    int is_rw = 1; /* Fail-closed default: assume rw unless explicitly proved ro */
+    if (!fp) return 1;
+    while (fgets(line, sizeof(line), fp)) {
+        char dev[128] = {0}, mnt[128] = {0}, fst[64] = {0}, opts[256] = {0};
+        if (sscanf(line, "%127s %127s %63s %255s", dev, mnt, fst, opts) == 4 &&
+            strcmp(mnt, "/") == 0) {
+            char *tok = opts, *c;
+            int ro_seen = 0, rw_seen = 0;
+            while (tok && *tok) {
+                c = strchr(tok, ',');
+                if (c) *c = '\0';
+                if (strcmp(tok, "ro") == 0) ro_seen = 1;
+                if (strcmp(tok, "rw") == 0) rw_seen = 1;
+                tok = c ? (c + 1) : NULL;
+            }
+            is_rw = (ro_seen && !rw_seen) ? 0 : 1;
+        }
+    }
+    fclose(fp);
+    return is_rw;
+}
+
 static int fail(char *err, size_t len, const char *msg)
 {
     if (err && len) snprintf(err, len, "%s", msg);
@@ -114,18 +141,19 @@ static int verify_data_under_policy(const r3c_policy_t *p, const r3c_runtime_ops
     }
 
     {
-        const char *excl[3] = { p->slot1_device, p->slot2_device, p->whole_disk_device };
+        const char *excl[2] = { p->slot1_device, p->slot2_device };
         /* Reserve U-Boot redundant env sectors 0xE0000..0xE4000 (1792..1824 in 512B sectors) */
         const r3c_sector_range_t reserved[1] = { { 1792ULL, 32ULL } };
         r3c_data_full_policy_t fp;
         memset(&fp, 0, sizeof(fp));
         fp.mountpoint = p->data_mountpoint;
         fp.device = p->data_device;
+        fp.whole_disk_device = p->whole_disk_device;
         fp.mountinfo_path = (ops && ops->mountinfo_path) ? ops->mountinfo_path : "/proc/self/mountinfo";
         fp.sysfs_block_root = (ops && ops->sysfs_block_root) ? ops->sysfs_block_root : "/sys/dev/block";
         fp.expected_fstype = (ops && ops->expected_data_fstype) ? ops->expected_data_fstype : "ext4";
         fp.excluded_devices = excl;
-        fp.excluded_count = 3;
+        fp.excluded_count = 2;
         fp.reserved_sectors = reserved;
         fp.reserved_count = 1;
         fp.minimum_available_bytes = p->data_min_bytes;
@@ -204,6 +232,7 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     pid_t first_gw_pid = 0;
     unsigned long long first_gw_start = 0;
     int have_first_gw = 0;
+    int root_is_rw = 1;
 
     if (!policy || !fw_cfg || !hcfg)
         return fail(errbuf, errlen, "null coordinator argument");
@@ -238,6 +267,7 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
         fail(errbuf, errlen, "caller --running disagrees with verified OS running slot");
         goto out;
     }
+    root_is_rw = detect_root_is_rw(hcfg->proc_mounts_path);
     if (fw_env_backend_load(fw_cfg, &env, errbuf, errlen) != 0)
         goto out;
     if (ab_env_validate(&env, errbuf, errlen) != 0)
@@ -258,7 +288,8 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
         slotfd = open(slot_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
         if (slotfd < 0) { fail(errbuf, errlen, "cannot open slot for split-state recovery"); goto out; }
         if (r3c_txn_reconcile_confirm(txdir, txn.id, policy->trusted_uid,
-                                      running_slot, slotfd, errbuf, errlen) != 0)
+                                      running_slot, hcfg->sysroot_prefix,
+                                      root_is_rw, slotfd, errbuf, errlen) != 0)
             goto out;
         if (out) {
             snprintf(out->transaction_id, sizeof(out->transaction_id), "%s", txn.id);
@@ -295,14 +326,12 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     {
         const char *slot_path = (ops && ops->slot_image_override) ?
             ops->slot_image_override : ab_slot_device(running_slot);
-        char actual_hex[65];
-        uint64_t actual_len = 0;
-        if (!slot_path) { fail(errbuf, errlen, "missing slot path"); goto out; }
-        slotfd = open(slot_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-        if (slotfd < 0) { fail(errbuf, errlen, "cannot open installed slot for digest verify"); goto out; }
-        if (r3c_txn_digest_fd(slotfd, txn.written_size, actual_hex, &actual_len) != 0 ||
-            actual_len != txn.written_size || strcmp(actual_hex, txn.image_sha256) != 0) {
-            fail(errbuf, errlen, "installed slot readback digest mismatch against transaction");
+        if (slot_path) {
+            slotfd = open(slot_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        }
+        if (r3c_txn_verify_installed_rootfs(txdir, &txn, policy->trusted_uid,
+                                            hcfg->sysroot_prefix, root_is_rw,
+                                            slotfd, errbuf, errlen) != 0) {
             goto out;
         }
     }
@@ -481,7 +510,8 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     /* 9. Crash-safe confirm write sequence: CONFIRMING -> U-Boot env -> env readback -> CONFIRMED(consumed=1) */
     if (r3c_txn_begin_confirm(txdir, txn.id, policy->trusted_uid,
                               running_slot, env.last_good_slot,
-                              boot_id, trial_bootcount, slotfd,
+                              boot_id, trial_bootcount,
+                              hcfg->sysroot_prefix, root_is_rw, slotfd,
                               errbuf, errlen) != 0)
         goto out;
 

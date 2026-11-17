@@ -1,34 +1,42 @@
-# G2-R3C 主机端闭环与安全整改复验报告
+# G2-R3C 主机端闭环与二次安全整改复验报告
 
 - **日期：** 2026-11-17
 - **分支：** `feature/imx6ull-system-ab-ota`
-- **主机侧评审状态：** **`READY-FOR-INDEPENDENT-REVIEW`（待独立安全复审确认后再正式签署 `HOST-ACCEPTED`；未推送远端、未上板）**
-- **板端真机状态：** **`BOARD-PENDING / BLOCKED`**（本轮未触碰开发板 `/dev/mmcblk1`、真实 U-Boot 环境或 Watchdog）
+- **主机侧状态：** **`READY-FOR-INDEPENDENT-REVIEW`（已完成独立复审指出的 5 项安全与板端可用性整改，并全量复跑通过；未推送远端、未签发板端放行）**
+- **板端真机状态：** **`BOARD-PENDING / BLOCKED`**（本轮未触碰开发板 `/dev/mmcblk1`、真实 U-Boot 环境或 Watchdog；G1 外部恢复与 G2 板端验收仍待授权执行）
 
 ---
 
-## 1. 安全审查整改项（相对 `1724a0e` 新增硬化）
+## 1. 针对独立复审 5 项发现的整改与实测覆盖
 
-| 审查点 | 问题/风险 | 整改实现 | 回归验证 |
+| # | 复审发现的问题 | 本轮代码整改 | 实测验证 |
 |---|---|---|---|
-| **1. `--running` 检查时序** | 旧版 `sgw_bootctl confirm --running` 在调用 `r3c_coordinator_confirm()` 写入并提交 `fw_env` 之后才检查 `--running` 槽位一致性 | 将 `expected_running_slot` 传入 `r3c_coordinator_confirm()`，在 `ab_detect_running_slot_full()` 之后、**任何 `CONFIRMING` 写盘或 `fw_env_backend_save()` 之前**核验并拒绝不匹配槽位 | `test_n10_caller_running_mismatch_rejects_before_any_mutation`：注入真实 `DATA` 健康转发下传错误 `--running 2`，证实拒绝且 `fw_env` 仍为 `trial`、`txn` 仍为 `PENDING (consumed=0)` |
-| **2. 分裂状态崩溃恢复与抗重放** | `fw_env_backend_save` 已提交 `confirmed` 但紧随其后的 `r3c_txn_finish_confirm` 失败或掉电时，会遗留 `env=confirmed` 与 `txn=CONFIRMING` 的孤儿状态 | 新增 `r3c_txn_reconcile_confirm()` 与协调器分裂恢复分支：持双锁并重验 DATA 持久性及安装槽镜像 SHA-256 后，将 `CONFIRMING` 原子落盘并 `fsync` 为 `CONFIRMED (consumed=1)`；任何再次调用均因无未消费事务被严格拒绝 | `test_n10_split_state_env_confirmed_txn_confirming_recovery_and_idempotency`：精确拦截第 2 次 `.txn-` `fsync` 制造分裂现场后，验证跨 `boot_id` 重启恢复、`tamper` 阻断恢复、恢复后重复调用拒绝 |
-| **3. 普通调用者与 CLI/Env 权限边界** | 生产 `sgw_bootctl confirm` 需对普通用户及 `-c`/`--cmdline`/`SGW_*` 环境变量覆盖免疫 | `sgw_bootctl confirm` 入口显式检查 `geteuid() == 0`、拒绝任何 `-c`/`--config`/`--run-dir`/`--cmdline`/`--mounts`/`--sysroot` 参数，强制硬编码 `/usr/sbin/fw_*` 与 `/proc/*` 并忽略 `SGW_*`；`r3c_coordinator_confirm` 在 `ops==NULL` 时同样校验 `geteuid()==0 && trusted_uid==0` | `test_n10_unprivileged_production_sgw_bootctl_and_override_rejected` + `test_g2_uboot_ab`：`ubuntu` 非特权调用及带覆盖参数调用均输出 `CONFIRM REJECTED` 且环境零改动 |
-| **4. DATA 身份、锁范围与健康证据时效** | 需防止设备路径父目录篡改、策略自相矛盾、慢探针伪造样本时间戳 | `r3c_data_inspect_full()` 增加 `trusted_dirs(p->device)`；`r3c_policy_load()` 禁止 `data_mountpoint=/`、`data_device` 与槽/整盘重名及 `max_evidence_age_ms > 5000`；`r3c_coordinator_confirm()` 改为**探针完成后**采集单调时间 `sample_end` 并校验单次采样耗时 `<= max_gap_ms` | `r3c_data_exclusion_test` PASS；全套 `test_g2r3c_n09_n10` 7/7 OK |
+| **1** | **写槽接口 `r3c_txn_write_and_verify_slot` 未自行校验目标设备** | 重构接口接收 `fw_cfg` / `hcfg` / `r3c_slot_write_opts_t` 并由函数内部打开设备：写入 **1 个字节之前**先独立校验 `ab_detect_running_slot_full()`、`fw_env` 非试启动态、`target_slot == other(running_slot)`、父目录安全 + `!S_ISLNK` + `S_ISBLK`（生产模式禁止普通文件）、非根挂点/非运行槽/`last_good`、不在 `mountinfo` 挂载列表中，以及 `BLKGETSIZE64` / 容器容量 `>= src_len` | `test_n10_write_slot_rejects_running_mounted_and_small_with_zero_bytes_written`：覆盖运行槽冲突、容量不足、`symlink` 目标与 `--require-blk` 拒绝，断言触发金丝雀文件零字节改动且事务保持 `VERIFIED` |
+| **2** | **DATA 路径信任检查未落在 `r3c_data_inspect_full` 且错把块设备当目录检查** | 在 `r3c_data.c` 将目录树校验拆为 `trusted_parent_dirs()`（校验目录链）与 `trusted_block_node()`（校验叶子节点 `!S_ISLNK && S_ISBLK && !(mode & 0002)`），并在 **`r3c_data_inspect()` 与 `r3c_data_inspect_full()` 两处同时调用** | `r3c_data_exclusion_test`：直接针对 VM 真实 `/dev/sda2` 及指向 `/dev/sda2` 的软链调用 `r3c_data_inspect_full()`，验证软链被 `trusted_block_node` 拒绝、真实块设备走通路径校验 |
+| **3** | **DATA 排除遇到未知设备跳过，且把整盘当作区间重叠排重对象** | 重构 `r3c_data_check_slot_exclusion_sysfs()` 分离 `whole_disk_device` 与分区 `excluded_devices[]`：任一排除设备或整盘 `stat`/`trusted_block_node`/`read_sysfs_geom` 失败均**立即 Fail-Closed 拒绝**；仅对同盘分区比对 `[start, size)` 重叠、仅对同盘检查保留扇区 `1792..1824` | `r3c_data_exclusion_test`：在 VM 真实 `/dev/sda` + `/dev/sda1` + `/dev/sda2` + `/sys/dev/block` 上验证同盘合法分区通过、缺失/未知排除设备 `/dev/nonexistent_slot_xyz` 拒绝、整盘 `/dev/sda` 作为 DATA 拒绝、自身槽 `/dev/sda2` 拒绝 |
+| **4** | **`rw` 启动后原生 RootFS 原始块 SHA-256 会变化，导致健康系统误被拒绝** | 在 `r3c_bundle.c` / `r3c_txn.c` / `r3c_coordinator.c` 新增 `SGW-SYSTEM-2`（含 RSA-2048 签名的 `rootfs.manifest` 不可变系统文件清单，原子留存 `txn-<id>.manifest`）与 `r3c_txn_verify_installed_rootfs()`：`WRITTEN` 写未挂载槽位时校验整盘读回 SHA-256；`CONFIRM` 时按 `rw`/`ro` 区分——`rw` 挂载强制要求签名 `rootfs.manifest` 并逐文件复核运行中 `sysroot` 不可变文件摘要；无 manifest 的 `SGW-SYSTEM-1` 在 `rw` 根下显式拒绝 | `test_n09_rw_ext4_mutated_after_boot_confirms_via_signed_rootfs_manifest_and_tamper_rejected`（通过 `fuse2fs` `rw` 挂载写入日志导致 `slot1.ext4` 原始 SHA-256 改变后仍安全确认；篡改 `/sbin/init` 拒绝）+ `test_n10_legacy_sgw_system_1_without_manifest_rejected_on_rw_root` |
+| **5** | **`controlled_local` 此前只看工作线程心跳，未证明真实队列->转发线程消费且不可冒充完整业务健康** | 在 `gateway/health_probe.c` 与 `gateway/server_link.c` 为 `SGW-LOCAL/1 <nonce>` 接入真实 `upstream_queue -> server_link_worker` 本地标记消费验证（在 `server_link` 弹出队列即终止消费，零字节写入 `tcp_fd` 或上游）；同时策略与协调器严格保留语义边界：**`controlled_local` 下 `external` 永远为 `DEGRADED`（绝不标为 `HEALTHY`）**，仅当根属主受保护策略显式设置 `allow_external_degraded=1` 时按降级策略确认 | `test_g2r3b_gateway_probe` **2/2 OK**；`test_n09_controlled_local_policy_decoupling_without_upstream_traffic` 验证无上行流量时队列->工作线程消费生效，`allow_degraded=0` 拒绝、`allow_degraded=1` 以 `state=DEGRADED` 确认 |
 
 ---
 
-## 2. 本轮全量主机复测结果（最终代码修改后重跑）
+## 2. 最终代码修改后的全量复测结果
 
-所有原始日志保存于 [g2-r3c3-host-logs/](g2-r3c3-host-logs/)：
+所有测试均在本轮整改全部落盘后重新执行，原始输出保存于 [g2-r3c3-host-logs/](g2-r3c3-host-logs/)：
 
-| 测试项 | 命令 | 结果 | 原始日志 |
+| 测试套件 | 命令 | 最新结果 | 原始日志 |
 |---|---|---|---|
-| `boot_ab` C 套件 + R3C 数据/签名 + ARM 检查 | `make -C bsp/apps/boot_ab clean test arm-check arm-r3c-check` | `ab_state` `100/100`、`fw_env_backend` `31/31`、`ab_health FAIL=0`、`system_health` `195/195`、`health_devices` `21/21`、`health_network` `5/5`、`r3c_binding` `16/16`、`r3c_data_exclusion` `PASS`；`test_g2r3c_data` `7/7`、`test_g2r3c_signed_bundle` `5/5`；ARM ELF32 OK | [boot-ab.log](g2-r3c3-host-logs/boot-ab.log) |
-| **N09 / N10 端到端闭环与安全复测** | `python3 -m unittest -v tests.test_g2r3c_n09_n10` | **7/7 OK**（`8.764 s`） | [n09-n10.log](g2-r3c3-host-logs/n09-n10.log) |
+| `boot_ab` C 套件 + R3C + ARM 检查 | `make -C bsp/apps/boot_ab clean test arm-check arm-r3c-check` | `ab_state` `100/100`、`fw_env_backend` `31/31`、`ab_health` `FAIL=0`、`system_health` `195/195`、`health_devices` `21/21`、`health_network` `5/5`、`r3c_binding` `16/16`、`r3c_data_exclusion` `PASS`（含 `/dev/sda*` + `/sys/dev/block` 实测）；`test_g2r3c_data` `7/7`、`test_g2r3c_signed_bundle` `5/5`；ARM ELF32 OK | [boot-ab.log](g2-r3c3-host-logs/boot-ab.log) |
+| **N09 / N10 端到端闭环与安全复测** | `python3 -m unittest -v tests.test_g2r3c_n09_n10` | **10/10 OK**（`10.888 s`） | [n09-n10.log](g2-r3c3-host-logs/n09-n10.log) |
 | FUSE ext4 跨槽持久化 | `python3 -m unittest -v tests.test_g2r3c_fuse_image` | **1/1 OK** | [fuse-image.log](g2-r3c3-host-logs/fuse-image.log) |
 | G1 / G2 / R3 核心回归 | `python3 -m unittest -v tests.test_g1_backup_guard tests.test_g2_uboot_ab tests.test_g2r3_health` | **25/25 OK** | [g1-g2-r3.log](g2-r3c3-host-logs/g1-g2-r3.log) |
 | Gateway 探针回归 | `python3 -m unittest -v tests.test_g2r3b_gateway_probe` | **2/2 OK** | [gateway-probe.log](g2-r3c3-host-logs/gateway-probe.log) |
 | G3 内核与 RootFS 指标回归 | `python3 -m unittest -v tests.test_g3_kernel_rootfs` | **2/2 OK** | [g3.log](g2-r3c3-host-logs/g3.log) |
 | 网关核心 C 单测 & ARM 编译 | `make test`、`make gateway arm` | `10/10 PASS`、ARM `smart_gateway` OK | [core.log](g2-r3c3-host-logs/core.log)、[gateway-arm.log](g2-r3c3-host-logs/gateway-arm.log) |
 | Service Supervisor & OTA Agent | `make -C bsp/apps/service_supervisor test`、`make -C bsp/apps/ota_agent test-supervisor test-supervisor-s2` | Supervisor `58/58`、`35/35`；OTA `145/145`、`44/44` | [supervisor.log](g2-r3c3-host-logs/supervisor.log)、[ota.log](g2-r3c3-host-logs/ota.log) |
+
+---
+
+## 3. 证据边界说明
+
+- `test_g2r3c_n09_n10.py` 在无特权主机上对系统槽与 DATA 挂载点仍使用隔离目录夹具与 `fuse2fs`（真实 `/dev/mmcblk1p1..p3` 硬件块设备挂载及开发板启动链需在完成 G1 外部恢复验证后于开发板实测）。
+- `r3c_data_exclusion_test.c` 已补充对真实内核 `/dev/sda`、`/dev/sda1`、`/dev/sda2` 及 `/sys/dev/block` 的直接验证。

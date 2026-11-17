@@ -13,9 +13,9 @@ G4 负责把 G3 产出的裁剪产物（`zImage`、`100ask_imx6ull-14x14.dtb`、
 [SWUpdate .swu 签名升级包]
         │
         ▼ (G4 写入协调器: 持 .ota.lock 排他 + .sgw-transaction.lock 排他)
-  1) 验签 + 校验 board=imx6ull-100ask + 大小/SHA-256 -> r3c_bundle_record() [VERIFIED]
-  2) 目标槽写前核验 (running_slot != target_slot, 非挂载/非 DATA, 空间足够)
-  3) 写入非活动槽隔离/裸分区镜像 + fsync + 读回校验 SHA-256 -> r3c_txn_write_and_verify_slot() [WRITTEN]
+  1) 验签 + 校验 board=imx6ull-100ask + rootfs.manifest (SGW-SYSTEM-2 不可变系统文件清单) + SHA-256 -> r3c_bundle_record() [VERIFIED]
+  2) 调用自校验写槽接口 r3c_txn_write_and_verify_slot(txdir, id, owner, imgfd, fw_cfg, hcfg, opts) [WRITTEN]：
+     函数内部独立校验 running_slot / last_good / mountinfo 未挂载 / !S_ISLNK && S_ISBLK / BLKGETSIZE64 容量，然后写槽 + fsync + 读回 SHA-256
   4) 原子写 U-Boot env + 读回核验 -> r3c_txn_stage_pending() [PENDING]
         │
         ▼ (重启进入候选槽 + WDOG1 守护)

@@ -23,5 +23,7 @@ void gateway_health_listener_close(gateway_health_listener_t *listener);
 void gateway_health_observe_forwarded(const unsigned char *data, size_t length);
 /* Diagnostic only: server_link loop heartbeat (not external receipt). */
 void gateway_health_observe_worker_tick(void);
+/* Returns 1 and consumes marker if queue item is a local-only probe (never sent upstream). */
+int gateway_health_consume_local_marker(const unsigned char *data, size_t length);
 
 #endif

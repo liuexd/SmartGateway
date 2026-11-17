@@ -1,6 +1,6 @@
 test_shared_image_persists_across_simulated_slot_views (tests.test_g2r3c_fuse_image.ImageTests.test_shared_image_persists_across_simulated_slot_views) ... ok
 
 ----------------------------------------------------------------------
-Ran 1 test in 0.156s
+Ran 1 test in 0.147s
 
 OK

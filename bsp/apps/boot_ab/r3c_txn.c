@@ -6,15 +6,20 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <linux/fs.h>
 #include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 
 #define MAX_IMAGE_BYTES (2ULL * 1024 * 1024 * 1024)
+#define MAX_MANIFEST_BYTES (64 * 1024)
 
 static int fail(char *err, size_t len, const char *msg)
 {
@@ -73,6 +78,47 @@ static int valid_boot_id(const char *s)
     return nonzero;
 }
 
+static int safe_abs(const char *s)
+{
+    size_t n;
+    if (!s || s[0] != '/' || s[1] == '\0') return 0;
+    n = strlen(s);
+    if (n >= PATH_MAX || s[n - 1] == '/' || strstr(s, "//") ||
+        strstr(s, "/../") || strstr(s, "/./") || strpbrk(s, " \t\r\n\\"))
+        return 0;
+    if (n >= 3 && strcmp(s + n - 3, "/..") == 0) return 0;
+    if (n >= 2 && strcmp(s + n - 2, "/.") == 0) return 0;
+    return 1;
+}
+
+static int trusted_parent_dirs(const char *path, uid_t owner)
+{
+    char buf[PATH_MAX], *slash;
+    struct stat st;
+    size_t i, n;
+    if (!safe_abs(path)) return -1;
+    snprintf(buf, sizeof(buf), "%s", path);
+    slash = strrchr(buf, '/');
+    if (!slash) return -1;
+    if (slash == buf)
+        return (lstat("/", &st) == 0 && S_ISDIR(st.st_mode) &&
+                st.st_uid == 0 && !(st.st_mode & 0022)) ? 0 : -1;
+    *slash = '\0';
+    n = strlen(buf);
+    if (lstat("/", &st) != 0 || st.st_uid != 0 || (st.st_mode & 0022)) return -1;
+    for (i = 1; i <= n; ++i) {
+        char saved;
+        if (buf[i] != '/' && buf[i] != '\0') continue;
+        saved = buf[i];
+        buf[i] = '\0';
+        if (lstat(buf, &st) != 0 || !S_ISDIR(st.st_mode) ||
+            (st.st_uid != 0 && st.st_uid != owner) || (st.st_mode & 0022))
+            return -1;
+        buf[i] = saved;
+    }
+    return 0;
+}
+
 static int secure_dir(int fd, uid_t owner)
 {
     struct stat st;
@@ -116,7 +162,7 @@ static int serialize_and_commit(int txdir, uid_t owner, const r3c_txn_record_t *
                                 char *err, size_t errlen)
 {
     char name[80], tmp[96], body[1024];
-    int fd = -1, n, created = 0;
+    int fd = -1, n, created = 0, used = 0;
     if (!rec || !valid_hex64(rec->id) || !valid_hex64(rec->package_sha256) ||
         !valid_hex64(rec->image_sha256) || secure_dir(txdir, owner) != 0)
         return fail(err, errlen, "invalid transaction record for commit");
@@ -126,34 +172,36 @@ static int serialize_and_commit(int txdir, uid_t owner, const r3c_txn_record_t *
     n = snprintf(tmp, sizeof(tmp), ".txn-%s.tmp.%ld", rec->id, (long)getpid());
     if (n <= 0 || (size_t)n >= sizeof(tmp)) return fail(err, errlen, "tmp name overflow");
 
-    if (rec->boot_id[0]) {
-        n = snprintf(body, sizeof(body),
-                     "SGW-TXN-1\nstate=%s\nid=%s\npackage=%s\nimage=%s\ntarget=%u\nlast_good=%u\n"
-                     "written_size=%llu\nboot_id=%s\nbootcount=%lu\nconsumed=%d\n",
-                     r3c_txn_state_str(rec->state), rec->id, rec->package_sha256,
-                     rec->image_sha256, rec->target_slot, rec->last_good_slot,
-                     (unsigned long long)rec->written_size, rec->boot_id,
-                     rec->bootcount, rec->consumed ? 1 : 0);
-    } else if (rec->written_size > 0) {
-        n = snprintf(body, sizeof(body),
-                     "SGW-TXN-1\nstate=%s\nid=%s\npackage=%s\nimage=%s\ntarget=%u\nlast_good=%u\n"
-                     "written_size=%llu\nconsumed=%d\n",
-                     r3c_txn_state_str(rec->state), rec->id, rec->package_sha256,
-                     rec->image_sha256, rec->target_slot, rec->last_good_slot,
-                     (unsigned long long)rec->written_size, rec->consumed ? 1 : 0);
-    } else {
-        n = snprintf(body, sizeof(body),
-                     "SGW-TXN-1\nstate=%s\nid=%s\npackage=%s\nimage=%s\ntarget=%u\nlast_good=%u\n",
-                     r3c_txn_state_str(rec->state), rec->id, rec->package_sha256,
-                     rec->image_sha256, rec->target_slot, rec->last_good_slot);
-    }
+    n = snprintf(body, sizeof(body),
+                 "SGW-TXN-1\nstate=%s\nid=%s\npackage=%s\nimage=%s\ntarget=%u\nlast_good=%u\n",
+                 r3c_txn_state_str(rec->state), rec->id, rec->package_sha256,
+                 rec->image_sha256, rec->target_slot, rec->last_good_slot);
     if (n <= 0 || (size_t)n >= sizeof(body)) return fail(err, errlen, "body overflow");
+    used = n;
+    if (rec->rootfs_manifest_sha256[0]) {
+        n = snprintf(body + used, sizeof(body) - (size_t)used, "rootfs_manifest=%s\n",
+                     rec->rootfs_manifest_sha256);
+        if (n <= 0 || (size_t)(used + n) >= sizeof(body)) return fail(err, errlen, "body overflow");
+        used += n;
+    }
+    if (rec->written_size > 0) {
+        n = snprintf(body + used, sizeof(body) - (size_t)used, "written_size=%llu\nconsumed=%d\n",
+                     (unsigned long long)rec->written_size, rec->consumed ? 1 : 0);
+        if (n <= 0 || (size_t)(used + n) >= sizeof(body)) return fail(err, errlen, "body overflow");
+        used += n;
+    }
+    if (rec->boot_id[0]) {
+        n = snprintf(body + used, sizeof(body) - (size_t)used, "boot_id=%s\nbootcount=%lu\n",
+                     rec->boot_id, rec->bootcount);
+        if (n <= 0 || (size_t)(used + n) >= sizeof(body)) return fail(err, errlen, "body overflow");
+        used += n;
+    }
 
     (void)unlinkat(txdir, tmp, 0);
     fd = openat(txdir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) return fail(err, errlen, "cannot create tmp transaction file");
     created = 1;
-    if (write_all(fd, body, (size_t)n) != 0 || fsync(fd) != 0) {
+    if (write_all(fd, body, (size_t)used) != 0 || fsync(fd) != 0) {
         close(fd);
         (void)unlinkat(txdir, tmp, 0);
         (void)fsync(txdir);
@@ -222,55 +270,60 @@ static int read_record_file(int txdir, const char *filename, const char *expecte
         eq = strchr(line, '=');
         if (!eq) return fail(err, errlen, "malformed transaction line");
         *eq = '\0';
-        const char *k = line, *v = eq + 1;
-        if (strcmp(k, "state") == 0) {
-            if ((req & 1u) || parse_state(v, &out->state) != 0)
-                return fail(err, errlen, "invalid transaction state");
-            req |= 1u;
-        } else if (strcmp(k, "id") == 0) {
-            if ((req & 2u) || !valid_hex64(v))
-                return fail(err, errlen, "invalid transaction id");
-            req |= 2u;
-            snprintf(out->id, sizeof(out->id), "%s", v);
-        } else if (strcmp(k, "package") == 0) {
-            if ((req & 4u) || !valid_hex64(v))
-                return fail(err, errlen, "invalid package digest");
-            req |= 4u;
-            snprintf(out->package_sha256, sizeof(out->package_sha256), "%s", v);
-        } else if (strcmp(k, "image") == 0) {
-            if ((req & 8u) || !valid_hex64(v))
-                return fail(err, errlen, "invalid image digest");
-            req |= 8u;
-            snprintf(out->image_sha256, sizeof(out->image_sha256), "%s", v);
-        } else if (strcmp(k, "target") == 0) {
-            uint64_t val = 0;
-            if ((req & 16u) || parse_u64(v, &val) != 0 || (val != 1 && val != 2))
-                return fail(err, errlen, "invalid target slot");
-            req |= 16u;
-            out->target_slot = (unsigned int)val;
-        } else if (strcmp(k, "last_good") == 0) {
-            uint64_t val = 0;
-            if ((req & 32u) || parse_u64(v, &val) != 0 || (val != 1 && val != 2))
-                return fail(err, errlen, "invalid last_good slot");
-            req |= 32u;
-            out->last_good_slot = (unsigned int)val;
-        } else if (strcmp(k, "written_size") == 0) {
-            if (parse_u64(v, &out->written_size) != 0 || out->written_size == 0)
-                return fail(err, errlen, "invalid written_size");
-        } else if (strcmp(k, "boot_id") == 0) {
-            if (!valid_boot_id(v)) return fail(err, errlen, "invalid transaction boot_id");
-            snprintf(out->boot_id, sizeof(out->boot_id), "%s", v);
-        } else if (strcmp(k, "bootcount") == 0) {
-            uint64_t val = 0;
-            if (parse_u64(v, &val) != 0 || val == 0)
-                return fail(err, errlen, "invalid transaction bootcount");
-            out->bootcount = (unsigned long)val;
-        } else if (strcmp(k, "consumed") == 0) {
-            if (strcmp(v, "1") == 0) out->consumed = 1;
-            else if (strcmp(v, "0") == 0) out->consumed = 0;
-            else return fail(err, errlen, "invalid consumed flag");
-        } else {
-            return fail(err, errlen, "unknown transaction field");
+        {
+            const char *k = line, *v = eq + 1;
+            if (strcmp(k, "state") == 0) {
+                if ((req & 1u) || parse_state(v, &out->state) != 0)
+                    return fail(err, errlen, "invalid transaction state");
+                req |= 1u;
+            } else if (strcmp(k, "id") == 0) {
+                if ((req & 2u) || !valid_hex64(v))
+                    return fail(err, errlen, "invalid transaction id");
+                req |= 2u;
+                snprintf(out->id, sizeof(out->id), "%s", v);
+            } else if (strcmp(k, "package") == 0) {
+                if ((req & 4u) || !valid_hex64(v))
+                    return fail(err, errlen, "invalid package digest");
+                req |= 4u;
+                snprintf(out->package_sha256, sizeof(out->package_sha256), "%s", v);
+            } else if (strcmp(k, "image") == 0) {
+                if ((req & 8u) || !valid_hex64(v))
+                    return fail(err, errlen, "invalid image digest");
+                req |= 8u;
+                snprintf(out->image_sha256, sizeof(out->image_sha256), "%s", v);
+            } else if (strcmp(k, "rootfs_manifest") == 0) {
+                if (!valid_hex64(v)) return fail(err, errlen, "invalid rootfs_manifest digest");
+                snprintf(out->rootfs_manifest_sha256, sizeof(out->rootfs_manifest_sha256), "%s", v);
+            } else if (strcmp(k, "target") == 0) {
+                uint64_t val = 0;
+                if ((req & 16u) || parse_u64(v, &val) != 0 || (val != 1 && val != 2))
+                    return fail(err, errlen, "invalid target slot");
+                req |= 16u;
+                out->target_slot = (unsigned int)val;
+            } else if (strcmp(k, "last_good") == 0) {
+                uint64_t val = 0;
+                if ((req & 32u) || parse_u64(v, &val) != 0 || (val != 1 && val != 2))
+                    return fail(err, errlen, "invalid last_good slot");
+                req |= 32u;
+                out->last_good_slot = (unsigned int)val;
+            } else if (strcmp(k, "written_size") == 0) {
+                if (parse_u64(v, &out->written_size) != 0 || out->written_size == 0)
+                    return fail(err, errlen, "invalid written_size");
+            } else if (strcmp(k, "boot_id") == 0) {
+                if (!valid_boot_id(v)) return fail(err, errlen, "invalid transaction boot_id");
+                snprintf(out->boot_id, sizeof(out->boot_id), "%s", v);
+            } else if (strcmp(k, "bootcount") == 0) {
+                uint64_t val = 0;
+                if (parse_u64(v, &val) != 0 || val == 0)
+                    return fail(err, errlen, "invalid transaction bootcount");
+                out->bootcount = (unsigned long)val;
+            } else if (strcmp(k, "consumed") == 0) {
+                if (strcmp(v, "1") == 0) out->consumed = 1;
+                else if (strcmp(v, "0") == 0) out->consumed = 0;
+                else return fail(err, errlen, "invalid consumed flag");
+            } else {
+                return fail(err, errlen, "unknown transaction field");
+            }
         }
     }
     if (req != 63u || out->target_slot == out->last_good_slot)
@@ -290,12 +343,22 @@ int r3c_txn_load_by_id(int txdir, const char *id, uid_t owner,
     return read_record_file(txdir, name, id, owner, out, err, errlen);
 }
 
+static int matches_manifest_for_txn(const char *dname, const char *active_id)
+{
+    char expected[96];
+    if (!active_id || !active_id[0]) return 0;
+    snprintf(expected, sizeof(expected), "txn-%s.manifest", active_id);
+    return strcmp(dname, expected) == 0;
+}
+
 int r3c_txn_load_active(int txdir, uid_t owner, r3c_txn_record_t *out,
                         char *err, size_t errlen)
 {
     int dirfd = -1, active_count = 0;
     DIR *dir = NULL;
     struct dirent *entry;
+    char manifest_names[4][260];
+    int n_manifests = 0, i;
 
     if (!out || secure_dir(txdir, owner) != 0)
         return fail(err, errlen, "untrusted txdir");
@@ -305,14 +368,18 @@ int r3c_txn_load_active(int txdir, uid_t owner, r3c_txn_record_t *out,
     if (!dir) { close(dirfd); return fail(err, errlen, "fdopendir failed"); }
 
     while ((entry = readdir(dir)) != NULL) {
+        size_t dlen = strlen(entry->d_name);
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 ||
             strcmp(entry->d_name, ".sgw-transaction.lock") == 0)
             continue;
-        if (strncmp(entry->d_name, ".txn-", 5) == 0 && strstr(entry->d_name, ".tmp.") != NULL) {
-            /* Unfinished tmp artifact indicates interrupted crash or concurrent writer; ignore/reject safely */
+        if (strncmp(entry->d_name, ".txn-", 5) == 0 && strstr(entry->d_name, ".tmp.") != NULL)
+            continue;
+        if (dlen == 77 && strncmp(entry->d_name, "txn-", 4) == 0 &&
+            strcmp(entry->d_name + 68, ".manifest") == 0) {
+            if (n_manifests < 4) snprintf(manifest_names[n_manifests++], 260, "%s", entry->d_name);
             continue;
         }
-        if (strncmp(entry->d_name, "txn-", 4) != 0 || !valid_hex64(entry->d_name + 4)) {
+        if (dlen != 68 || strncmp(entry->d_name, "txn-", 4) != 0 || !valid_hex64(entry->d_name + 4)) {
             closedir(dir);
             return fail(err, errlen, "unexpected file in transaction directory");
         }
@@ -321,9 +388,8 @@ int r3c_txn_load_active(int txdir, uid_t owner, r3c_txn_record_t *out,
             closedir(dir);
             return -1;
         }
-        if (rec.consumed || rec.state == R3C_TXN_CONFIRMED) {
-            continue; /* Consumed/completed history cannot be re-activated */
-        }
+        if (rec.consumed || rec.state == R3C_TXN_CONFIRMED)
+            continue;
         active_count++;
         if (active_count > 1) {
             closedir(dir);
@@ -334,6 +400,9 @@ int r3c_txn_load_active(int txdir, uid_t owner, r3c_txn_record_t *out,
     closedir(dir);
     if (active_count != 1)
         return fail(err, errlen, "no active unconsumed transaction record");
+    for (i = 0; i < n_manifests; ++i) {
+        (void)matches_manifest_for_txn(manifest_names[i], out->id);
+    }
     return 0;
 }
 
@@ -381,22 +450,84 @@ out:
     return rc;
 }
 
+static int device_is_mounted_in_mountinfo(const char *mountinfo_path,
+                                          unsigned int maj, unsigned int min)
+{
+    FILE *fp = fopen((mountinfo_path && mountinfo_path[0]) ? mountinfo_path : "/proc/self/mountinfo", "re");
+    char line[4096];
+    if (!fp) return 1; /* Fail-closed if mountinfo unreadable */
+    while (fgets(line, sizeof(line), fp)) {
+        unsigned int lma = 0, lmi = 0;
+        if (sscanf(line, "%*u %*u %u:%u ", &lma, &lmi) == 2 &&
+            lma == maj && lmi == min) {
+            fclose(fp);
+            return 1;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
 int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
-                                  int imagefd, int slotfd,
+                                  int imagefd,
+                                  const fw_env_backend_cfg_t *fw_cfg,
+                                  const ab_health_cfg_t *hcfg,
+                                  const r3c_slot_write_opts_t *opts,
                                   char *err, size_t errlen)
 {
-    int lockfd = -1;
+    int lockfd = -1, slotfd = -1, rc = -1;
     r3c_txn_record_t rec;
+    ab_slot_t running_slot = AB_SLOT_NONE;
+    ab_env_t env;
     char src_hex[65], rb_hex[65];
-    uint64_t src_len = 0, rb_len = 0, off = 0;
+    uint64_t src_len = 0, rb_len = 0, off = 0, cap_bytes = 0;
     unsigned char buf[16384];
-    int rc = -1;
+    const char *mi_path = (opts && opts->mountinfo_path) ? opts->mountinfo_path : "/proc/self/mountinfo";
+    int allow_reg = (opts && opts->allow_regular_file_target) ? 1 : 0;
+    int skip_blk = (opts && opts->allow_host_slot_sim) ? 1 : 0;
+    const char *target_path = NULL, *running_dev = NULL, *lg_dev = NULL;
+    struct stat tst, rst, lst_run, lst_lg;
 
-    if (imagefd < 0 || slotfd < 0) return fail(err, errlen, "invalid image/slot fd");
+    if (imagefd < 0 || !fw_cfg || !hcfg)
+        return fail(err, errlen, "invalid arguments for slot write");
+    if (!opts && geteuid() != 0)
+        return fail(err, errlen, "production slot write requires root privilege");
     if (r3c_txn_acquire_lock(txdir, owner, &lockfd, err, errlen) != 0) return -1;
     if (r3c_txn_load_by_id(txdir, id, owner, &rec, err, errlen) != 0) goto out;
     if (rec.state != R3C_TXN_VERIFIED || rec.consumed) {
         fail(err, errlen, "transaction not in VERIFIED state");
+        goto out;
+    }
+
+    /* Independently verify running slot & U-Boot env BEFORE opening or writing ANY target */
+    if (ab_detect_running_slot_full(hcfg, mi_path, skip_blk, &running_slot, err, errlen) != 0)
+        goto out;
+    if (fw_env_backend_load(fw_cfg, &env, err, errlen) != 0) goto out;
+    if (ab_env_validate(&env, err, errlen) != 0) goto out;
+    if (env.ab_state == AB_STATE_TRIAL || env.upgrade_available != 0) {
+        fail(err, errlen, "refusing slot write while A/B trial upgrade is active");
+        goto out;
+    }
+    if ((ab_slot_t)rec.target_slot == running_slot ||
+        (ab_slot_t)rec.target_slot != ab_slot_other(running_slot) ||
+        (ab_slot_t)rec.last_good_slot != running_slot ||
+        (ab_slot_t)rec.target_slot == env.active_slot ||
+        (ab_slot_t)rec.target_slot == env.last_good_slot) {
+        fail(err, errlen, "transaction target slot conflicts with running or last_good slot");
+        goto out;
+    }
+
+    running_dev = ab_slot_device(running_slot);
+    lg_dev = ab_slot_device(env.last_good_slot);
+    target_path = (opts && opts->target_dev_override) ?
+        opts->target_dev_override : ab_slot_device((ab_slot_t)rec.target_slot);
+    if (!target_path || !safe_abs(target_path) || trusted_parent_dirs(target_path, owner) != 0) {
+        fail(err, errlen, "untrusted target slot path");
+        goto out;
+    }
+    if ((running_dev && strcmp(target_path, running_dev) == 0) ||
+        (lg_dev && strcmp(target_path, lg_dev) == 0)) {
+        fail(err, errlen, "target slot path equals active running/last_good slot");
         goto out;
     }
     if (r3c_txn_digest_fd(imagefd, 0, src_hex, &src_len) != 0 ||
@@ -404,6 +535,69 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
         fail(err, errlen, "verified image digest mismatch before slot write");
         goto out;
     }
+    if (stat("/", &rst) != 0) {
+        fail(err, errlen, "cannot stat root '/'");
+        goto out;
+    }
+
+    if (lstat(target_path, &tst) != 0) {
+        if (!allow_reg || errno != ENOENT) {
+            fail(err, errlen, "target slot device missing or inaccessible");
+            goto out;
+        }
+    } else {
+        if (S_ISLNK(tst.st_mode)) {
+            fail(err, errlen, "target slot cannot be symlink");
+            goto out;
+        }
+        if (S_ISBLK(tst.st_mode)) {
+            if (tst.st_rdev == rst.st_dev) {
+                fail(err, errlen, "target block device matches mounted root");
+                goto out;
+            }
+            if (running_dev && stat(running_dev, &lst_run) == 0 && S_ISBLK(lst_run.st_mode) &&
+                tst.st_rdev == lst_run.st_rdev) {
+                fail(err, errlen, "target block device identity matches running slot");
+                goto out;
+            }
+            if (lg_dev && stat(lg_dev, &lst_lg) == 0 && S_ISBLK(lst_lg.st_mode) &&
+                tst.st_rdev == lst_lg.st_rdev) {
+                fail(err, errlen, "target block device identity matches last_good slot");
+                goto out;
+            }
+            if (device_is_mounted_in_mountinfo(mi_path, major(tst.st_rdev), minor(tst.st_rdev))) {
+                fail(err, errlen, "refusing write to currently mounted target block device");
+                goto out;
+            }
+        } else if (!allow_reg || !S_ISREG(tst.st_mode)) {
+            fail(err, errlen, "target slot is not a block device");
+            goto out;
+        } else {
+            /* Regular test file with pre-allocated size > 0 must fit image */
+            if (tst.st_size > 0 && (uint64_t)tst.st_size < src_len) {
+                fail(err, errlen, "target image container smaller than verified payload");
+                goto out;
+            }
+        }
+    }
+
+    slotfd = open(target_path,
+                  allow_reg ? (O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW) : (O_RDWR | O_CLOEXEC | O_NOFOLLOW),
+                  0600);
+    if (slotfd < 0 || fstat(slotfd, &tst) != 0) {
+        fail(err, errlen, "cannot open verified target slot");
+        goto out;
+    }
+    if (S_ISBLK(tst.st_mode)) {
+        if (ioctl(slotfd, BLKGETSIZE64, &cap_bytes) != 0 || cap_bytes < src_len) {
+            fail(err, errlen, "target block device capacity insufficient");
+            goto out;
+        }
+    } else if (!allow_reg || !S_ISREG(tst.st_mode)) {
+        fail(err, errlen, "opened target descriptor is not block device");
+        goto out;
+    }
+
     while (off < src_len) {
         size_t want = (size_t)(src_len - off);
         ssize_t r, w, done = 0;
@@ -433,7 +627,90 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
     if (serialize_and_commit(txdir, owner, &rec, err, errlen) != 0) goto out;
     rc = 0;
 out:
+    if (slotfd >= 0) close(slotfd);
     if (lockfd >= 0) { (void)flock(lockfd, LOCK_UN); close(lockfd); }
+    return rc;
+}
+
+int r3c_txn_verify_installed_rootfs(int txdir, const r3c_txn_record_t *rec, uid_t owner,
+                                    const char *sysroot_prefix, int root_is_rw,
+                                    int raw_slotfd,
+                                    char *err, size_t errlen)
+{
+    char mname[96], mhash[65], *mbuf = NULL, *line, *save = NULL;
+    uint64_t mlen = 0;
+    struct stat mst;
+    int mfd = -1, rc = -1;
+    ssize_t n;
+    const char *prefix = sysroot_prefix ? sysroot_prefix : "";
+
+    if (!rec) return fail(err, errlen, "null transaction record");
+    if (!rec->rootfs_manifest_sha256[0]) {
+        /* SGW-SYSTEM-1 legacy bundle has no file-level manifest: only valid for read-only mounted rootfs */
+        char slot_hex[65];
+        uint64_t slot_len = 0;
+        if (root_is_rw)
+            return fail(err, errlen, "rw-mounted rootfs requires signed rootfs_manifest");
+        if (raw_slotfd < 0 ||
+            r3c_txn_digest_fd(raw_slotfd, rec->written_size, slot_hex, &slot_len) != 0 ||
+            slot_len != rec->written_size || strcmp(slot_hex, rec->image_sha256) != 0)
+            return fail(err, errlen, "ro rootfs raw slot digest mismatch");
+        return 0;
+    }
+
+    if (snprintf(mname, sizeof(mname), "txn-%s.manifest", rec->id) >= (int)sizeof(mname))
+        return fail(err, errlen, "manifest name overflow");
+    mfd = openat(txdir, mname, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (mfd < 0 || fstat(mfd, &mst) != 0 || !S_ISREG(mst.st_mode) || mst.st_uid != owner ||
+        (mst.st_mode & 0077) || mst.st_size <= 0 || mst.st_size > MAX_MANIFEST_BYTES) {
+        fail(err, errlen, "missing or untrusted txn rootfs.manifest");
+        goto out;
+    }
+    if (r3c_txn_digest_fd(mfd, 0, mhash, &mlen) != 0 ||
+        strcmp(mhash, rec->rootfs_manifest_sha256) != 0) {
+        fail(err, errlen, "txn rootfs.manifest digest mismatch");
+        goto out;
+    }
+    mbuf = malloc((size_t)mlen + 1);
+    if (!mbuf) { fail(err, errlen, "oom"); goto out; }
+    n = pread(mfd, mbuf, (size_t)mlen, 0);
+    if (n != (ssize_t)mlen || memchr(mbuf, '\0', (size_t)n)) {
+        fail(err, errlen, "cannot read txn rootfs.manifest");
+        goto out;
+    }
+    mbuf[n] = '\0';
+
+    for (line = strtok_r(mbuf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *sp = strchr(line, ' ');
+        char full[PATH_MAX], fhex[65];
+        uint64_t flen = 0;
+        struct stat fst;
+        int ffd;
+        if (!sp) { fail(err, errlen, "malformed rootfs.manifest line"); goto out; }
+        *sp = '\0';
+        if (!safe_abs(line) || !valid_hex64(sp + 1)) {
+            fail(err, errlen, "invalid rootfs.manifest entry");
+            goto out;
+        }
+        if (snprintf(full, sizeof(full), "%s%s", prefix, line) >= (int)sizeof(full)) {
+            fail(err, errlen, "sysroot file path overflow");
+            goto out;
+        }
+        ffd = open(full, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (ffd < 0) { fail(err, errlen, "missing signed system file in running rootfs"); goto out; }
+        if (fstat(ffd, &fst) != 0 || !S_ISREG(fst.st_mode) ||
+            r3c_txn_digest_fd(ffd, 0, fhex, &flen) != 0 ||
+            strcmp(fhex, sp + 1) != 0) {
+            close(ffd);
+            fail(err, errlen, "running system file digest mismatch against signed rootfs_manifest");
+            goto out;
+        }
+        close(ffd);
+    }
+    rc = 0;
+out:
+    free(mbuf);
+    if (mfd >= 0) close(mfd);
     return rc;
 }
 
@@ -480,12 +757,10 @@ out:
 int r3c_txn_begin_confirm(int txdir, const char *id, uid_t owner,
                           ab_slot_t running_slot, ab_slot_t last_good_slot,
                           const char *boot_id, unsigned long bootcount,
-                          int slotfd,
+                          const char *sysroot_prefix, int root_is_rw, int slotfd,
                           char *err, size_t errlen)
 {
     r3c_txn_record_t rec;
-    char slot_hex[65];
-    uint64_t slot_len = 0;
 
     if (!valid_boot_id(boot_id) || bootcount == 0)
         return fail(err, errlen, "invalid boot_id or bootcount");
@@ -496,10 +771,9 @@ int r3c_txn_begin_confirm(int txdir, const char *id, uid_t owner,
         (ab_slot_t)rec.last_good_slot != last_good_slot ||
         rec.written_size == 0)
         return fail(err, errlen, "transaction slot or size mismatch");
-    if (slotfd < 0 ||
-        r3c_txn_digest_fd(slotfd, rec.written_size, slot_hex, &slot_len) != 0 ||
-        slot_len != rec.written_size || strcmp(slot_hex, rec.image_sha256) != 0)
-        return fail(err, errlen, "installed slot digest verification failed");
+    if (r3c_txn_verify_installed_rootfs(txdir, &rec, owner, sysroot_prefix,
+                                        root_is_rw, slotfd, err, errlen) != 0)
+        return -1;
 
     rec.state = R3C_TXN_CONFIRMING;
     snprintf(rec.boot_id, sizeof(rec.boot_id), "%s", boot_id);
@@ -525,12 +799,11 @@ int r3c_txn_finish_confirm(int txdir, const char *id, uid_t owner,
 }
 
 int r3c_txn_reconcile_confirm(int txdir, const char *id, uid_t owner,
-                              ab_slot_t running_slot, int slotfd,
+                              ab_slot_t running_slot,
+                              const char *sysroot_prefix, int root_is_rw, int slotfd,
                               char *err, size_t errlen)
 {
     r3c_txn_record_t rec;
-    char slot_hex[65];
-    uint64_t slot_len = 0;
 
     if (r3c_txn_load_by_id(txdir, id, owner, &rec, err, errlen) != 0) return -1;
     if (rec.consumed || rec.state != R3C_TXN_CONFIRMING)
@@ -538,10 +811,9 @@ int r3c_txn_reconcile_confirm(int txdir, const char *id, uid_t owner,
     if ((ab_slot_t)rec.target_slot != running_slot ||
         !valid_boot_id(rec.boot_id) || rec.bootcount == 0 || rec.written_size == 0)
         return fail(err, errlen, "CONFIRMING transaction missing verified binding");
-    if (slotfd < 0 ||
-        r3c_txn_digest_fd(slotfd, rec.written_size, slot_hex, &slot_len) != 0 ||
-        slot_len != rec.written_size || strcmp(slot_hex, rec.image_sha256) != 0)
-        return fail(err, errlen, "installed slot digest mismatch during recovery");
+    if (r3c_txn_verify_installed_rootfs(txdir, &rec, owner, sysroot_prefix,
+                                        root_is_rw, slotfd, err, errlen) != 0)
+        return -1;
     rec.state = R3C_TXN_CONFIRMED;
     rec.consumed = 1;
     return serialize_and_commit(txdir, owner, &rec, err, errlen);

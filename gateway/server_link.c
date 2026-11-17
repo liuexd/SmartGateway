@@ -147,6 +147,11 @@ void *server_link_worker(void *arg)
 
             if(queue_result == MESSAGE_QUEUE_OK)
             {
+                if(gateway_health_consume_local_marker(
+                        pending_messsage.data, pending_messsage.length))
+                {
+                    continue;
+                }
                 have_pending_message = 1;
             }
             else if(queue_result == MESSAGE_QUEUE_SHUTDOWN)

@@ -107,6 +107,32 @@ static int trusted_dirs(const char *path, uid_t owner)
     return 0;
 }
 
+static int trusted_parent_dirs(const char *path, uid_t owner)
+{
+    char buf[PATH_MAX], *slash;
+    if (!safe_absolute(path)) return -1;
+    snprintf(buf, sizeof(buf), "%s", path);
+    slash = strrchr(buf, '/');
+    if (!slash) return -1;
+    if (slash == buf) {
+        struct stat st;
+        return (lstat("/", &st) == 0 && S_ISDIR(st.st_mode) &&
+                st.st_uid == 0 && !(st.st_mode & 0022)) ? 0 : -1;
+    }
+    *slash = '\0';
+    return trusted_dirs(buf, owner);
+}
+
+static int trusted_block_node(const char *path, uid_t owner, struct stat *out_st)
+{
+    struct stat lst;
+    if (trusted_parent_dirs(path, owner) != 0) return -1;
+    if (lstat(path, &lst) != 0 || !S_ISBLK(lst.st_mode)) return -1;
+    if ((lst.st_uid != 0 && lst.st_uid != owner) || (lst.st_mode & 0002)) return -1;
+    if (out_st) *out_st = lst;
+    return 0;
+}
+
 static int read_mountinfo_at(const char *path, char **out)
 {
     FILE *fp;
@@ -178,8 +204,7 @@ int r3c_data_inspect(const r3c_data_policy_t *p, char *reason, size_t size)
         p->minimum_available_bytes == 0)
         return fail(reason, size, "invalid or incomplete policy");
     if (trusted_dirs(p->mountpoint, p->owner) != 0 ||
-        trusted_dirs(p->device, p->owner) != 0 ||
-        stat(p->device, &dev) != 0 || !S_ISBLK(dev.st_mode) ||
+        trusted_block_node(p->device, p->owner, &dev) != 0 ||
         stat("/", &root) != 0)
         return fail(reason, size, "untrusted mount path or block device");
     dir = open(p->mountpoint, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
@@ -450,44 +475,47 @@ static int read_sysfs_geom(const char *sysfs_root, unsigned int maj, unsigned in
 
 int r3c_data_check_slot_exclusion_sysfs(unsigned int dev_major, unsigned int dev_minor,
                                         const char *data_device,
+                                        const char *whole_disk_device,
                                         const char *const *excluded_devices,
                                         size_t excluded_count,
                                         const r3c_sector_range_t *reserved_sectors,
                                         size_t reserved_count,
                                         const char *sysfs_block_root,
+                                        uid_t owner,
                                         char *reason, size_t reason_size)
 {
     const char *sysfs = (sysfs_block_root && sysfs_block_root[0]) ? sysfs_block_root : "/sys/dev/block";
-    uint64_t d_start = 0, d_size = 0;
-    char d_disk[128] = {0};
-    int d_is_part = 0, have_d_geom = 0;
+    uint64_t d_start = 0, d_size = 0, w_start = 0, w_size = 0;
+    char d_disk[128] = {0}, w_disk[128] = {0};
+    int d_is_part = 0, w_is_part = 0;
     size_t i;
 
-    if (!data_device || !safe_absolute(data_device))
-        return fail(reason, reason_size, "invalid data device path");
+    if (!data_device || !safe_absolute(data_device) ||
+        !excluded_devices || excluded_count == 0 ||
+        !whole_disk_device || !safe_absolute(whole_disk_device))
+        return fail(reason, reason_size, "invalid or incomplete slot exclusion policy");
 
-    for (i = 0; i < excluded_count; ++i) {
-        struct stat est;
-        const char *ex = excluded_devices ? excluded_devices[i] : NULL;
-        if (!ex || !ex[0]) continue;
-        if (strcmp(data_device, ex) == 0)
-            return fail(reason, reason_size, "DATA device matches excluded system slot path");
-        if (stat(ex, &est) == 0 && S_ISBLK(est.st_mode) &&
-            major(est.st_rdev) == dev_major && minor(est.st_rdev) == dev_minor) {
-            return fail(reason, reason_size, "DATA block identity matches excluded system slot");
-        }
-    }
+    if (strcmp(data_device, whole_disk_device) == 0)
+        return fail(reason, reason_size, "DATA device cannot be whole disk");
 
+    /* Verify DATA sysfs geometry: must be a real partition starting past sector 0 */
     if (read_sysfs_geom(sysfs, dev_major, dev_minor, &d_start, &d_size,
-                        d_disk, sizeof(d_disk), &d_is_part) == 0) {
-        have_d_geom = 1;
-        if (!d_is_part || d_start == 0)
-            return fail(reason, reason_size, "DATA must be a dedicated non-MBR partition");
-    } else {
-        return fail(reason, reason_size, "cannot read DATA sysfs block geometry");
+                        d_disk, sizeof(d_disk), &d_is_part) != 0 ||
+        !d_is_part || d_start == 0)
+        return fail(reason, reason_size, "cannot prove DATA is a dedicated non-MBR partition");
+
+    /* Verify whole disk identity cleanly (fail-closed if unknown/missing) */
+    {
+        struct stat wst;
+        if (trusted_block_node(whole_disk_device, owner, &wst) != 0 ||
+            (major(wst.st_rdev) == dev_major && minor(wst.st_rdev) == dev_minor) ||
+            read_sysfs_geom(sysfs, major(wst.st_rdev), minor(wst.st_rdev),
+                            &w_start, &w_size, w_disk, sizeof(w_disk), &w_is_part) != 0 ||
+            w_is_part != 0)
+            return fail(reason, reason_size, "whole disk identity unverified");
     }
 
-    if (have_d_geom) {
+    if (strcmp(d_disk, w_disk) == 0) {
         for (i = 0; i < reserved_count; ++i) {
             if (ranges_overlap(d_start, d_size,
                                reserved_sectors[i].start_sector,
@@ -495,22 +523,29 @@ int r3c_data_check_slot_exclusion_sysfs(unsigned int dev_major, unsigned int dev
                 return fail(reason, reason_size, "DATA partition overlaps reserved boot/env sectors");
             }
         }
-        for (i = 0; i < excluded_count; ++i) {
-            struct stat est;
-            uint64_t e_start = 0, e_size = 0;
-            char e_disk[128] = {0};
-            int e_part = 0;
-            const char *ex = excluded_devices ? excluded_devices[i] : NULL;
-            if (!ex || !ex[0]) continue;
-            if (stat(ex, &est) == 0 && S_ISBLK(est.st_mode)) {
-                if (read_sysfs_geom(sysfs, major(est.st_rdev), minor(est.st_rdev),
-                                    &e_start, &e_size, e_disk, sizeof(e_disk), &e_part) == 0) {
-                    if (strcmp(d_disk, e_disk) == 0 &&
-                        ranges_overlap(d_start, d_size, e_start, e_size)) {
-                        return fail(reason, reason_size, "DATA partition overlaps excluded system slot sectors");
-                    }
-                }
-            }
+    }
+
+    /* Every excluded system slot MUST resolve cleanly and be non-overlapping (fail-closed) */
+    for (i = 0; i < excluded_count; ++i) {
+        struct stat est;
+        uint64_t e_start = 0, e_size = 0;
+        char e_disk[128] = {0};
+        int e_part = 0;
+        const char *ex = excluded_devices[i];
+        if (!ex || !safe_absolute(ex) || strcmp(data_device, ex) == 0)
+            return fail(reason, reason_size, "DATA matches or invalid excluded system slot");
+        if (trusted_block_node(ex, owner, &est) != 0)
+            return fail(reason, reason_size, "excluded system slot device unverified or missing");
+        if (major(est.st_rdev) == dev_major && minor(est.st_rdev) == dev_minor)
+            return fail(reason, reason_size, "DATA block identity matches excluded system slot");
+        if (read_sysfs_geom(sysfs, major(est.st_rdev), minor(est.st_rdev),
+                            &e_start, &e_size, e_disk, sizeof(e_disk), &e_part) != 0)
+            return fail(reason, reason_size, "cannot read excluded slot block geometry");
+        if (strcmp(d_disk, e_disk) == 0) {
+            if (!e_part)
+                return fail(reason, reason_size, "excluded slot resolved to whole disk unexpectedly");
+            if (ranges_overlap(d_start, d_size, e_start, e_size))
+                return fail(reason, reason_size, "DATA partition overlaps excluded system slot sectors");
         }
     }
     return 0;
@@ -581,16 +616,16 @@ int r3c_data_inspect_full(const r3c_data_full_policy_t *p, char *reason, size_t 
         p->minimum_available_bytes == 0)
         return fail(reason, size, "invalid or incomplete policy");
     if (trusted_dirs(p->mountpoint, p->owner) != 0 ||
-        stat(p->device, &dev) != 0 || !S_ISBLK(dev.st_mode) ||
+        trusted_block_node(p->device, p->owner, &dev) != 0 ||
         stat("/", &root) != 0)
         return fail(reason, size, "untrusted mount path or block device");
-    if (p->excluded_count > 0 || p->reserved_count > 0) {
-        if (r3c_data_check_slot_exclusion_sysfs(major(dev.st_rdev), minor(dev.st_rdev),
-                                                p->device, p->excluded_devices, p->excluded_count,
-                                                p->reserved_sectors, p->reserved_count,
-                                                p->sysfs_block_root, reason, size) != 0)
-            return -1;
-    }
+    if (r3c_data_check_slot_exclusion_sysfs(major(dev.st_rdev), minor(dev.st_rdev),
+                                            p->device, p->whole_disk_device,
+                                            p->excluded_devices, p->excluded_count,
+                                            p->reserved_sectors, p->reserved_count,
+                                            p->sysfs_block_root, p->owner,
+                                            reason, size) != 0)
+        return -1;
     dir = open(p->mountpoint, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (dir < 0 || fstat(dir, &mnt) != 0 || mnt.st_dev != dev.st_rdev ||
         mnt.st_dev == root.st_dev) {

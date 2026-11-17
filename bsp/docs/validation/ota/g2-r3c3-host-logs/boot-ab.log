@@ -39,8 +39,8 @@ r3c_data_exclusion_test: PASS
 /home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
 	-I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
 	-o ../../../build/arm-ab/sgw_system_health
--rwxrwxr-x 1 ubuntu ubuntu 278K Nov 17 16:44 ../../../build/arm-ab/sgw_bootctl
--rwxrwxr-x 1 ubuntu ubuntu  96K Nov 17 16:44 ../../../build/arm-ab/sgw_watchdog_guard
+-rwxrwxr-x 1 ubuntu ubuntu 295K Nov 17 17:31 ../../../build/arm-ab/sgw_bootctl
+-rwxrwxr-x 1 ubuntu ubuntu  96K Nov 17 17:31 ../../../build/arm-ab/sgw_watchdog_guard
 == sgw_bootctl ==
   Class:                             ELF32
   Type:                              EXEC (Executable file)
@@ -97,7 +97,7 @@ test_settled_confirmed_and_rolled_back (tests.test_g2r3c_data.DataTests.test_set
 test_snapshot_lock_can_be_held_through_decision (tests.test_g2r3c_data.DataTests.test_snapshot_lock_can_be_held_through_decision) ... ok
 
 ----------------------------------------------------------------------
-Ran 7 tests in 0.125s
+Ran 7 tests in 0.135s
 
 OK
 test_lock_contention_and_readonly_destination_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_lock_contention_and_readonly_destination_rejected) ... ok
@@ -107,6 +107,6 @@ test_tamper_image_manifest_and_signature_rejected (tests.test_g2r3c_signed_bundl
 test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 5 tests in 0.687s
+Ran 5 tests in 0.705s
 
 OK

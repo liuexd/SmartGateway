@@ -111,8 +111,9 @@ class TestG2R3CN09N10(unittest.TestCase):
         self.sysroot = self.base / "sysroot"
         (self.sysroot / "sbin").mkdir(parents=True)
         (self.sysroot / "etc").mkdir(parents=True)
-        (self.sysroot / "sbin/init").write_text("init\n")
+        (self.sysroot / "sbin/init").write_text("init-v2\n")
         (self.sysroot / "etc/inittab").write_text("::sysinit:/etc/init.d/rcS\n")
+        (self.sysroot / "etc/sgw-release").write_text("VERSION=g3-v2\n")
         self.cmdline = self.base / "cmdline"
         self.mounts = self.base / "mounts"
         self.set_running_slot("2")
@@ -185,10 +186,23 @@ class TestG2R3CN09N10(unittest.TestCase):
         subprocess.run(["openssl", "pkey", "-in", str(self.privkey), "-pubout",
                         "-out", str(self.pubkey)], check=True, capture_output=True)
         self.pubkey.chmod(0o600)
-        img_bytes = b"G3-TRIMMED-ROOTFS-TEST-PAYLOAD\x00" * 512
+        # Build a real ext4 slot image payload containing the exact immutable sysroot files
+        slot_payload = self.base / "payload.ext4"
+        with slot_payload.open("wb") as f:
+            f.truncate(8 * 1024 * 1024)
+        subprocess.run(["mke2fs", "-q", "-F", "-d", str(self.sysroot), "-t", "ext4", str(slot_payload)], check=True)
+        img_bytes = slot_payload.read_bytes()
         (self.bundle / "rootfs.img").write_bytes(img_bytes)
-        manifest = ("SGW-SYSTEM-1\nboard=imx6ull-100ask\nimage=rootfs.img\n"
-                    f"size={len(img_bytes)}\nsha256={hashlib.sha256(img_bytes).hexdigest()}\n")
+        rm_lines = []
+        for rel in ("/sbin/init", "/etc/inittab", "/etc/sgw-release"):
+            data = (self.sysroot / rel.lstrip("/")).read_bytes()
+            rm_lines.append(f"{rel} {hashlib.sha256(data).hexdigest()}")
+        rm_text = "\n".join(rm_lines) + "\n"
+        (self.bundle / "rootfs.manifest").write_text(rm_text, encoding="utf-8")
+        rm_sha = hashlib.sha256(rm_text.encode("utf-8")).hexdigest()
+        manifest = ("SGW-SYSTEM-2\nboard=imx6ull-100ask\nimage=rootfs.img\n"
+                    f"size={len(img_bytes)}\nsha256={hashlib.sha256(img_bytes).hexdigest()}\n"
+                    f"rootfs_manifest_sha256={rm_sha}\n")
         (self.bundle / "manifest").write_text(manifest, encoding="utf-8")
         subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(self.privkey),
                         "-out", str(self.bundle / "manifest.sig"),
@@ -476,13 +490,14 @@ class TestG2R3CN09N10(unittest.TestCase):
         self.assertNotEqual(r_net.returncode, 0)
         self.assertIn("UNHEALTHY", r_net.stderr)
 
-        # 4. Tampered installed slot image rejected
-        orig = self.slot1_img.read_bytes()
-        self.slot1_img.write_bytes(b"CORRUPTED" + orig[9:])
+        # 4. Tampered installed rootfs file rejected
+        relf = self.sysroot / "etc/sgw-release"
+        orig_rel = relf.read_bytes()
+        relf.write_bytes(b"CORRUPTED")
         r_tamper = self.run_confirm()
         self.assertNotEqual(r_tamper.returncode, 0)
         self.assertIn("digest mismatch", r_tamper.stderr)
-        self.slot1_img.write_bytes(orig)
+        relf.write_bytes(orig_rel)
 
         # 5. Gateway stopped blocks confirm
         subprocess.run([str(self.sup_exe), "stop", "--root", str(self.app_dir)],
@@ -588,14 +603,15 @@ class TestG2R3CN09N10(unittest.TestCase):
         self.boot_id = str(uuid.uuid4())
         self.boot_id_file.write_text(self.boot_id + "\n", encoding="utf-8")
 
-        # Tampered slot must STILL block split-state recovery
-        orig = self.slot1_img.read_bytes()
-        self.slot1_img.write_bytes(b"BADSLOT" + orig[7:])
+        # Tampered installed rootfs file must STILL block split-state recovery
+        relf = self.sysroot / "etc/sgw-release"
+        orig_rel = relf.read_bytes()
+        relf.write_bytes(b"BADSLOT")
         r_bad_rec = self.run_confirm()
         self.assertNotEqual(r_bad_rec.returncode, 0)
         self.assertIn("digest mismatch", r_bad_rec.stderr)
         self.assertIn("state=CONFIRMING consumed=0", self.inspect_txn(txid))
-        self.slot1_img.write_bytes(orig)
+        relf.write_bytes(orig_rel)
 
         # Clean retry reconciles CONFIRMING -> CONFIRMED (consumed=1)
         r_rec = self.run_confirm()
@@ -629,6 +645,135 @@ class TestG2R3CN09N10(unittest.TestCase):
         self.assertIn("CONFIRM REJECTED", r2.stderr)
         self.assertEqual(self.get_env(), before_env)
 
+
+
+    def test_n10_write_slot_rejects_running_mounted_and_small_with_zero_bytes_written(self):
+        # Verify r3c_bundle_record without staging pending yet
+        tx_cli = ROOT / "bsp/apps/boot_ab/r3c_bundle_cli"
+        r = subprocess.run([str(tx_cli), str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"],
+                           capture_output=True, text=True, check=True)
+        txid = r.stdout.strip()
+
+        canary = self.base / "canary_slot"
+        canary_data = b"CANARY_ORIGINAL_RUNNING_SLOT_DATA" * 128
+        canary.write_bytes(canary_data)
+        canary.chmod(0o600)
+
+        # 1. Target path == /dev/mmcblk1p2 while running slot == 2 MUST fail with zero writes
+        r_run = subprocess.run([
+            str(HARNESS), "write-slot",
+            "--txdir", str(self.txdir), "--txid", txid,
+            "--image", str(self.bundle / "rootfs.img"),
+            "--target-dev", "/dev/mmcblk1p2",
+            "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+            "--sysroot", str(self.sysroot),
+        ], env=self.harness_env(), capture_output=True, text=True)
+        self.assertNotEqual(r_run.returncode, 0)
+        self.assertIn("running", r_run.stderr)
+
+        # 2. Target size smaller than payload MUST fail BEFORE writing 1 byte
+        small = self.base / "small_slot"
+        small_bytes = b"SMALL_CANARY_" * 16
+        small.write_bytes(small_bytes)
+        small.chmod(0o600)
+        r_small = subprocess.run([
+            str(HARNESS), "write-slot",
+            "--txdir", str(self.txdir), "--txid", txid,
+            "--image", str(self.bundle / "rootfs.img"),
+            "--target-dev", str(small),
+            "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+            "--sysroot", str(self.sysroot),
+        ], env=self.harness_env(), capture_output=True, text=True)
+        self.assertNotEqual(r_small.returncode, 0)
+        self.assertIn("smaller", r_small.stderr)
+        self.assertEqual(small.read_bytes(), small_bytes)
+
+        # 3. Symlink target MUST fail BEFORE writing 1 byte
+        sym = self.base / "sym_slot"
+        sym.symlink_to(canary)
+        r_sym = subprocess.run([
+            str(HARNESS), "write-slot",
+            "--txdir", str(self.txdir), "--txid", txid,
+            "--image", str(self.bundle / "rootfs.img"),
+            "--target-dev", str(sym),
+            "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+            "--sysroot", str(self.sysroot),
+        ], env=self.harness_env(), capture_output=True, text=True)
+        self.assertNotEqual(r_sym.returncode, 0)
+        self.assertEqual(canary.read_bytes(), canary_data)
+
+        # 4. --require-blk rejects regular file target
+        r_blk = subprocess.run([
+            str(HARNESS), "write-slot", "--require-blk",
+            "--txdir", str(self.txdir), "--txid", txid,
+            "--image", str(self.bundle / "rootfs.img"),
+            "--target-dev", str(canary),
+            "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+            "--sysroot", str(self.sysroot),
+        ], env=self.harness_env(), capture_output=True, text=True)
+        self.assertNotEqual(r_blk.returncode, 0)
+        self.assertEqual(canary.read_bytes(), canary_data)
+        self.assertIn("state=VERIFIED", self.inspect_txn(txid))
+
+    def test_n09_rw_ext4_mutated_after_boot_confirms_via_signed_rootfs_manifest_and_tamper_rejected(self):
+        txid = self.stage_signed_upgrade_to_slot1()
+        install_raw_sha = hashlib.sha256(self.slot1_img.read_bytes()).hexdigest()
+
+        # Simulate rw boot writing logs/mtab into slot1.ext4 so raw block SHA-256 changes!
+        slot1_mnt = self.base / "slot1_mnt"
+        slot1_mnt.mkdir(mode=0o700)
+        uid, gid = os.getuid(), os.getgid()
+        for key, val in (("uid", uid), ("gid", gid)):
+            subprocess.run(["debugfs", "-w", "-R", f"set_inode_field <2> {key} {val}",
+                            str(self.slot1_img)], check=True, capture_output=True)
+        subprocess.run([FUSE2FS, str(self.slot1_img), str(slot1_mnt)],
+                       check=True, capture_output=True, timeout=10)
+        try:
+            (slot1_mnt / "var").mkdir(exist_ok=True)
+            (slot1_mnt / "var/log_boot.txt").write_text("booted rw modified ext4\n")
+        finally:
+            subprocess.run(["fusermount3", "-u", str(slot1_mnt)], check=True, capture_output=True, timeout=10)
+
+        mutated_raw_sha = hashlib.sha256(self.slot1_img.read_bytes()).hexdigest()
+        self.assertNotEqual(install_raw_sha, mutated_raw_sha)
+
+        # Even though raw slot1.ext4 bytes changed, tamper in sysroot must reject
+        self.write_policy(flow_mode="controlled_local", allow_degraded="1")
+        orig_init = (self.sysroot / "sbin/init").read_bytes()
+        (self.sysroot / "sbin/init").write_bytes(b"TAMPERED_INIT")
+        r_bad = self.run_confirm()
+        self.assertNotEqual(r_bad.returncode, 0)
+        self.assertIn("digest mismatch", r_bad.stderr)
+        (self.sysroot / "sbin/init").write_bytes(orig_init)
+
+        # Valid sysroot confirms cleanly despite raw ext4 mutation!
+        r_ok = self.run_confirm()
+        self.assertEqual(r_ok.returncode, 0, r_ok.stdout + r_ok.stderr)
+        self.assertIn("state=DEGRADED", r_ok.stdout)
+        self.assertIn("state=CONFIRMED consumed=1", self.inspect_txn(txid))
+
+    def test_n10_legacy_sgw_system_1_without_manifest_rejected_on_rw_root(self):
+        # Remove rootfs.manifest and re-sign as SGW-SYSTEM-1
+        (self.bundle / "rootfs.manifest").unlink()
+        img_bytes = (self.bundle / "rootfs.img").read_bytes()
+        m1 = ("SGW-SYSTEM-1\nboard=imx6ull-100ask\nimage=rootfs.img\n"
+              f"size={len(img_bytes)}\nsha256={hashlib.sha256(img_bytes).hexdigest()}\n")
+        (self.bundle / "manifest").write_text(m1, encoding="utf-8")
+        subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(self.privkey),
+                        "-out", str(self.bundle / "manifest.sig"),
+                        str(self.bundle / "manifest")], check=True, capture_output=True)
+        for p in self.bundle.iterdir():
+            p.chmod(0o600)
+
+        self.stage_signed_upgrade_to_slot1()
+        self.write_policy(flow_mode="controlled_local", allow_degraded="1")
+        r_rw = self.run_confirm()
+        self.assertNotEqual(r_rw.returncode, 0)
+        self.assertIn("rw-mounted rootfs requires signed rootfs_manifest", r_rw.stderr)
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,13 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G2-R3C 二次独立复审整改（5 项安全与真机可用性修复，待复审确认）
+
+- **写槽自校验与零写入保护：** 重构 `r3c_txn_write_and_verify_slot()` 自行解析运行槽、`last_good`、`mountinfo`、`!S_ISLNK && S_ISBLK` 与 `BLKGETSIZE64` 容量，未通过前零字节写入。
+- **DATA 路径信任与 fail-closed 排除：** `r3c_data.c` 拆分 `trusted_parent_dirs()` 与 `trusted_block_node()` 并落入 `r3c_data_inspect_full()`；`r3c_data_check_slot_exclusion_sysfs()` 分离整盘与分区排重并在未知/缺失排除设备时强制 Fail-Closed，通过 VM 真实 `/dev/sda*` + `/sys/dev/block` 验证。
+- **可写 `rw` RootFS 签名身份校验：** 新增 `SGW-SYSTEM-2`（随包 RSA 签名 `rootfs.manifest` 不可变文件摘要）与 `r3c_txn_verify_installed_rootfs()`，解决 `ext4` `rw` 启动写入后原始块摘要失效问题，并在无 manifest 的 `rw` 场景显式拒绝。
+- **Gateway 受控队列消费与语义边界：** `SGW-LOCAL/1` 通过 `upstream_queue -> server_link_worker` 真实弹出消费本地非上行标记验证工作链路活跃，`controlled_local` 下仍保持 `external=DEGRADED` 不冒充完整远端健康；`tests.test_g2r3c_n09_n10` 扩充至 **10/10 OK**（`10.888 s`）。
+
 ## G2-R3C 安全审查整改与分裂崩溃恢复（待独立复审，未推送未写板）
 
 - **确认时序与分裂崩溃恢复修复：** [sgw_bootctl.c](bsp/apps/boot_ab/sgw_bootctl.c) 与 [r3c_coordinator.c](bsp/apps/boot_ab/r3c_coordinator.c) 在任何写盘动作之前核验 `--running`、要求 `geteuid() == 0` 并屏蔽 `-c`/`--cmdline`/`--mounts`/`--run-dir`/`--sysroot`/`SGW_*` 覆盖；[r3c_txn.c](bsp/apps/boot_ab/r3c_txn.c) 新增 `r3c_txn_reconcile_confirm()`，在 `fw_env` 已确认而事务仍停留 `CONFIRMING` 的崩溃分裂现场下完成槽位摘要重验与 `CONFIRMED (consumed=1)` 收尾，随后严拒重放。

@@ -1,12 +1,15 @@
 test_n09_controlled_local_policy_decoupling_without_upstream_traffic (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_controlled_local_policy_decoupling_without_upstream_traffic) ... ok
+test_n09_rw_ext4_mutated_after_boot_confirms_via_signed_rootfs_manifest_and_tamper_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_rw_ext4_mutated_after_boot_confirms_via_signed_rootfs_manifest_and_tamper_rejected) ... ok
 test_n09_strict_forward_end_to_end_confirm_and_n10_replay_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_strict_forward_end_to_end_confirm_and_n10_replay_rejected) ... ok
 test_n10_caller_running_mismatch_rejects_before_any_mutation (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_caller_running_mismatch_rejects_before_any_mutation) ... ok
+test_n10_legacy_sgw_system_1_without_manifest_rejected_on_rw_root (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_legacy_sgw_system_1_without_manifest_rejected_on_rw_root) ... ok
 test_n10_persistence_fsync_failure_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_persistence_fsync_failure_rejected) ... ok
 test_n10_split_state_env_confirmed_txn_confirming_recovery_and_idempotency (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_split_state_env_confirmed_txn_confirming_recovery_and_idempotency) ... ok
 test_n10_tamper_lock_contention_device_and_policy_faults_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_tamper_lock_contention_device_and_policy_faults_rejected) ... ok
 test_n10_unprivileged_production_sgw_bootctl_and_override_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_unprivileged_production_sgw_bootctl_and_override_rejected) ... ok
+test_n10_write_slot_rejects_running_mounted_and_small_with_zero_bytes_written (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_write_slot_rejects_running_mounted_and_small_with_zero_bytes_written) ... ok
 
 ----------------------------------------------------------------------
-Ran 7 tests in 8.764s
+Ran 10 tests in 10.888s
 
 OK

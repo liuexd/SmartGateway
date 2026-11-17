@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #define MAX_IMAGE (2ULL * 1024 * 1024 * 1024)
+#define MAX_ROOTFS_MANIFEST (64 * 1024)
 
 static int secure_file(int fd, uid_t owner, off_t max)
 {
@@ -50,6 +51,55 @@ static int read_small(int fd, unsigned char *buf, size_t cap, size_t *len)
         st.st_ctim.tv_nsec != after.st_ctim.tv_nsec) return -1;
     *len = used;
     return 0;
+}
+
+static int valid_hex64(const char *s)
+{
+    size_t i;
+    int nonzero = 0;
+    if (!s || strlen(s) != 64) return 0;
+    for (i = 0; i < 64; ++i) {
+        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return 0;
+        if (s[i] != '0') nonzero = 1;
+    }
+    return nonzero;
+}
+
+static int valid_manifest_relpath(const char *p)
+{
+    size_t n;
+    if (!p || p[0] != '/' || p[1] == '\0') return 0;
+    n = strlen(p);
+    if (n >= 256 || p[n - 1] == '/' || strstr(p, "//") ||
+        strstr(p, "/../") || strstr(p, "/./") || strpbrk(p, " \t\r\n\\"))
+        return 0;
+    if (n >= 3 && strcmp(p + n - 3, "/..") == 0) return 0;
+    if (n >= 2 && strcmp(p + n - 2, "/.") == 0) return 0;
+    return 1;
+}
+
+static int validate_rootfs_manifest_bytes(const unsigned char *buf, size_t len)
+{
+    char *copy, *line, *save = NULL;
+    int count = 0;
+    if (!buf || len == 0 || len > MAX_ROOTFS_MANIFEST || memchr(buf, '\0', len)) return -1;
+    if (buf[len - 1] != '\n') return -1;
+    copy = malloc(len + 1);
+    if (!copy) return -1;
+    memcpy(copy, buf, len);
+    copy[len] = '\0';
+    for (line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *sp = strchr(line, ' ');
+        if (!sp || strchr(sp + 1, ' ') != NULL) { free(copy); return -1; }
+        *sp = '\0';
+        if (!valid_manifest_relpath(line) || !valid_hex64(sp + 1)) {
+            free(copy);
+            return -1;
+        }
+        count++;
+    }
+    free(copy);
+    return count > 0 ? 0 : -1;
 }
 
 static int digest_fd(int fd, char hex[65], unsigned long long *length)
@@ -151,18 +201,22 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
                       unsigned int target, unsigned int last_good, char id[65])
 {
     unsigned char manifest[1024], signature[1024], digest[EVP_MAX_MD_SIZE];
-    char image_hex[65], package_hex[65], canonical[1024], record[1024], name[72], generated[65];
+    unsigned char *rm_buf = NULL;
+    char image_hex[65], package_hex[65], rm_hex[65] = {0}, canonical[1024], record[1024];
+    char name[72], rm_name[88], generated[65];
     static const char table[] = "0123456789abcdef";
-    unsigned long long image_size;
+    unsigned long long image_size, rm_size = 0;
     unsigned int digest_len = 0;
-    size_t manifest_len = 0, signature_len = 0, i;
-    int manifestfd = -1, sigfd = -1, imagefd = -1, recordfd = -1, lockfd = -1;
-    int keycopy = -1, rc = -1, created = 0, n;
+    size_t manifest_len = 0, signature_len = 0, rm_len = 0, i;
+    int manifestfd = -1, sigfd = -1, imagefd = -1, rmfd = -1, rm_outfd = -1;
+    int recordfd = -1, lockfd = -1, keycopy = -1, rc = -1;
+    int created = 0, created_rm = 0, have_rm = 0, n;
     FILE *keyfile = NULL;
     EVP_PKEY *key = NULL;
     EVP_MD_CTX *ctx = NULL;
     if (!id) return -1;
     id[0] = '\0';
+    rm_name[0] = '\0';
     if ((target != 1 && target != 2) || (last_good != 1 && last_good != 2) ||
         target == last_good || secure_dir(bundle, owner) || secure_dir(txdir, owner) ||
         secure_file(keyfd, owner, 16384)) goto out;
@@ -176,10 +230,32 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
         read_small(manifestfd, manifest, sizeof(manifest), &manifest_len) ||
         read_small(sigfd, signature, sizeof(signature), &signature_len) ||
         digest_fd(imagefd, image_hex, &image_size)) goto out;
-    n = snprintf(canonical, sizeof(canonical),
-                 "SGW-SYSTEM-1\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\nsha256=%s\n",
-                 image_size, image_hex);
+
+    rmfd = openat(bundle, "rootfs.manifest", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (rmfd >= 0) {
+        have_rm = 1;
+        rm_buf = malloc(MAX_ROOTFS_MANIFEST);
+        if (!rm_buf || secure_file(rmfd, owner, MAX_ROOTFS_MANIFEST) ||
+            read_small(rmfd, rm_buf, MAX_ROOTFS_MANIFEST, &rm_len) ||
+            validate_rootfs_manifest_bytes(rm_buf, rm_len) != 0 ||
+            digest_fd(rmfd, rm_hex, &rm_size) != 0)
+            goto out;
+    } else if (errno != ENOENT) {
+        goto out;
+    }
+
+    if (have_rm) {
+        n = snprintf(canonical, sizeof(canonical),
+                     "SGW-SYSTEM-2\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\n"
+                     "sha256=%s\nrootfs_manifest_sha256=%s\n",
+                     image_size, image_hex, rm_hex);
+    } else {
+        n = snprintf(canonical, sizeof(canonical),
+                     "SGW-SYSTEM-1\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\nsha256=%s\n",
+                     image_size, image_hex);
+    }
     if (n <= 0 || (size_t)n != manifest_len || memcmp(canonical, manifest, manifest_len)) goto out;
+
     keycopy = dup(keyfd);
     if (keycopy < 0 || lseek(keycopy, 0, SEEK_SET) < 0) goto out;
     keyfile = fdopen(keycopy, "r");
@@ -205,7 +281,6 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
     lockfd = openat(txdir, ".sgw-transaction.lock",
                     O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
     if (lockfd < 0) goto out;
-    /* Lock is normally empty, so validate it separately from secure_file. */
     {
         struct stat st;
         if (fstat(lockfd, &st) || !S_ISREG(st.st_mode) || st.st_uid != owner ||
@@ -214,11 +289,30 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
     if (flock(lockfd, LOCK_EX | LOCK_NB) != 0 || no_existing_record(txdir) != 0)
         goto out;
     if (random_id(generated) != 0) goto out;
+
+    if (have_rm) {
+        n = snprintf(rm_name, sizeof(rm_name), "txn-%s.manifest", generated);
+        if (n <= 0 || (size_t)n >= sizeof(rm_name)) goto out;
+        rm_outfd = openat(txdir, rm_name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (rm_outfd < 0) goto out;
+        created_rm = 1;
+        if (write_all(rm_outfd, (const char *)rm_buf, rm_len) || fsync(rm_outfd)) goto out;
+        if (close(rm_outfd) != 0) { rm_outfd = -1; goto out; }
+        rm_outfd = -1;
+    }
+
     n = snprintf(name, sizeof(name), "txn-%s", generated);
     if (n <= 0 || (size_t)n >= sizeof(name)) goto out;
-    n = snprintf(record, sizeof(record),
-                 "SGW-TXN-1\nstate=VERIFIED\nid=%s\npackage=%s\nimage=%s\ntarget=%u\nlast_good=%u\n",
-                 generated, package_hex, image_hex, target, last_good);
+    if (have_rm) {
+        n = snprintf(record, sizeof(record),
+                     "SGW-TXN-1\nstate=VERIFIED\nid=%s\npackage=%s\nimage=%s\n"
+                     "rootfs_manifest=%s\ntarget=%u\nlast_good=%u\n",
+                     generated, package_hex, image_hex, rm_hex, target, last_good);
+    } else {
+        n = snprintf(record, sizeof(record),
+                     "SGW-TXN-1\nstate=VERIFIED\nid=%s\npackage=%s\nimage=%s\ntarget=%u\nlast_good=%u\n",
+                     generated, package_hex, image_hex, target, last_good);
+    }
     if (n <= 0 || (size_t)n >= sizeof(record)) goto out;
     recordfd = openat(txdir, name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (recordfd < 0) goto out;
@@ -230,13 +324,18 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
     memcpy(id, generated, sizeof(generated));
     rc = 0;
 out:
-    if (rc != 0 && created) { (void)unlinkat(txdir, name, 0); (void)fsync(txdir); }
+    if (rc != 0 && created) { (void)unlinkat(txdir, name, 0); }
+    if (rc != 0 && created_rm) { (void)unlinkat(txdir, rm_name, 0); }
+    if (rc != 0 && (created || created_rm)) { (void)fsync(txdir); }
+    if (rm_outfd >= 0) close(rm_outfd);
     if (recordfd >= 0) close(recordfd);
     if (lockfd >= 0) { (void)flock(lockfd, LOCK_UN); close(lockfd); }
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(key);
     if (keyfile) fclose(keyfile);
     if (keycopy >= 0) close(keycopy);
+    if (rmfd >= 0) close(rmfd);
+    free(rm_buf);
     if (manifestfd >= 0) close(manifestfd);
     if (sigfd >= 0) close(sigfd);
     if (imagefd >= 0) close(imagefd);

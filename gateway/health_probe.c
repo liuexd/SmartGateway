@@ -20,6 +20,7 @@
 #define QUERY_PREFIX "SGW-PROBE/1 "
 #define FLOW_PREFIX  "SGW-FLOWX/1 "
 #define LOCAL_PREFIX "SGW-LOCAL/1 "
+#define LOCAL_MARKER_PREFIX "SGW-LOCAL-MARKER:"
 #define NONCE_LEN 32
 #define PROBE_TIMEOUT_MS 200
 #define FLOW_MAX_AGE_SECONDS 5u
@@ -28,6 +29,9 @@ _Static_assert(sizeof(QUERY_PREFIX) == sizeof(FLOW_PREFIX), "query prefix length
 _Static_assert(sizeof(QUERY_PREFIX) == sizeof(LOCAL_PREFIX), "local prefix lengths");
 static atomic_uint last_forwarded_seconds;
 static atomic_uint last_worker_tick_seconds;
+static pthread_mutex_t local_diag_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char pending_local_nonce[NONCE_LEN + 1];
+static char consumed_local_nonce[NONCE_LEN + 1];
 
 void gateway_health_observe_forwarded(const unsigned char *data, size_t length)
 {
@@ -207,6 +211,67 @@ static int business_components_ready(const char *nonce, message_queue_t *queue,
     return queue_ok && manager_ok;
 }
 
+
+int gateway_health_consume_local_marker(const unsigned char *data, size_t length)
+{
+    size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
+    if (!data || length != pfx_len + NONCE_LEN) return 0;
+    if (memcmp(data, LOCAL_MARKER_PREFIX, pfx_len) != 0) return 0;
+    pthread_mutex_lock(&local_diag_mutex);
+    if (pending_local_nonce[0] &&
+        memcmp(data + pfx_len, pending_local_nonce, NONCE_LEN) == 0) {
+        memcpy(consumed_local_nonce, pending_local_nonce, NONCE_LEN + 1);
+    }
+    pthread_mutex_unlock(&local_diag_mutex);
+    return 1;
+}
+
+static int queue_try_push_local_marker(message_queue_t *queue, const char *nonce)
+{
+    gateway_message_t msg;
+    size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
+    int pushed = 0;
+
+    if (!queue || !nonce || strlen(nonce) != NONCE_LEN ||
+        pfx_len + NONCE_LEN > GATEWAY_MESSAGE_MAX_SIZE)
+        return 0;
+    memcpy(msg.data, LOCAL_MARKER_PREFIX, pfx_len);
+    memcpy(msg.data + pfx_len, nonce, NONCE_LEN);
+    msg.length = pfx_len + NONCE_LEN;
+
+    pthread_mutex_lock(&local_diag_mutex);
+    memcpy(pending_local_nonce, nonce, NONCE_LEN + 1);
+    consumed_local_nonce[0] = '\0';
+    pthread_mutex_unlock(&local_diag_mutex);
+
+    if (pthread_mutex_trylock(&queue->mutex) != 0) return 0;
+    if (!queue->shutting_down && queue->count < MESSAGE_QUEUE_CAPACITY) {
+        queue->items[queue->tail] = msg;
+        queue->tail = (queue->tail + 1) % MESSAGE_QUEUE_CAPACITY;
+        queue->count++;
+        pthread_cond_signal(&queue->not_empty);
+        pushed = 1;
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    if (!pushed) return 0;
+
+    /* Bounded wait up to 250ms for real server_link thread to pop & consume marker. */
+    {
+        long long end = now_ms() + 250;
+        for (;;) {
+            int done = 0;
+            pthread_mutex_lock(&local_diag_mutex);
+            done = (memcmp(consumed_local_nonce, nonce, NONCE_LEN) == 0);
+            pthread_mutex_unlock(&local_diag_mutex);
+            if (done) return 1;
+            if (now_ms() >= end) break;
+            struct timespec ts = {0, 5000000L}; /* 5 ms */
+            nanosleep(&ts, NULL);
+        }
+    }
+    return 0;
+}
+
 void gateway_health_listener_service(gateway_health_listener_t *listener,
                                      message_queue_t *queue,
                                      device_manager_t *devices)
@@ -263,7 +328,8 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
             verdict = recent_forwarded() ? "FORWARDED" : "UNKNOWN";
         } else if (local) {
             verdict = (business_components_ready(nonce, queue, devices) &&
-                       recent_worker_tick()) ? "LOCAL_OK" : "STALLED";
+                       recent_worker_tick() &&
+                       queue_try_push_local_marker(queue, nonce)) ? "LOCAL_OK" : "STALLED";
         } else {
             verdict = business_components_ready(nonce, queue, devices) ? "READY" : "NOT_READY";
         }
