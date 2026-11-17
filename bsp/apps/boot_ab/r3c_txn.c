@@ -91,6 +91,38 @@ static int safe_abs(const char *s)
     return 1;
 }
 
+static int valid_libc_target(const char *name)
+{
+    size_t i, n = strlen(name);
+    if (n < 9 || n >= 64 || strncmp(name, "libc-", 5) ||
+        strcmp(name + n - 3, ".so")) return 0;
+    for (i = 5; i < n - 3; ++i)
+        if ((name[i] < '0' || name[i] > '9') && name[i] != '.') return 0;
+    return 1;
+}
+
+static int open_libc_same_directory(const char *prefix)
+{
+    char libdir[PATH_MAX], target[64];
+    struct stat st;
+    ssize_t n;
+    int dir, fd = -1;
+    if (snprintf(libdir, sizeof(libdir), "%s/lib", prefix) >= (int)sizeof(libdir))
+        return -1;
+    dir = open(libdir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dir < 0) return -1;
+    if (fstatat(dir, "libc.so.6", &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISLNK(st.st_mode)) {
+        n = readlinkat(dir, "libc.so.6", target, sizeof(target) - 1);
+        if (n > 0 && (size_t)n < sizeof(target) - 1) {
+            target[n] = '\0';
+            if (valid_libc_target(target))
+                fd = openat(dir, target, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        }
+    }
+    close(dir);
+    return fd;
+}
+
 static int trusted_parent_dirs(const char *path, uid_t owner)
 {
     char buf[PATH_MAX], *slash;
@@ -506,9 +538,54 @@ static int read_blk_geom(const char *sysfs_root, unsigned int maj, unsigned int 
             return -1;
         if (read_u64_sysfs(pstart, start) != 0) return -1;
     } else {
+        if (errno != ENOENT) return -1;
         *is_part = 0;
         *start = 0;
         if (snprintf(disk, dcap, "%s", sl + 1) >= (int)dcap) return -1;
+    }
+    return 0;
+}
+
+/* Reject stacked block devices unless their backing topology is independently
+ * proven. Partitions inherit their parent's slaves; holders on either object
+ * may indicate an indirect mount (dm-crypt/LVM/etc.). */
+static int sysfs_relations_empty(const char *root, unsigned int maj, unsigned int min)
+{
+    char link[PATH_MAX], resolved[PATH_MAX], path[PATH_MAX], *slash;
+    const char *relations[] = {"holders", "slaves"};
+    int is_partition, i;
+    struct stat st;
+    if (snprintf(link, sizeof(link), "%s/%u:%u", root, maj, min) >= (int)sizeof(link) ||
+        !realpath(link, resolved) ||
+        snprintf(path, sizeof(path), "%s/partition", resolved) >= (int)sizeof(path))
+        return -1;
+    is_partition = stat(path, &st) == 0;
+    if (!is_partition && errno != ENOENT) return -1;
+    for (i = 0; i < (is_partition ? 3 : 2); ++i) {
+        DIR *dir;
+        struct dirent *entry;
+        const char *rel = relations[is_partition ? (i == 2 ? 1 : 0) : i];
+        char base[PATH_MAX];
+        snprintf(base, sizeof(base), "%s", resolved);
+        if (is_partition && (i == 1 || i == 2)) {
+            slash = strrchr(base, '/');
+            if (!slash || slash == base) return -1;
+            *slash = '\0';
+        }
+        if (snprintf(path, sizeof(path), "%s/%s", base, rel) >= (int)sizeof(path))
+            return -1;
+        dir = opendir(path);
+        if (!dir) return -1;
+        errno = 0;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
+                closedir(dir);
+                return -1;
+            }
+            errno = 0;
+        }
+        if (errno) { closedir(dir); return -1; }
+        closedir(dir);
     }
     return 0;
 }
@@ -539,6 +616,10 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
             fclose(fp);
             return fail(err, errlen, "target partition overlaps reserved U-Boot env sectors");
         }
+        if (require_blk_geom && sysfs_relations_empty(sysfs, maj, min) != 0) {
+            fclose(fp);
+            return fail(err, errlen, "target stacked device topology is unverified");
+        }
     } else if (require_blk_geom) {
         fclose(fp);
         return fail(err, errlen, "cannot verify target block topology in sysfs");
@@ -546,7 +627,11 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
 
     while (fgets(line, sizeof(line), fp)) {
         unsigned int lma = 0, lmi = 0;
-        if (sscanf(line, "%*u %*u %u:%u ", &lma, &lmi) == 2) {
+        if (!strchr(line, '\n') || sscanf(line, "%*u %*u %u:%u ", &lma, &lmi) != 2) {
+            fclose(fp);
+            return fail(err, errlen, "malformed or truncated mountinfo");
+        }
+        {
             if (lma == maj && lmi == min) {
                 fclose(fp);
                 return fail(err, errlen, "refusing write to currently mounted target block device");
@@ -555,8 +640,12 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
                 uint64_t m_start = 0, m_size = 0;
                 char m_disk[128] = {0};
                 int m_is_part = 0;
-                if (read_blk_geom(sysfs, lma, lmi, &m_start, &m_size, m_disk, sizeof(m_disk), &m_is_part) == 0 &&
-                    strcmp(t_disk, m_disk) == 0) {
+                int known = read_blk_geom(sysfs, lma, lmi, &m_start, &m_size, m_disk, sizeof(m_disk), &m_is_part) == 0;
+                if (require_blk_geom && (!known || sysfs_relations_empty(sysfs, lma, lmi) != 0)) {
+                    fclose(fp);
+                    return fail(err, errlen, "mounted block topology is unverified");
+                }
+                if (known && strcmp(t_disk, m_disk) == 0) {
                     if (!m_is_part || ranges_overlap_u64(t_start, t_size, m_start, m_size)) {
                         fclose(fp);
                         return fail(err, errlen, "target partition overlaps mounted block topology");
@@ -565,6 +654,7 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
             }
         }
     }
+    if (ferror(fp)) { fclose(fp); return fail(err, errlen, "cannot read complete mountinfo"); }
     fclose(fp);
 
     /* Also check running_dev and last_good_dev sysfs range exclusion if present */
@@ -575,17 +665,25 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
             uint64_t s_start = 0, s_size = 0;
             char s_disk[128] = {0};
             int s_part = 0;
-            if (!slots[s]) continue;
+            if (!slots[s]) {
+                if (require_blk_geom) return fail(err, errlen, "missing protected slot identity");
+                continue;
+            }
             if (stat(slots[s], &sst) == 0 && S_ISBLK(sst.st_mode)) {
                 if (major(sst.st_rdev) == maj && minor(sst.st_rdev) == min)
                     return fail(err, errlen, "target block identity matches active/last_good slot");
-                if (read_blk_geom(sysfs, major(sst.st_rdev), minor(sst.st_rdev),
-                                  &s_start, &s_size, s_disk, sizeof(s_disk), &s_part) == 0 &&
+                int known = read_blk_geom(sysfs, major(sst.st_rdev), minor(sst.st_rdev),
+                                          &s_start, &s_size, s_disk, sizeof(s_disk), &s_part) == 0;
+                if (require_blk_geom && (!known || sysfs_relations_empty(sysfs, major(sst.st_rdev),
+                                                                         minor(sst.st_rdev)) != 0))
+                    return fail(err, errlen, "protected slot topology is unverified");
+                if (known &&
                     strcmp(t_disk, s_disk) == 0 &&
                     (!s_part || ranges_overlap_u64(t_start, t_size, s_start, s_size))) {
                     return fail(err, errlen, "target partition sectors overlap active/last_good slot");
                 }
-            }
+            } else if (require_blk_geom)
+                return fail(err, errlen, "protected slot device missing or not a block device");
         }
     }
     return 0;
@@ -852,6 +950,8 @@ int r3c_txn_verify_installed_rootfs(int txdir, const r3c_txn_record_t *rec, uid_
             goto out;
         }
         ffd = open(full, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (ffd < 0 && errno == ELOOP && strcmp(line, "/lib/libc.so.6") == 0)
+            ffd = open_libc_same_directory(prefix);
         if (ffd < 0) { fail(err, errlen, "missing signed system file in running rootfs"); goto out; }
         if (fstat(ffd, &fst) != 0 || !S_ISREG(fst.st_mode) ||
             r3c_txn_digest_fd(ffd, 0, fhex, &flen) != 0 ||

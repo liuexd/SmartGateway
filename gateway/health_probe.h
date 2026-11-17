@@ -25,5 +25,8 @@ void gateway_health_observe_forwarded(const unsigned char *data, size_t length);
 void gateway_health_observe_worker_tick(void);
 /* Returns 1 and consumes marker if queue item is a local-only probe (never sent upstream). */
 int gateway_health_consume_local_marker(const unsigned char *data, size_t length);
+/* When an ordinary message is awaiting reconnect, remove only a local probe
+ * from the queue; preserve the order and contents of every business item. */
+int gateway_health_consume_queued_marker(message_queue_t *queue);
 
 #endif

@@ -6,6 +6,12 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G2-R3C 后续复审修复（BLOCKED，生产确认默认拒绝）
+
+- 修复签名清单的受限 libc 符号链接、块设备映射拓扑拒绝、验签顺序与子进程时限；修复上游断线时本地标记造成的诊断停滞。
+- 本地标记仍不构成真实业务端到端健康证据，生产确认一律拒绝；G3 标准构建脚本显式启用清单核验依赖的 debugfs，板端与主机可信确认均保持 BLOCKED。既往 HOST-ACCEPTED 条目为历史记录，不代表当前放行。
+- 本轮隔离测试及未关闭事项详见 [G2-R3C-review4-validation.md](bsp/docs/validation/ota/G2-R3C-review4-validation.md)。未操作开发板或推送。
+
 ## G2-R3C 三次独立复审整改（4 项安全与语义修复，READY-FOR-INDEPENDENT-REVIEW）
 
 - **15 项系统必需文件清单与镜像一致性校验：** [bsp/apps/boot_ab/r3c_bundle.c](bsp/apps/boot_ab/r3c_bundle.c) 与 [bsp/apps/boot_ab/r3c_txn.c](bsp/apps/boot_ab/r3c_txn.c) 冻结 15 项核心启动/健康/安全服务文件并拒绝重复路径，在 `r3c_bundle_record` 阶段通过 `/usr/sbin/debugfs` 直接对 `rootfs.img` 核验 ext4 文件实体（`0xEF53`、`Type: regular`）与 SHA-256 摘要，阻止最小化/不完整 `rootfs.manifest` 绕过校验。

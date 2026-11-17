@@ -298,6 +298,15 @@ int main(int argc, char **argv)
 {
 
     if (argc < 2) return 2;
+    if (strcmp(argv[1], "confirm-null-gate") == 0) {
+        r3c_policy_t policy = {0};
+        fw_env_backend_cfg_t fw = {0};
+        ab_health_cfg_t health = {0};
+        char err[256] = {0};
+        int rc = r3c_coordinator_confirm(&policy, &fw, &health, AB_SLOT_NONE, NULL, NULL, err, sizeof(err));
+        fprintf(stderr, "%s\n", err);
+        return rc == 0 ? 0 : 1;
+    }
     if (strcmp(argv[1], "write-and-stage") == 0) return cmd_write_stage(argc, argv);
     if (strcmp(argv[1], "write-slot") == 0) return cmd_write_slot_only(argc, argv);
     if (strcmp(argv[1], "confirm") == 0) return cmd_confirm(argc, argv);

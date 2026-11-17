@@ -49,6 +49,7 @@ class GatewayProbeTests(unittest.TestCase):
         self.gateway_exe.chmod(0o755)
         (self.tmp / "current").symlink_to("releases/v1", target_is_directory=True)
         self.server = socket.socket()
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind(("127.0.0.1", 0))
         self.server.listen(1)
         port = self.server.getsockname()[1]
@@ -108,11 +109,13 @@ class GatewayProbeTests(unittest.TestCase):
         if getattr(self, "log", None): self.log.close()
         if getattr(self, "tmp", None): shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def probe(self, pid=None, start=None, timeout=800, flow=False):
+    def probe(self, pid=None, start=None, timeout=800, flow=False, local=False):
         args = [str(GW_PROBE), str(self.health_sock), str(os.getuid()),
                 str(self.gateway_pid if pid is None else pid),
                 str(self.starttime if start is None else start), str(timeout)]
-        if flow:
+        if local:
+            args.append("l")
+        elif flow:
             args.append("f")
         return subprocess.run(args, capture_output=True, text=True, timeout=5)
 
@@ -146,6 +149,39 @@ class GatewayProbeTests(unittest.TestCase):
             self.upstream.recv(4096)
         time.sleep(6.1)
         self.assertNotEqual(self.probe(flow=True).returncode, 0)
+
+    def test_local_probe_with_disconnected_upstream_preserves_pending_data(self):
+        port = self.server.getsockname()[1]
+        self.upstream.shutdown(socket.SHUT_RDWR)
+        self.upstream.close()
+        self.upstream = None
+        self.server.close()
+        self.server = None
+        time.sleep(0.5)
+        payload = b'{"node":"NODE01","seq":63,"type":"DATA","fields":{"T":"253"}}\n'
+        with socket.create_connection(("127.0.0.1", 7000), timeout=2) as node:
+            node.sendall(payload)
+        time.sleep(0.5)
+        result = self.probe(local=True, timeout=1500)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("local-observed", result.stdout)
+        self.server = socket.socket()
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(("127.0.0.1", port))
+        self.server.listen(1)
+        self.server.settimeout(8)
+        self.upstream, _ = self.server.accept()
+        self.upstream.settimeout(8)
+        received = b""
+        while b"\n" not in received:
+            chunk = self.upstream.recv(1024)
+            self.assertTrue(chunk)
+            received += chunk
+        data = json.loads(received.split(b"\n", 1)[0])
+        self.assertEqual(data["seq"], 63)
+        self.upstream.settimeout(0.3)
+        with self.assertRaises(socket.timeout):
+            self.upstream.recv(4096)
 
     def test_live_pid_but_unresponsive_gateway_is_rejected(self):
         os.kill(self.gateway_pid, signal.SIGSTOP)

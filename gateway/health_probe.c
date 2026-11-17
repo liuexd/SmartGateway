@@ -249,6 +249,40 @@ int gateway_health_consume_local_marker(const unsigned char *data, size_t length
     return 1;
 }
 
+int gateway_health_consume_queued_marker(message_queue_t *queue)
+{
+    gateway_message_t marker;
+    size_t i, j, found = MESSAGE_QUEUE_CAPACITY;
+    const size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
+    if (!queue || pthread_mutex_trylock(&queue->mutex) != 0) return 0;
+    if (queue->count > MESSAGE_QUEUE_CAPACITY || queue->head >= MESSAGE_QUEUE_CAPACITY ||
+        queue->tail >= MESSAGE_QUEUE_CAPACITY) {
+        pthread_mutex_unlock(&queue->mutex);
+        return 0;
+    }
+    for (i = 0; i < queue->count; ++i) {
+        gateway_message_t *m = &queue->items[(queue->head + i) % MESSAGE_QUEUE_CAPACITY];
+        if (m->length > pfx_len && m->length <= GATEWAY_MESSAGE_MAX_SIZE &&
+            memcmp(m->data, LOCAL_MARKER_PREFIX, pfx_len) == 0) {
+            marker = *m;
+            found = i;
+            break;
+        }
+    }
+    if (found < MESSAGE_QUEUE_CAPACITY) {
+        for (j = found; j + 1 < queue->count; ++j)
+            queue->items[(queue->head + j) % MESSAGE_QUEUE_CAPACITY] =
+                queue->items[(queue->head + j + 1) % MESSAGE_QUEUE_CAPACITY];
+        queue->tail = (queue->tail + MESSAGE_QUEUE_CAPACITY - 1) % MESSAGE_QUEUE_CAPACITY;
+        --queue->count;
+        pthread_cond_signal(&queue->not_full);
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    if (found < MESSAGE_QUEUE_CAPACITY)
+        return gateway_health_consume_local_marker(marker.data, marker.length);
+    return 0;
+}
+
 static int queue_try_push_local_marker(message_queue_t *queue, const char *nonce)
 {
     gateway_message_t msg;

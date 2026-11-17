@@ -132,6 +132,12 @@ void *server_link_worker(void *arg)
         int sent_message =0;
 
         gateway_health_observe_worker_tick();
+        if(have_pending_message)
+        {
+            /* Allow the local-only marker to make progress while a real
+             * message waits for upstream; the pending message is retained. */
+            (void)gateway_health_consume_queued_marker(queue);
+        }
 
         /*
          * -------------------------------------------------

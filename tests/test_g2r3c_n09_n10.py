@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """G2-R3C N09/N10 end-to-end integration tests in isolated host fixtures.
 
-Exercises the real production coordinator (`r3c_coordinator_confirm`), real
+Exercises the coordinator through injected test-only operations (production confirmation
+is blocked until trustworthy end-to-end evidence exists), real
 `service_supervisor`, real `smart_gateway` (SGW-PROBE/1, SGW-FLOWX/1, SGW-LOCAL/1),
 real `fuse2fs` ext4 DATA image, real RSA/SHA-256 bundle -> write/readback -> pending ->
 boot_id binding -> stable observation -> confirm + consumed anti-replay -> fsync fault.
@@ -131,6 +132,9 @@ class TestG2R3CN09N10(unittest.TestCase):
             fp = self.sysroot / rel.lstrip("/")
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_bytes(content)
+        libc = self.sysroot / "lib/libc.so.6"
+        libc.rename(self.sysroot / "lib/libc-2.30.so")
+        libc.symlink_to("libc-2.30.so")
         self.cmdline = self.base / "cmdline"
         self.mounts = self.base / "mounts"
         self.set_running_slot("2")
@@ -859,6 +863,61 @@ class TestG2R3CN09N10(unittest.TestCase):
         r3 = subprocess.run([str(tx_cli), str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"],
                             capture_output=True, text=True)
         self.assertNotEqual(r3.returncode, 0)
+
+    def test_signature_rejected_before_debugfs_is_executed(self):
+        if not shutil.which("strace"):
+            self.skipTest("strace required")
+        signature = self.bundle / "manifest.sig"
+        original = signature.read_bytes()
+        signature.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        trace = self.base / "exec.trace"
+        cli = BOOT / "r3c_bundle_cli"
+        cmd = ["strace", "-f", "-e", "execve", "-o", str(trace), str(cli),
+               str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"]
+        failed = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertNotIn("debugfs", trace.read_text())
+        signature.write_bytes(original)
+        good = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        self.assertIn("debugfs", trace.read_text())
+
+    def test_debugfs_subprocess_timeout_rejects_bundle(self):
+        source = self.base / "slow_exec.c"
+        library = self.base / "slow_exec.so"
+        source.write_text('#define _GNU_SOURCE\n#include <dlfcn.h>\n#include <string.h>\n'
+                          '#include <unistd.h>\n'
+                          'int execv(const char *p, char *const a[]){'
+                          'if (strstr(p,"debugfs")) sleep(30);'
+                          'int (*f)(const char *,char *const[]) = dlsym(RTLD_NEXT,"execv");'
+                          'return f(p,a); }\n')
+        subprocess.run(["gcc", "-shared", "-fPIC", str(source), "-ldl", "-o", str(library)], check=True)
+        env = os.environ.copy()
+        env["LD_PRELOAD"] = str(library)
+        before = time.monotonic()
+        result = subprocess.run([str(BOOT / "r3c_bundle_cli"), str(self.bundle), str(self.txdir),
+                                 str(self.pubkey), "1", "2"], env=env, capture_output=True,
+                                text=True, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertLess(time.monotonic() - before, 14)
+        self.assertFalse(list(self.txdir.glob("txn-*")))
+
+    def test_runtime_libc_symlink_escape_and_chain_rejected(self):
+        txid = self.stage_signed_upgrade_to_slot1()
+        self.write_policy(flow_mode="controlled_local", allow_degraded="1")
+        libc = self.sysroot / "lib/libc.so.6"
+        libc.unlink()
+        for target in ("/etc/passwd", "../etc/passwd", "libc-chain.so"):
+            with self.subTest(target=target):
+                libc.symlink_to(target)
+                if target == "libc-chain.so":
+                    (self.sysroot / "lib/libc-chain.so").symlink_to("libc-2.30.so")
+                result = self.run_confirm()
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.get_env()["sgw_ab_state"], "trial")
+                self.assertIn("state=PENDING consumed=0", self.inspect_txn(txid))
+                libc.unlink()
+        libc.symlink_to("libc-2.30.so")
 
     def test_n10_write_slot_mounted_blk_topology_overlap_and_toctou_swap(self):
         tx_cli = ROOT / "bsp/apps/boot_ab/r3c_bundle_cli"

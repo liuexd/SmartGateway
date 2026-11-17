@@ -25,6 +25,8 @@ sed "s|/REPLACE_WITH_ARM_SDK_DIR|$ARM_SDK_DIR|g" "$DEFCONFIG_TMPL" > "$TMP_DEF"
 cat >> "$TMP_DEF" <<EOF
 BR2_ROOTFS_POST_BUILD_SCRIPT="$POST_BUILD"
 BR2_GLOBAL_PATCH_DIR="$SCRIPT_DIR/br_patches"
+# Signed rootfs manifest verification invokes debugfs on the target.
+BR2_PACKAGE_E2FSPROGS_DEBUGFS=y
 EOF
 
 export BR2_DL_DIR="$BR_SRC/dl"

@@ -238,6 +238,10 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
         return fail(errbuf, errlen, "null coordinator argument");
     if (!ops && (geteuid() != 0 || policy->trusted_uid != 0))
         return fail(errbuf, errlen, "production confirm requires root privilege");
+    /* The local marker does not yet authenticate the complete ingress-to-
+     * forwarding path. Never enable production confirmation on this basis. */
+    if (!ops)
+        return fail(errbuf, errlen, "trusted end-to-end business health unavailable");
     if (out) memset(out, 0, sizeof(*out));
 
     /* 1. Acquire ordered locks: first app OTA shared lock, then txdir exclusive lock */

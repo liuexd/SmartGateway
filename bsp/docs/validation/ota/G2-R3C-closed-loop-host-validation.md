@@ -1,5 +1,8 @@
 # G2-R3C 主机端闭环与三轮安全整改复验报告
 
+> **后续复审更新：** 生产确认目前默认拒绝，G2-R3C 不满足 HOST-ACCEPTED；本页保留历史测试记录。最新状态与限制见 [G2-R3C-review4-validation.md](G2-R3C-review4-validation.md)。
+
+
 - **日期：** 2026-11-17
 - **分支：** `feature/imx6ull-system-ab-ota`
 - **主机侧状态：** **`READY-FOR-INDEPENDENT-REVIEW`（针对 `b7832c7` 独立复审提出的 4 项安全与语义问题完成整改与回归，等待独立复审确认；未推送远端、未签发 `HOST-ACCEPTED`）**

@@ -7,12 +7,15 @@
 #include <fcntl.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/random.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAX_IMAGE (2ULL * 1024 * 1024 * 1024)
@@ -105,8 +108,20 @@ static int valid_manifest_relpath(const char *p)
     return 1;
 }
 
+/* Restrict the only supported symlink to a same-directory glibc target. */
+static int valid_libc_target(const char *name)
+{
+    size_t i, n = strlen(name);
+    if (n < 9 || n >= 64 || strncmp(name, "libc-", 5) ||
+        strcmp(name + n - 3, ".so")) return 0;
+    for (i = 5; i < n - 3; ++i)
+        if ((name[i] < '0' || name[i] > '9') && name[i] != '.') return 0;
+    return 1;
+}
+
 static int run_debugfs_cmd(const char *debugfs_bin, const char *cmd_arg, int dup_fd,
-                           int capture_sha256, char out_hex[65], int *out_is_regular)
+                           int capture_sha256, char out_hex[65], int *out_is_regular,
+                           long long total_deadline)
 {
     int pipes[2] = {-1, -1}, status = 0;
     pid_t pid;
@@ -118,6 +133,9 @@ static int run_debugfs_cmd(const char *debugfs_bin, const char *cmd_arg, int dup
     EVP_MD_CTX *ctx = NULL;
     ssize_t n;
     static const char tbl[] = "0123456789abcdef";
+    struct timespec clock_start, clock_now;
+    long long deadline;
+    int child_done = 0, timed_out = 0, read_failed = 0;
 
     snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", dup_fd);
     if (pipe(pipes) != 0) return -1;
@@ -135,27 +153,62 @@ static int run_debugfs_cmd(const char *debugfs_bin, const char *cmd_arg, int dup
         _exit(127);
     }
     close(pipes[1]);
+    if (clock_gettime(CLOCK_MONOTONIC, &clock_start) != 0) {
+        close(pipes[0]); (void)kill(pid, SIGKILL);
+        (void)waitpid(pid, &status, WNOHANG); return -1;
+    }
+    deadline = (long long)clock_start.tv_sec * 1000 + clock_start.tv_nsec / 1000000 + 10000;
+    if (total_deadline < deadline) deadline = total_deadline;
     if (capture_sha256) {
         ctx = EVP_MD_CTX_new();
         if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
             close(pipes[0]);
-            (void)waitpid(pid, &status, 0);
+            (void)kill(pid, SIGKILL);
+            (void)waitpid(pid, &status, WNOHANG);
             if (ctx) EVP_MD_CTX_free(ctx);
             return -1;
         }
-        while ((n = read(pipes[0], buf, sizeof(buf))) > 0 || (n < 0 && errno == EINTR)) {
-            if (n > 0 && EVP_DigestUpdate(ctx, buf, (size_t)n) != 1) {
-                close(pipes[0]);
-                (void)waitpid(pid, &status, 0);
-                EVP_MD_CTX_free(ctx);
-                return -1;
-            }
+    }
+    for (;;) {
+        struct pollfd pfd = {pipes[0], POLLIN | POLLHUP, 0};
+        long long now;
+        int ready;
+        if (clock_gettime(CLOCK_MONOTONIC, &clock_now) != 0) { timed_out = 1; break; }
+        now = (long long)clock_now.tv_sec * 1000 + clock_now.tv_nsec / 1000000;
+        if (now >= deadline) { timed_out = 1; break; }
+        ready = poll(&pfd, 1, (int)(deadline - now));
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0 || (pfd.revents & (POLLERR | POLLNVAL))) { timed_out = 1; break; }
+        n = read(pipes[0], buf, sizeof(buf));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) { read_failed = 1; break; }
+        if (n == 0) break;
+        if (capture_sha256) {
+            if (EVP_DigestUpdate(ctx, buf, (size_t)n) != 1) { read_failed = 1; break; }
+        } else {
+            if ((size_t)n > sizeof(text) - 1 - text_used) { read_failed = 1; break; }
+            memcpy(text + text_used, buf, (size_t)n);
+            text_used += (size_t)n;
         }
-        close(pipes[0]);
-        if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
-            EVP_DigestFinal_ex(ctx, digest, &dlen) != 1 || dlen != 32) {
-            EVP_MD_CTX_free(ctx);
-            return -1;
+    }
+    close(pipes[0]);
+    while (!timed_out && !read_failed) {
+        pid_t waited = waitpid(pid, &status, WNOHANG);
+        if (waited == pid) { child_done = 1; break; }
+        if (waited < 0 && errno != EINTR) break;
+        if (clock_gettime(CLOCK_MONOTONIC, &clock_now) != 0 ||
+            (long long)clock_now.tv_sec * 1000 + clock_now.tv_nsec / 1000000 >= deadline) {
+            timed_out = 1; break;
+        }
+        { struct timespec delay = {0, 5000000L}; nanosleep(&delay, NULL); }
+    }
+    if (!child_done) { (void)kill(pid, SIGKILL); (void)waitpid(pid, &status, WNOHANG); }
+    if (!child_done || timed_out || read_failed || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        EVP_MD_CTX_free(ctx); return -1;
+    }
+    if (capture_sha256) {
+        if (EVP_DigestFinal_ex(ctx, digest, &dlen) != 1 || dlen != 32) {
+            EVP_MD_CTX_free(ctx); return -1;
         }
         EVP_MD_CTX_free(ctx);
         for (size_t i = 0; i < 32; ++i) {
@@ -163,20 +216,26 @@ static int run_debugfs_cmd(const char *debugfs_bin, const char *cmd_arg, int dup
             out_hex[i * 2 + 1] = tbl[digest[i] & 15];
         }
         out_hex[64] = '\0';
-        return 0;
     } else {
-        while (text_used < sizeof(text) - 1 &&
-               ((n = read(pipes[0], text + text_used, sizeof(text) - 1 - text_used)) > 0 ||
-                (n < 0 && errno == EINTR))) {
-            if (n > 0) text_used += (size_t)n;
-        }
-        close(pipes[0]);
-        if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
-            return -1;
         text[text_used] = '\0';
-        if (out_is_regular) *out_is_regular = (strstr(text, "Type: regular") != NULL) ? 1 : 0;
-        return 0;
+        if (out_is_regular) {
+            *out_is_regular = (strstr(text, "Type: regular") != NULL) ? 1 : 0;
+            if (strstr(text, "Type: symlink") != NULL) {
+                const char *begin = strstr(text, "Fast link dest: \"");
+                const char *end;
+                if (begin) {
+                    begin += strlen("Fast link dest: \"");
+                    end = strchr(begin, '"');
+                    if (end && end > begin && (size_t)(end - begin) < 64) {
+                        memcpy(out_hex, begin, (size_t)(end - begin));
+                        out_hex[end - begin] = '\0';
+                        if (valid_libc_target(out_hex)) *out_is_regular = 2;
+                    }
+                }
+            }
+        }
     }
+    return 0;
 }
 
 static const char *find_debugfs_bin(void)
@@ -192,7 +251,11 @@ static int verify_manifest_matches_ext4_image(int imagefd, const unsigned char *
     const char *df = find_debugfs_bin();
     int dup_fd, rc = -1;
     char *copy = NULL, *line, *save = NULL;
+    struct timespec started;
+    long long total_deadline;
 
+    if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) return -1;
+    total_deadline = (long long)started.tv_sec * 1000 + started.tv_nsec / 1000000 + 60000;
     /* Check ext4 superblock magic 0xEF53 at offset 0x438 (little-endian: 0x53, 0xEF) */
     if (!df || pread(imagefd, sb, 2, 0x438) != 2 || sb[0] != 0x53 || sb[1] != 0xEF)
         return -1;
@@ -211,9 +274,20 @@ static int verify_manifest_matches_ext4_image(int imagefd, const unsigned char *
         *sp = '\0';
         snprintf(stat_cmd, sizeof(stat_cmd), "stat %s", line);
         snprintf(dump_cmd, sizeof(dump_cmd), "dump %s /dev/stdout", line);
-        if (run_debugfs_cmd(df, stat_cmd, dup_fd, 0, actual_hex, &is_reg) != 0 || !is_reg)
+        if (run_debugfs_cmd(df, stat_cmd, dup_fd, 0, actual_hex, &is_reg, total_deadline) != 0 || !is_reg)
             goto out;
-        if (run_debugfs_cmd(df, dump_cmd, dup_fd, 1, actual_hex, NULL) != 0 ||
+        if (is_reg == 2) {
+            char target[96];
+            if (strcmp(line, "/lib/libc.so.6") != 0 ||
+                snprintf(target, sizeof(target), "/lib/%s", actual_hex) >= (int)sizeof(target))
+                goto out;
+            snprintf(stat_cmd, sizeof(stat_cmd), "stat %s", target);
+            snprintf(dump_cmd, sizeof(dump_cmd), "dump %s /dev/stdout", target);
+            is_reg = 0;
+            if (run_debugfs_cmd(df, stat_cmd, dup_fd, 0, actual_hex, &is_reg, total_deadline) != 0 ||
+                is_reg != 1) goto out;
+        }
+        if (run_debugfs_cmd(df, dump_cmd, dup_fd, 1, actual_hex, NULL, total_deadline) != 0 ||
             strcmp(actual_hex, sp + 1) != 0)
             goto out;
     }
@@ -385,8 +459,22 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
         secure_file(sigfd, owner, sizeof(signature)) ||
         secure_file(imagefd, owner, (off_t)MAX_IMAGE) ||
         read_small(manifestfd, manifest, sizeof(manifest), &manifest_len) ||
-        read_small(sigfd, signature, sizeof(signature), &signature_len) ||
-        digest_fd(imagefd, image_hex, &image_size)) goto out;
+        read_small(sigfd, signature, sizeof(signature), &signature_len)) goto out;
+
+    /* Authenticate the bounded manifest before invoking any image parser. */
+    keycopy = dup(keyfd);
+    if (keycopy < 0 || lseek(keycopy, 0, SEEK_SET) < 0) goto out;
+    keyfile = fdopen(keycopy, "r");
+    if (!keyfile) goto out;
+    keycopy = -1;
+    key = PEM_read_PUBKEY(keyfile, NULL, NULL, NULL);
+    if (!key || EVP_PKEY_base_id(key) != EVP_PKEY_RSA ||
+        EVP_PKEY_bits(key) < 2048) goto out;
+    ctx = EVP_MD_CTX_new();
+    if (!ctx || EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, key) != 1 ||
+        EVP_DigestVerifyUpdate(ctx, manifest, manifest_len) != 1 ||
+        EVP_DigestVerifyFinal(ctx, signature, signature_len) != 1) goto out;
+    if (digest_fd(imagefd, image_hex, &image_size)) goto out;
 
     rmfd = openat(bundle, "rootfs.manifest", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (rmfd >= 0) {
@@ -395,7 +483,6 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
         if (!rm_buf || secure_file(rmfd, owner, MAX_ROOTFS_MANIFEST) ||
             read_small(rmfd, rm_buf, MAX_ROOTFS_MANIFEST, &rm_len) ||
             validate_rootfs_manifest_bytes(rm_buf, rm_len) != 0 ||
-            verify_manifest_matches_ext4_image(imagefd, rm_buf, rm_len) != 0 ||
             digest_fd(rmfd, rm_hex, &rm_size) != 0)
             goto out;
     } else if (errno != ENOENT) {
@@ -413,19 +500,8 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
                      image_size, image_hex);
     }
     if (n <= 0 || (size_t)n != manifest_len || memcmp(canonical, manifest, manifest_len)) goto out;
-
-    keycopy = dup(keyfd);
-    if (keycopy < 0 || lseek(keycopy, 0, SEEK_SET) < 0) goto out;
-    keyfile = fdopen(keycopy, "r");
-    if (!keyfile) goto out;
-    keycopy = -1;
-    key = PEM_read_PUBKEY(keyfile, NULL, NULL, NULL);
-    if (!key || EVP_PKEY_base_id(key) != EVP_PKEY_RSA ||
-        EVP_PKEY_bits(key) < 2048) goto out;
-    ctx = EVP_MD_CTX_new();
-    if (!ctx || EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, key) != 1 ||
-        EVP_DigestVerifyUpdate(ctx, manifest, manifest_len) != 1 ||
-        EVP_DigestVerifyFinal(ctx, signature, signature_len) != 1) goto out;
+    if (have_rm && verify_manifest_matches_ext4_image(imagefd, rm_buf, rm_len) != 0)
+        goto out;
     EVP_MD_CTX_free(ctx); ctx = EVP_MD_CTX_new();
     if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
         EVP_DigestUpdate(ctx, manifest, manifest_len) != 1 ||

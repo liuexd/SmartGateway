@@ -106,6 +106,9 @@ class TestG3KernelAndRootfs(unittest.TestCase):
             ):
                 self.assertIn(req, names)
 
+            self.assertTrue({"sbin/debugfs", "usr/sbin/debugfs"} & names,
+                            "signed manifest verification requires debugfs")
+
             for bloat in ("etc/init.d/S05lvgl", "etc/init.d/S50telnet", "etc/php.ini"):
                 self.assertNotIn(bloat, names)
 

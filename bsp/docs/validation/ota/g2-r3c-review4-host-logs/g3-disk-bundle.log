@@ -1,0 +1,6 @@
+test_signed_manifest_matches_real_g3_image (tests.test_review4_g3_bundle.G3BundleTest.test_signed_manifest_matches_real_g3_image) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 1.040s
+
+OK

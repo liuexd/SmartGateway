@@ -1,0 +1,21 @@
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_crc16.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_crc16 -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_frame.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_frame -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_frame_parser.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_frame_parser -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_line_parser.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_line_parser -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_message_json.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_message_json -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_message_queue.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_message_queue -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_node_store.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_node_store -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_device_manager.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_device_manager -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_command_manager.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_command_manager -pthread
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread tests/test_tcp_send_timeout.c common/crc16.c common/frame.c common/frame_parser.c common/line_parser.c common/message_json.c server/node_store.c server/command_manager.c gateway/message_queue.c gateway/tcp_client.c gateway/device_manager.c -o build/tests/test_tcp_send_timeout -pthread
+test_crc16             PASS
+test_frame             PASS
+test_frame_parser      PASS
+test_line_parser       PASS
+test_message_json      PASS
+test_message_queue     PASS
+test_node_store        PASS
+test_device_manager    PASS
+test_command_manager   PASS
+test_tcp_send_timeout  PASS
+全部单元测试通过

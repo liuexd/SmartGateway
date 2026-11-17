@@ -1,0 +1,8 @@
+test_actual_gateway_components_and_no_upstream_pollution (tests.test_g2r3b_gateway_probe.GatewayProbeTests.test_actual_gateway_components_and_no_upstream_pollution) ... ok
+test_live_pid_but_unresponsive_gateway_is_rejected (tests.test_g2r3b_gateway_probe.GatewayProbeTests.test_live_pid_but_unresponsive_gateway_is_rejected) ... ok
+test_local_probe_with_disconnected_upstream_preserves_pending_data (tests.test_g2r3b_gateway_probe.GatewayProbeTests.test_local_probe_with_disconnected_upstream_preserves_pending_data) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 9.391s
+
+OK
