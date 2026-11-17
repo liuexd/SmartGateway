@@ -343,8 +343,8 @@ class TestG2R3CN09N10(unittest.TestCase):
         self.set_running_slot("1")
         return txid
 
-    def run_confirm(self, net="healthy", hb="healthy", preload=None):
-        return subprocess.run([
+    def run_confirm(self, net="healthy", hb="healthy", preload=None, running=None, extra_env=None):
+        cmd = [
             str(HARNESS), "confirm",
             "--policy", str(self.policy_file),
             "--fw-cfg", str(self.fw_cfg),
@@ -359,7 +359,13 @@ class TestG2R3CN09N10(unittest.TestCase):
             "--net-state", net,
             "--sensor-hb", hb,
             "--fuse-data",
-        ], env=self.harness_env(preload=preload), capture_output=True, text=True, timeout=15)
+        ]
+        if running is not None:
+            cmd.extend(["--running", str(running)])
+        env = self.harness_env(preload=preload)
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=15)
 
     def send_real_data_frame(self, seq=42):
         payload = json.dumps({
@@ -518,6 +524,110 @@ class TestG2R3CN09N10(unittest.TestCase):
         self.assertNotEqual(r2.returncode, 0)
         self.assertIn("state=PENDING consumed=0", self.inspect_txn(txid))
         self.assertEqual(self.get_env()["sgw_ab_state"], "trial")
+
+    def test_n10_caller_running_mismatch_rejects_before_any_mutation(self):
+        txid = self.stage_signed_upgrade_to_slot1()
+        self.write_policy(flow_mode="strict_forward", allow_degraded="0")
+        self.send_real_data_frame(seq=201)
+
+        before_env = self.get_env()
+        r_bad = self.run_confirm(running="2")
+        self.assertNotEqual(r_bad.returncode, 0)
+        self.assertIn("caller --running disagrees", r_bad.stderr)
+        # Verify ZERO mutation occurred on either fw_env or transaction ledger
+        self.assertEqual(self.get_env(), before_env)
+        self.assertIn("state=PENDING consumed=0", self.inspect_txn(txid))
+
+        # Now matching --running 1 confirms cleanly
+        self.send_real_data_frame(seq=202)
+        r_good = self.run_confirm(running="1")
+        self.assertEqual(r_good.returncode, 0, r_good.stdout + r_good.stderr)
+        self.assertIn("CONFIRMED slot=1 last_good=1", r_good.stdout)
+        self.assertIn("state=CONFIRMED consumed=1", self.inspect_txn(txid))
+
+    def test_n10_split_state_env_confirmed_txn_confirming_recovery_and_idempotency(self):
+        txid = self.stage_signed_upgrade_to_slot1()
+        self.write_policy(flow_mode="controlled_local", allow_degraded="1")
+
+        # Fault injector: allow 1st .txn- fsync (CONFIRMING), fail 2nd .txn- fsync (CONFIRMED) AFTER fw_env committed!
+        split_c = self.base / "split_fsync_fail.c"
+        split_so = self.base / "libsplit_fsync_fail.so"
+        split_c.write_text(
+            '#define _GNU_SOURCE\n'
+            '#include <dlfcn.h>\n#include <errno.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <unistd.h>\n'
+            'int fsync(int fd) {\n'
+            '    static int txn_fsyncs = 0;\n'
+            '    char lnk[64], target[512];\n'
+            '    int (*real_fsync)(int) = dlsym(RTLD_NEXT, "fsync");\n'
+            '    snprintf(lnk, sizeof(lnk), "/proc/self/fd/%d", fd);\n'
+            '    ssize_t n = readlink(lnk, target, sizeof(target) - 1);\n'
+            '    if (n > 0) {\n'
+            '        target[n] = 0;\n'
+            '        if (strstr(target, ".txn-")) {\n'
+            '            txn_fsyncs++;\n'
+            '            if (txn_fsyncs >= 2) { errno = EIO; return -1; }\n'
+            '        }\n'
+            '    }\n'
+            '    return real_fsync(fd);\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["gcc", "-shared", "-fPIC", str(split_c), "-ldl", "-o", str(split_so)], check=True)
+
+        r_fail = self.run_confirm(preload=split_so)
+        self.assertNotEqual(r_fail.returncode, 0)
+        # Verify exact split state on disk: fw_env is CONFIRMED, txn is still CONFIRMING (consumed=0)
+        ev = self.get_env()
+        self.assertEqual(ev["sgw_ab_state"], "confirmed")
+        self.assertEqual(ev["upgrade_available"], "0")
+        self.assertEqual(ev["bootcount"], "0")
+        self.assertEqual(ev["sgw_active_slot"], "1")
+        self.assertIn("state=CONFIRMING consumed=0", self.inspect_txn(txid))
+
+        # Simulate reboot into new boot_id
+        self.boot_id = str(uuid.uuid4())
+        self.boot_id_file.write_text(self.boot_id + "\n", encoding="utf-8")
+
+        # Tampered slot must STILL block split-state recovery
+        orig = self.slot1_img.read_bytes()
+        self.slot1_img.write_bytes(b"BADSLOT" + orig[7:])
+        r_bad_rec = self.run_confirm()
+        self.assertNotEqual(r_bad_rec.returncode, 0)
+        self.assertIn("digest mismatch", r_bad_rec.stderr)
+        self.assertIn("state=CONFIRMING consumed=0", self.inspect_txn(txid))
+        self.slot1_img.write_bytes(orig)
+
+        # Clean retry reconciles CONFIRMING -> CONFIRMED (consumed=1)
+        r_rec = self.run_confirm()
+        self.assertEqual(r_rec.returncode, 0, r_rec.stdout + r_rec.stderr)
+        self.assertIn("RECOVERED_CONFIRMED slot=1 last_good=1", r_rec.stdout)
+        self.assertIn("state=CONFIRMED consumed=1", self.inspect_txn(txid))
+
+        # Subsequent confirm / replay after consumed=1 must strictly reject
+        r_again = self.run_confirm()
+        self.assertNotEqual(r_again.returncode, 0)
+        self.assertIn("no active unconsumed transaction record", r_again.stderr)
+
+    def test_n10_unprivileged_production_sgw_bootctl_and_override_rejected(self):
+        if os.geteuid() == 0:
+            self.skipTest("Must run as unprivileged user")
+        prod_bootctl = BOOT / "sgw_bootctl"
+        self.stage_signed_upgrade_to_slot1()
+        before_env = self.get_env()
+
+        r1 = subprocess.run([str(prod_bootctl), "confirm", "--running", "1"],
+                            env=self.harness_env(), capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(r1.returncode, 0)
+        self.assertIn("CONFIRM REJECTED", r1.stderr)
+
+        r2 = subprocess.run([
+            str(prod_bootctl), "-c", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--sysroot", str(self.sysroot),
+            "confirm", "--running", "1",
+        ], env=self.harness_env(), capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(r2.returncode, 0)
+        self.assertIn("CONFIRM REJECTED", r2.stderr)
+        self.assertEqual(self.get_env(), before_env)
 
 
 if __name__ == "__main__":

@@ -119,6 +119,7 @@ static int cmd_confirm(int argc, char **argv)
     const char *mountinfo_p = NULL, *sysroot_p = NULL, *slot_img_p = NULL, *boot_id_p = NULL;
     const char *gpio_dir = NULL, *ap_dir = NULL;
     int i, fuse_data = 0;
+    ab_slot_t caller_running = AB_SLOT_NONE;
     harness_ctx_t hctx = { SGW_HEALTH_HEALTHY, SGW_HEALTH_HEALTHY };
     r3c_policy_t pol;
     fw_env_backend_cfg_t fw;
@@ -141,6 +142,9 @@ static int cmd_confirm(int argc, char **argv)
         else if (strcmp(argv[i], "--ap3216-dir") == 0 && i + 1 < argc) ap_dir = argv[++i];
         else if (strcmp(argv[i], "--net-state") == 0 && i + 1 < argc) hctx.net_state = parse_hstate(argv[++i]);
         else if (strcmp(argv[i], "--sensor-hb") == 0 && i + 1 < argc) hctx.hb_state = parse_hstate(argv[++i]);
+        else if (strcmp(argv[i], "--running") == 0 && i + 1 < argc) {
+            if (ab_slot_parse(argv[++i], &caller_running) != 0) return 2;
+        }
         else if (strcmp(argv[i], "--fuse-data") == 0) fuse_data = 1;
         else return 2;
     }
@@ -183,11 +187,12 @@ static int cmd_confirm(int argc, char **argv)
     ops.sensor_hb_fn = harness_hb;
     ops.ctx = &hctx;
 
-    if (r3c_coordinator_confirm(&pol, &fw, &hcfg, &ops, &res, err, sizeof(err)) != 0) {
+    if (r3c_coordinator_confirm(&pol, &fw, &hcfg, caller_running, &ops, &res, err, sizeof(err)) != 0) {
         fprintf(stderr, "CONFIRM REJECTED: %s\n", err);
         return 1;
     }
-    printf("CONFIRMED slot=%s last_good=%s tx=%s boot_id=%s state=%s samples=%u\n",
+    printf("%s slot=%s last_good=%s tx=%s boot_id=%s state=%s samples=%u\n",
+           res.recovered ? "RECOVERED_CONFIRMED" : "CONFIRMED",
            ab_slot_str(res.running_slot), ab_slot_str(res.last_good_slot),
            res.transaction_id, res.boot_id,
            sgw_health_state_name(res.overall_state), res.samples);

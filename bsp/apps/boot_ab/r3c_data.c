@@ -178,6 +178,7 @@ int r3c_data_inspect(const r3c_data_policy_t *p, char *reason, size_t size)
         p->minimum_available_bytes == 0)
         return fail(reason, size, "invalid or incomplete policy");
     if (trusted_dirs(p->mountpoint, p->owner) != 0 ||
+        trusted_dirs(p->device, p->owner) != 0 ||
         stat(p->device, &dev) != 0 || !S_ISBLK(dev.st_mode) ||
         stat("/", &root) != 0)
         return fail(reason, size, "untrusted mount path or block device");

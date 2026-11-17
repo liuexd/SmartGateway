@@ -229,5 +229,13 @@ int r3c_policy_load(const char *path, uid_t expected_owner,
     }
     if (out->deadline_ms < out->stable_ms)
         return fail(err, errlen, "policy deadline_ms < stable_ms");
+    if (out->max_evidence_age_ms > 5000ULL)
+        return fail(err, errlen, "policy max_evidence_age_ms exceeds 5000ms safety limit");
+    if (strcmp(out->data_mountpoint, "/") == 0)
+        return fail(err, errlen, "DATA mountpoint cannot be root '/'");
+    if (strcmp(out->data_device, out->slot1_device) == 0 ||
+        strcmp(out->data_device, out->slot2_device) == 0 ||
+        strcmp(out->data_device, out->whole_disk_device) == 0)
+        return fail(err, errlen, "DATA device cannot alias slot or whole disk");
     return 0;
 }

@@ -35,7 +35,7 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 
 [G2-R3C DATA 与可信事务设计草案](09-g2-r3c-data-and-trust-design.md)及[主机增量报告](../validation/ota/G2-R3C-host-increment.md)：只读 DATA 前置、应用 OTA 状态检查和事务字段比较；完整可信确认仍 BLOCKED。
 
-[G2-R3C 主机端闭环验收（HOST-ACCEPTED）](../validation/ota/G2-R3C-closed-loop-host-validation.md)：共享 DATA 槽位排重与持久性校验、完整签名事务状态机、Gateway 机制/策略解耦及 N09/N10 端到端闭环（板端仍 BLOCKED）。
+[G2-R3C 主机端闭环验收（安全整改复测 READY-FOR-REVIEW）](../validation/ota/G2-R3C-closed-loop-host-validation.md)：共享 DATA 槽位排重与持久性校验、完整签名事务状态机、Gateway 机制/策略解耦及 N09/N10 端到端闭环（板端仍 BLOCKED）。
 
 [G2-R3B 主机增量验收](../validation/ota/G2-R3B-trusted-health-integration.md)：本地组件探针、设备与网络诊断、原始日志及尚未完成的 DATA/可信事务；HOST-ACCEPTED 和板端放行均为 BLOCKED。
 
@@ -58,6 +58,7 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 | [07-g1-recovery-baseline-and-toolchain.md](07-g1-recovery-baseline-and-toolchain.md) | G1 恢复基线、分支、工具链核查与只读备份方案 | HOST-VERIFIED；板端演练待执行 |
 | [08-g2-uboot-ab-boot-and-watchdog.md](08-g2-uboot-ab-boot-and-watchdog.md) | G2 U-Boot A/B 状态机、bootcount 持久化、冗余 env 与 Watchdog | HOST-TESTED；未写板 |
 | [09-g3-kernel-and-rootfs-trimming.md](09-g3-kernel-and-rootfs-trimming.md) | G3-0 内核基线复现与 G3 Linux 4.9.88 / CMA / Buildroot 2020.02 裁剪 | HOST-TESTED；未写板 |
+| [10-g4-swupdate-and-ab-writer-design.md](10-g4-swupdate-and-ab-writer-design.md) | G4 离线设计：SWUpdate `.swu` 签名包、写槽回读与 G2-R3C 事务对接规范 | DESIGN / OFFLINE-PREP |
 
 ## 当前板端事实
 

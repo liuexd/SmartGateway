@@ -68,6 +68,11 @@ int r3c_txn_finish_confirm(int txdir, const char *id, uid_t owner,
                            const char *boot_id, unsigned long bootcount,
                            char *err, size_t errlen);
 
+/* Reconcile interrupted CONFIRMING -> CONFIRMED(consumed=1) after fw_env already committed. */
+int r3c_txn_reconcile_confirm(int txdir, const char *id, uid_t owner,
+                              ab_slot_t running_slot, int slotfd,
+                              char *err, size_t errlen);
+
 /* Helper to acquire exclusive lock on <txdir>/.sgw-transaction.lock with strict checks. */
 int r3c_txn_acquire_lock(int txdir, uid_t owner, int *lockfd, char *err, size_t errlen);
 

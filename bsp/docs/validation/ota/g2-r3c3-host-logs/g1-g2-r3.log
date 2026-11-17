@@ -25,6 +25,6 @@ test_writable_socket_directory_is_rejected (tests.test_g2r3_health.G2R3Tests.tes
 test_wrong_peer_uid_and_wrong_gateway_executable_rejected (tests.test_g2r3_health.G2R3Tests.test_wrong_peer_uid_and_wrong_gateway_executable_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 1.144s
+Ran 25 tests in 1.129s
 
 OK

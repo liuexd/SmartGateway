@@ -125,6 +125,6 @@ PASS: 原配置未被修改
 结果: PASS
 make: Leaving directory '/home/ubuntu/Desktop/project/SmartGateway-BSP/bsp/apps/service_supervisor'
 FAIL: executable must be an absolute path
-FAIL: config has no executable entry: /tmp/suptest_cfgrel_6ObQwO/test.conf
+FAIL: config has no executable entry: /tmp/suptest_cfgrel_IEnCkX/test.conf
 FAIL: invalid port
 FAIL: invalid port

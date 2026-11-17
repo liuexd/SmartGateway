@@ -6,6 +6,12 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G2-R3C 安全审查整改与分裂崩溃恢复（待独立复审，未推送未写板）
+
+- **确认时序与分裂崩溃恢复修复：** [sgw_bootctl.c](bsp/apps/boot_ab/sgw_bootctl.c) 与 [r3c_coordinator.c](bsp/apps/boot_ab/r3c_coordinator.c) 在任何写盘动作之前核验 `--running`、要求 `geteuid() == 0` 并屏蔽 `-c`/`--cmdline`/`--mounts`/`--run-dir`/`--sysroot`/`SGW_*` 覆盖；[r3c_txn.c](bsp/apps/boot_ab/r3c_txn.c) 新增 `r3c_txn_reconcile_confirm()`，在 `fw_env` 已确认而事务仍停留 `CONFIRMING` 的崩溃分裂现场下完成槽位摘要重验与 `CONFIRMED (consumed=1)` 收尾，随后严拒重放。
+- **DATA、策略与证据时效硬化：** [r3c_data.c](bsp/apps/boot_ab/r3c_data.c) 增加 `trusted_dirs(p->device)`；[r3c_policy.c](bsp/apps/boot_ab/r3c_policy.c) 禁绝 `/` 根挂点、槽设备重名及 `>5000ms` 证据过期配置；[r3c_coordinator.c](bsp/apps/boot_ab/r3c_coordinator.c) 改为探测完成后采集 `sample_end` 并限制单轮探测耗时 `<= max_gap_ms`。
+- **N09/N10 扩充复测 & G4/G1 方案准备：** [tests/test_g2r3c_n09_n10.py](tests/test_g2r3c_n09_n10.py) 扩充至 **7/7 OK**（`8.764 s`），全仓 10 组回归通过；同步整理 G4 离线接口设计 [10-g4-swupdate-and-ab-writer-design.md](bsp/docs/system-ab/10-g4-swupdate-and-ab-writer-design.md) 与 G1 板端演练清单 [G1-board-recovery-runbook.md](bsp/docs/validation/platform/G1-board-recovery-runbook.md)。
+
 ## G2-R3C — 主机端可信确认全链闭环与 N09/N10 通过（HOST-ACCEPTED，未写板）
 
 - **完整可信确认链路：** 新增 [r3c_policy.{h,c}](bsp/apps/boot_ab/r3c_policy.c)、[r3c_txn.{h,c}](bsp/apps/boot_ab/r3c_txn.c) 与 [r3c_coordinator.{h,c}](bsp/apps/boot_ab/r3c_coordinator.c)，并将生产 [sgw_bootctl.c](bsp/apps/boot_ab/sgw_bootctl.c) `confirm` 接入统一持锁协调器（`.ota.lock` + `.sgw-transaction.lock`）：覆盖共享 DATA 槽位/保留扇区重叠校验与写入-`fsync`-读回验证、RSA/SHA-256 事务 `VERIFIED -> WRITTEN -> PENDING -> CONFIRMING -> CONFIRMED`（`consumed=1` 抗重放）、`boot_id`/`bootcount` 绑定与多轮稳定采样、及 `fw_env` 写后读回校验。

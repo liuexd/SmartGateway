@@ -523,3 +523,26 @@ int r3c_txn_finish_confirm(int txdir, const char *id, uid_t owner,
     rec.consumed = 1;
     return serialize_and_commit(txdir, owner, &rec, err, errlen);
 }
+
+int r3c_txn_reconcile_confirm(int txdir, const char *id, uid_t owner,
+                              ab_slot_t running_slot, int slotfd,
+                              char *err, size_t errlen)
+{
+    r3c_txn_record_t rec;
+    char slot_hex[65];
+    uint64_t slot_len = 0;
+
+    if (r3c_txn_load_by_id(txdir, id, owner, &rec, err, errlen) != 0) return -1;
+    if (rec.consumed || rec.state != R3C_TXN_CONFIRMING)
+        return fail(err, errlen, "transaction not in recoverable CONFIRMING state");
+    if ((ab_slot_t)rec.target_slot != running_slot ||
+        !valid_boot_id(rec.boot_id) || rec.bootcount == 0 || rec.written_size == 0)
+        return fail(err, errlen, "CONFIRMING transaction missing verified binding");
+    if (slotfd < 0 ||
+        r3c_txn_digest_fd(slotfd, rec.written_size, slot_hex, &slot_len) != 0 ||
+        slot_len != rec.written_size || strcmp(slot_hex, rec.image_sha256) != 0)
+        return fail(err, errlen, "installed slot digest mismatch during recovery");
+    rec.state = R3C_TXN_CONFIRMED;
+    rec.consumed = 1;
+    return serialize_and_commit(txdir, owner, &rec, err, errlen);
+}

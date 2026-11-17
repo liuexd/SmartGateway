@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void print_usage(const char *prog)
 {
@@ -103,6 +104,7 @@ int main(int argc, char **argv)
     ab_env_t env;
     char errbuf[256] = {0};
     int idx = 1;
+    int has_cli_override = 0;
     const char *cmd;
 
     fw_env_backend_cfg_from_env(&cfg);
@@ -112,18 +114,23 @@ int main(int argc, char **argv)
         if ((strcmp(argv[idx], "-c") == 0 || strcmp(argv[idx], "--config") == 0) &&
             idx + 1 < argc) {
             cfg.config_path = argv[idx + 1];
+            has_cli_override = 1;
             idx += 2;
         } else if (strcmp(argv[idx], "--run-dir") == 0 && idx + 1 < argc) {
             hcfg.supervisor_run_dir = argv[idx + 1];
+            has_cli_override = 1;
             idx += 2;
         } else if (strcmp(argv[idx], "--cmdline") == 0 && idx + 1 < argc) {
             hcfg.proc_cmdline_path = argv[idx + 1];
+            has_cli_override = 1;
             idx += 2;
         } else if (strcmp(argv[idx], "--mounts") == 0 && idx + 1 < argc) {
             hcfg.proc_mounts_path = argv[idx + 1];
+            has_cli_override = 1;
             idx += 2;
         } else if (strcmp(argv[idx], "--sysroot") == 0 && idx + 1 < argc) {
             hcfg.sysroot_prefix = argv[idx + 1];
+            has_cli_override = 1;
             idx += 2;
         } else {
             break;
@@ -182,6 +189,58 @@ int main(int argc, char **argv)
         }
         printf("running_slot=%s device=%s\n",
                ab_slot_str(detected), ab_slot_device(detected));
+        return 0;
+    }
+
+    if (strcmp(cmd, "confirm") == 0) {
+        ab_slot_t caller_running = AB_SLOT_NONE;
+        r3c_policy_t r3c_pol;
+        r3c_confirm_result_t res;
+
+        if (geteuid() != 0) {
+            fprintf(stderr, "CONFIRM REJECTED: root privilege required\n");
+            return 1;
+        }
+        if (has_cli_override) {
+            fprintf(stderr, "CONFIRM REJECTED: production confirm forbids path overrides\n");
+            return 1;
+        }
+        while (idx < argc) {
+            if (strcmp(argv[idx], "--running") == 0 && idx + 1 < argc) {
+                if (ab_slot_parse(argv[idx + 1], &caller_running) != 0)
+                    return 2;
+                idx += 2;
+            } else {
+                print_usage(argv[0]);
+                return 2;
+            }
+        }
+        /* Hardcode production backend & sys paths; ignore SGW_* env vars completely. */
+        cfg.fw_printenv_bin = "/usr/sbin/fw_printenv";
+        cfg.fw_setenv_bin = "/usr/sbin/fw_setenv";
+        cfg.config_path = "/etc/fw_env.config";
+        hcfg.proc_cmdline_path = "/proc/cmdline";
+        hcfg.proc_mounts_path = "/proc/mounts";
+        hcfg.supervisor_run_dir = "/opt/smartgateway/run";
+        hcfg.sysroot_prefix = "";
+        hcfg.supervisor_timeout_ms = 2000;
+        hcfg.verify_supervisor_pid = 1;
+
+        if (r3c_policy_load(R3C_DEFAULT_POLICY_PATH, 0, &r3c_pol, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
+            return 1;
+        }
+        if (r3c_coordinator_confirm(&r3c_pol, &cfg, &hcfg, caller_running, NULL, &res, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
+            return 1;
+        }
+        printf("%s active=%s last_good=%s state=confirmed tx=%s boot_id=%s health=%s\n",
+               res.recovered ? "RECOVERED_CONFIRMED" : "CONFIRMED",
+               ab_slot_str(res.running_slot),
+               ab_slot_str(res.last_good_slot),
+               res.transaction_id,
+               res.boot_id,
+               sgw_health_state_name(res.overall_state));
         return 0;
     }
 
@@ -278,45 +337,6 @@ int main(int argc, char **argv)
                ab_slot_device(env.pending_slot),
                ab_state_str(env.ab_state),
                env.upgrade_available);
-        return 0;
-    }
-
-    if (strcmp(cmd, "confirm") == 0) {
-        ab_slot_t caller_running = AB_SLOT_NONE;
-        int has_caller_running = 0;
-        r3c_policy_t r3c_pol;
-        r3c_confirm_result_t res;
-
-        while (idx < argc) {
-            if (strcmp(argv[idx], "--running") == 0 && idx + 1 < argc) {
-                if (ab_slot_parse(argv[idx + 1], &caller_running) != 0)
-                    return 2;
-                has_caller_running = 1;
-                idx += 2;
-            } else {
-                print_usage(argv[0]);
-                return 2;
-            }
-        }
-        /* Production confirm: root-owned /etc/smartgateway/r3c-policy.conf, zero CLI/env bypasses */
-        if (r3c_policy_load(R3C_DEFAULT_POLICY_PATH, 0, &r3c_pol, errbuf, sizeof(errbuf)) != 0) {
-            fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
-            return 1;
-        }
-        if (r3c_coordinator_confirm(&r3c_pol, &cfg, &hcfg, NULL, &res, errbuf, sizeof(errbuf)) != 0) {
-            fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
-            return 1;
-        }
-        if (has_caller_running && caller_running != res.running_slot) {
-            fprintf(stderr, "CONFIRM REJECTED: caller --running disagrees with verified slot\n");
-            return 1;
-        }
-        printf("CONFIRMED active=%s last_good=%s state=confirmed tx=%s boot_id=%s health=%s\n",
-               ab_slot_str(res.running_slot),
-               ab_slot_str(res.last_good_slot),
-               res.transaction_id,
-               res.boot_id,
-               sgw_health_state_name(res.overall_state));
         return 0;
     }
 

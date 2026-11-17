@@ -23,9 +23,11 @@
 - [G2：U-Boot A/B 启动管理与 Watchdog](system-ab/08-g2-uboot-ab-boot-and-watchdog.md)
 - [G1 主机验收报告](validation/platform/G1-baseline-and-recovery-prep.md)
 - [G2 U-Boot A/B 主机验收报告](validation/ota/G2-uboot-ab-host-validation.md)
-- [G2-R3C 主机端闭环验收报告（HOST-ACCEPTED）](validation/ota/G2-R3C-closed-loop-host-validation.md)
+- [G2-R3C 主机端闭环验收报告（安全整改待独立复审）](validation/ota/G2-R3C-closed-loop-host-validation.md)
 - [G3：Linux 4.9.88 内核与 Buildroot RootFS 裁剪定制](system-ab/09-g3-kernel-and-rootfs-trimming.md)
 - [G3 内核与根文件系统裁剪主机验收报告](validation/platform/G3-kernel-and-rootfs-trimming.md)
+- [G4 离线设计：SWUpdate `.swu` 与 A/B 写入对接规范](system-ab/10-g4-swupdate-and-ab-writer-design.md)
+- [G1 板端独立恢复与离线备份实操方案](validation/platform/G1-board-recovery-runbook.md)
 
 ## 技术参考
 

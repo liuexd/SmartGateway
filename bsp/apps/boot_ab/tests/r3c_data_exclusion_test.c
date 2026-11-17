@@ -108,6 +108,14 @@ int main(void)
         assert(r3c_policy_load(hp, geteuid(), &pol, err, sizeof(err)) == 0);
         assert(pol.gateway_flow_mode == R3C_GW_CONTROLLED_LOOPBACK);
         assert(pol.allow_external_degraded == 1);
+        /* Reject >5000ms evidence age, '/' mountpoint, and slot alias */
+        write_str(hp, "max_evidence_age_ms=6000\n");
+        assert(r3c_policy_load(hp, geteuid(), &pol, err, sizeof(err)) != 0);
+        write_str(hp, "data_mountpoint=/\n");
+        assert(r3c_policy_load(hp, geteuid(), &pol, err, sizeof(err)) != 0);
+        write_str(hp, "data_device=/dev/mmcblk1p1\n");
+        assert(r3c_policy_load(hp, geteuid(), &pol, err, sizeof(err)) != 0);
+        write_str(hp, "gateway_flow_mode=controlled_local\nallow_external_degraded=1\n");
         /* World-writable rejected */
         assert(chmod(hp, 0666) == 0);
         assert(r3c_policy_load(hp, geteuid(), &pol, err, sizeof(err)) != 0);

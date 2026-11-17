@@ -183,6 +183,7 @@ static sgw_health_state_t check_network_health(const r3c_policy_t *p, const r3c_
 int r3c_coordinator_confirm(const r3c_policy_t *policy,
                             const fw_env_backend_cfg_t *fw_cfg,
                             const ab_health_cfg_t *hcfg,
+                            ab_slot_t expected_running_slot,
                             const r3c_runtime_ops_t *ops,
                             r3c_confirm_result_t *out,
                             char *errbuf,
@@ -206,6 +207,8 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
 
     if (!policy || !fw_cfg || !hcfg)
         return fail(errbuf, errlen, "null coordinator argument");
+    if (!ops && (geteuid() != 0 || policy->trusted_uid != 0))
+        return fail(errbuf, errlen, "production confirm requires root privilege");
     if (out) memset(out, 0, sizeof(*out));
 
     /* 1. Acquire ordered locks: first app OTA shared lock, then txdir exclusive lock */
@@ -225,16 +228,52 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     if (verify_data_under_policy(policy, ops, errbuf, errlen) != 0)
         goto out;
 
-    /* 3. Verify OS running slot & U-Boot trial state */
+    /* 3. Verify OS running slot & caller --running BEFORE any write or transaction mutation */
     if (ab_detect_running_slot_full(
             hcfg, (ops && ops->mountinfo_path) ? ops->mountinfo_path : "/proc/self/mountinfo",
             (ops && ops->allow_host_slot_sim) ? 1 : 0,
             &running_slot, errbuf, errlen) != 0)
         goto out;
+    if (expected_running_slot != AB_SLOT_NONE && expected_running_slot != running_slot) {
+        fail(errbuf, errlen, "caller --running disagrees with verified OS running slot");
+        goto out;
+    }
     if (fw_env_backend_load(fw_cfg, &env, errbuf, errlen) != 0)
         goto out;
     if (ab_env_validate(&env, errbuf, errlen) != 0)
         goto out;
+
+    /* 4. Load active transaction & verify slot digest or split-state recovery */
+    if (r3c_txn_load_active(txdir, policy->trusted_uid, &txn, errbuf, errlen) != 0)
+        goto out;
+
+    if (env.ab_state == AB_STATE_CONFIRMED && env.upgrade_available == 0 &&
+        env.bootcount == 0 && env.active_slot == running_slot &&
+        env.last_good_slot == running_slot &&
+        txn.state == R3C_TXN_CONFIRMING && !txn.consumed &&
+        (ab_slot_t)txn.target_slot == running_slot) {
+        const char *slot_path = (ops && ops->slot_image_override) ?
+            ops->slot_image_override : ab_slot_device(running_slot);
+        if (!slot_path) { fail(errbuf, errlen, "missing slot path"); goto out; }
+        slotfd = open(slot_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (slotfd < 0) { fail(errbuf, errlen, "cannot open slot for split-state recovery"); goto out; }
+        if (r3c_txn_reconcile_confirm(txdir, txn.id, policy->trusted_uid,
+                                      running_slot, slotfd, errbuf, errlen) != 0)
+            goto out;
+        if (out) {
+            snprintf(out->transaction_id, sizeof(out->transaction_id), "%s", txn.id);
+            snprintf(out->boot_id, sizeof(out->boot_id), "%s", txn.boot_id);
+            out->running_slot = running_slot;
+            out->last_good_slot = env.last_good_slot;
+            out->bootcount = txn.bootcount;
+            out->overall_state = SGW_HEALTH_HEALTHY;
+            out->samples = 0;
+            out->recovered = 1;
+        }
+        rc = 0;
+        goto out;
+    }
+
     if (env.ab_state != AB_STATE_TRIAL || env.upgrade_available != 1 ||
         env.active_slot != running_slot || env.pending_slot != running_slot ||
         env.last_good_slot == running_slot || env.bootcount == 0) {
@@ -243,9 +282,6 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     }
     trial_bootcount = env.bootcount;
 
-    /* 4. Load active transaction & verify slot readback digest */
-    if (r3c_txn_load_active(txdir, policy->trusted_uid, &txn, errbuf, errlen) != 0)
-        goto out;
     if ((txn.state != R3C_TXN_PENDING && txn.state != R3C_TXN_CONFIRMING) || txn.consumed) {
         fail(errbuf, errlen, "transaction is not pending or already consumed");
         goto out;
@@ -314,7 +350,7 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     /* 6. Stable multi-sample observation loop */
     memset(&assess, 0, sizeof(assess));
     for (;;) {
-        uint64_t now = monotonic_ms();
+        uint64_t now = monotonic_ms(), sample_end;
         pid_t gw_pid = 0, gw_pid2 = 0;
         unsigned long long gw_start = 0, gw_start2 = 0;
         sgw_health_sample_t sample;
@@ -327,7 +363,6 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
         }
         memset(&sample, 0, sizeof(sample));
         sample.identity = hid;
-        sample.time_ms = now;
         sample.system = SGW_HEALTH_HEALTHY;
 
         sup_ok = (sgw_health_supervisor_status(policy->supervisor_sock,
@@ -389,11 +424,17 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
                                        reason, sizeof(reason)) == 0);
         sample.data = (data_ok && app_ok) ? SGW_HEALTH_HEALTHY : SGW_HEALTH_UNHEALTHY;
 
+        sample_end = monotonic_ms();
+        if (sample_end == 0 || sample_end < now || (sample_end - now) > policy->max_gap_ms) {
+            fail(errbuf, errlen, "health probe stalled beyond max_gap_ms");
+            goto out;
+        }
+        sample.time_ms = sample_end;
         if (sgw_health_tracker_sample(&tracker, &sample, &assess) != 0) {
             fail(errbuf, errlen, "health tracker rejected inconsistent sample");
             goto out;
         }
-        t_observed = now;
+        t_observed = sample_end;
 
         if (assess.timed_out) {
             fail(errbuf, errlen, "health observation timed out before stability");

@@ -43,11 +43,13 @@ typedef struct {
     unsigned long bootcount;
     sgw_health_state_t overall_state;
     unsigned int samples;
+    int recovered;
 } r3c_confirm_result_t;
 
 int r3c_coordinator_confirm(const r3c_policy_t *policy,
                             const fw_env_backend_cfg_t *fw_cfg,
                             const ab_health_cfg_t *hcfg,
+                            ab_slot_t expected_running_slot,
                             const r3c_runtime_ops_t *ops,
                             r3c_confirm_result_t *out,
                             char *errbuf,
