@@ -44,6 +44,7 @@ typedef struct {
     sgw_health_state_t overall_state;
     unsigned int samples;
     int recovered;
+    int local_pipeline_only;
 } r3c_confirm_result_t;
 
 int r3c_coordinator_confirm(const r3c_policy_t *policy,

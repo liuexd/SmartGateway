@@ -109,11 +109,28 @@ class TestG2R3CN09N10(unittest.TestCase):
 
         # 2. Isolated OS context (cmdline, mounts, sysroot, boot_id, fake slot image)
         self.sysroot = self.base / "sysroot"
-        (self.sysroot / "sbin").mkdir(parents=True)
-        (self.sysroot / "etc").mkdir(parents=True)
-        (self.sysroot / "sbin/init").write_text("init-v2\n")
-        (self.sysroot / "etc/inittab").write_text("::sysinit:/etc/init.d/rcS\n")
-        (self.sysroot / "etc/sgw-release").write_text("VERSION=g3-v2\n")
+        self.mandatory_sysroot_files = {
+            "/sbin/init": b"init-v2\n",
+            "/etc/inittab": b"::sysinit:/etc/init.d/rcS\n",
+            "/etc/fstab": b"/dev/mmcblk1p5 /data ext4 defaults 0 2\n",
+            "/etc/fw_env.config": b"/dev/mmcblk1 0xe0000 0x4000\n/dev/mmcblk1 0xe4000 0x4000\n",
+            "/sbin/fw_printenv": b"fw_printenv-bin\n",
+            "/usr/bin/sgw_bootctl": b"sgw_bootctl-bin\n",
+            "/usr/bin/sgw_watchdog_guard": b"sgw_watchdog_guard-bin\n",
+            "/usr/bin/service_supervisor": b"service_supervisor-bin\n",
+            "/usr/bin/smart_gateway": b"smart_gateway-bin\n",
+            "/usr/bin/ota_agent": b"ota_agent-bin\n",
+            "/etc/init.d/S15sgw_ab_guard": b"#!/bin/sh\n",
+            "/etc/init.d/S99smartgateway": b"#!/bin/sh\n",
+            "/boot/zImage": b"zImage-kernel\n",
+            "/boot/100ask_imx6ull-14x14.dtb": b"dtb-imx6ull\n",
+            "/lib/libc.so.6": b"libc-2.30\n",
+            "/etc/sgw-release": b"VERSION=g3-v2\n",
+        }
+        for rel, content in self.mandatory_sysroot_files.items():
+            fp = self.sysroot / rel.lstrip("/")
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_bytes(content)
         self.cmdline = self.base / "cmdline"
         self.mounts = self.base / "mounts"
         self.set_running_slot("2")
@@ -194,7 +211,7 @@ class TestG2R3CN09N10(unittest.TestCase):
         img_bytes = slot_payload.read_bytes()
         (self.bundle / "rootfs.img").write_bytes(img_bytes)
         rm_lines = []
-        for rel in ("/sbin/init", "/etc/inittab", "/etc/sgw-release"):
+        for rel in self.mandatory_sysroot_files:
             data = (self.sysroot / rel.lstrip("/")).read_bytes()
             rm_lines.append(f"{rel} {hashlib.sha256(data).hexdigest()}")
         rm_text = "\n".join(rm_lines) + "\n"
@@ -460,6 +477,7 @@ class TestG2R3CN09N10(unittest.TestCase):
         r_allow = self.run_confirm()
         self.assertEqual(r_allow.returncode, 0, r_allow.stdout + r_allow.stderr)
         self.assertIn("state=DEGRADED", r_allow.stdout)
+        self.assertIn("local_pipeline_only=1", r_allow.stdout)
         self.assertIn("state=CONFIRMED consumed=1", self.inspect_txn(txid))
         self.assertEqual(self.get_env()["sgw_ab_state"], "confirmed")
 
@@ -617,6 +635,8 @@ class TestG2R3CN09N10(unittest.TestCase):
         r_rec = self.run_confirm()
         self.assertEqual(r_rec.returncode, 0, r_rec.stdout + r_rec.stderr)
         self.assertIn("RECOVERED_CONFIRMED slot=1 last_good=1", r_rec.stdout)
+        self.assertIn("state=UNKNOWN samples=0", r_rec.stdout)
+        self.assertNotIn("state=HEALTHY", r_rec.stdout)
         self.assertIn("state=CONFIRMED consumed=1", self.inspect_txn(txid))
 
         # Subsequent confirm / replay after consumed=1 must strictly reject
@@ -774,6 +794,216 @@ class TestG2R3CN09N10(unittest.TestCase):
         r_rw = self.run_confirm()
         self.assertNotEqual(r_rw.returncode, 0)
         self.assertIn("rw-mounted rootfs requires signed rootfs_manifest", r_rw.stderr)
+
+
+    def resign_bundle_with_manifest(self, rm_text):
+        (self.bundle / "rootfs.manifest").write_text(rm_text, encoding="utf-8")
+        img_bytes = (self.bundle / "rootfs.img").read_bytes()
+        rm_sha = hashlib.sha256(rm_text.encode("utf-8")).hexdigest()
+        manifest = ("SGW-SYSTEM-2\nboard=imx6ull-100ask\nimage=rootfs.img\n"
+                    f"size={len(img_bytes)}\nsha256={hashlib.sha256(img_bytes).hexdigest()}\n"
+                    f"rootfs_manifest_sha256={rm_sha}\n")
+        (self.bundle / "manifest").write_text(manifest, encoding="utf-8")
+        subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(self.privkey),
+                        "-out", str(self.bundle / "manifest.sig"),
+                        str(self.bundle / "manifest")], check=True, capture_output=True)
+        for fp in self.bundle.iterdir():
+            fp.chmod(0o600)
+
+    def test_n09_local_pipeline_stalled_gateway_worker_rejected(self):
+        self.stage_signed_upgrade_to_slot1()
+        self.write_policy(flow_mode="controlled_local", allow_degraded="1")
+        pg = subprocess.run(["pgrep", "-P", str(self.sup.pid)], capture_output=True, text=True, check=True)
+        gw_pids = [int(x) for x in pg.stdout.split() if x.strip()]
+        self.assertTrue(gw_pids)
+        for pid in gw_pids:
+            os.kill(pid, signal.SIGSTOP)
+        try:
+            r_stall = self.run_confirm()
+            self.assertNotEqual(r_stall.returncode, 0)
+            self.assertEqual(self.get_env()["sgw_ab_state"], "trial")
+        finally:
+            for pid in gw_pids:
+                try:
+                    os.kill(pid, signal.SIGCONT)
+                except OSError:
+                    pass
+
+    def test_n10_incomplete_duplicate_or_image_mismatched_manifest_rejected(self):
+        tx_cli = ROOT / "bsp/apps/boot_ab/r3c_bundle_cli"
+        base_lines = [
+            f"{rel} {hashlib.sha256((self.sysroot / rel.lstrip('/')).read_bytes()).hexdigest()}"
+            for rel in self.mandatory_sysroot_files
+        ]
+
+        # 1. Missing mandatory file (/lib/libc.so.6) even with valid RSA signature -> REJECTED
+        missing = [ln for ln in base_lines if not ln.startswith("/lib/libc.so.6 ")]
+        self.resign_bundle_with_manifest("\n".join(missing) + "\n")
+        r1 = subprocess.run([str(tx_cli), str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"],
+                            capture_output=True, text=True)
+        self.assertNotEqual(r1.returncode, 0)
+
+        # 2. Duplicate path entry even with valid RSA signature -> REJECTED
+        dup = list(base_lines) + [base_lines[0]]
+        self.resign_bundle_with_manifest("\n".join(dup) + "\n")
+        r2 = subprocess.run([str(tx_cli), str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"],
+                            capture_output=True, text=True)
+        self.assertNotEqual(r2.returncode, 0)
+
+        # 3. Digest mismatch between rootfs.manifest and actual ext4 file inside rootfs.img -> REJECTED
+        bad_digest = [
+            ("/etc/sgw-release " + ("0" * 64)) if ln.startswith("/etc/sgw-release ") else ln
+            for ln in base_lines
+        ]
+        self.resign_bundle_with_manifest("\n".join(bad_digest) + "\n")
+        r3 = subprocess.run([str(tx_cli), str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"],
+                            capture_output=True, text=True)
+        self.assertNotEqual(r3.returncode, 0)
+
+    def test_n10_write_slot_mounted_blk_topology_overlap_and_toctou_swap(self):
+        tx_cli = ROOT / "bsp/apps/boot_ab/r3c_bundle_cli"
+        r = subprocess.run([str(tx_cli), str(self.bundle), str(self.txdir), str(self.pubkey), "1", "2"],
+                           capture_output=True, text=True, check=True)
+        txid = r.stdout.strip()
+
+        canary = self.base / "canary_topo.img"
+        canary_data = b"T" * (16 * 1024 * 1024)
+        canary.write_bytes(canary_data)
+
+        # 1. Real mounted root partition block device (/dev/sda2) -> MUST reject under --require-blk
+        if Path("/dev/sda2").exists():
+            r_mnt = subprocess.run([
+                str(HARNESS), "write-slot", "--require-blk",
+                "--txdir", str(self.txdir), "--txid", txid,
+                "--image", str(self.bundle / "rootfs.img"),
+                "--target-dev", "/dev/sda2",
+                "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+                "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+                "--sysroot", str(self.sysroot),
+            ], env=self.harness_env(), capture_output=True, text=True)
+            self.assertNotEqual(r_mnt.returncode, 0)
+            self.assertIn("mounted", r_mnt.stderr)
+
+        # 2. Whole parent disk (/dev/sda) containing mounted /dev/sda2 -> MUST reject under --require-blk
+        if Path("/dev/sda").exists():
+            r_parent = subprocess.run([
+                str(HARNESS), "write-slot", "--require-blk",
+                "--txdir", str(self.txdir), "--txid", txid,
+                "--image", str(self.bundle / "rootfs.img"),
+                "--target-dev", "/dev/sda",
+                "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+                "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+                "--sysroot", str(self.sysroot),
+            ], env=self.harness_env(), capture_output=True, text=True)
+            self.assertNotEqual(r_parent.returncode, 0)
+            self.assertIn("whole disk", r_parent.stderr)
+
+        # 3. Synthetic sysfs partition overlapping reserved U-Boot env sectors 1792..1824 -> zero writes
+        sysfs_blk = self.base / "sys_dev_block"
+        sysfs_blk.mkdir(parents=True)
+        part_dir = self.base / "sys_disk0" / "part_uboot"
+        part_dir.mkdir(parents=True)
+        (part_dir / "partition").write_text("1\n")
+        (part_dir / "start").write_text("1700\n")
+        (part_dir / "size").write_text("40960\n")
+        (sysfs_blk / "259:90").symlink_to(part_dir)
+        fake_mnt = self.base / "fake_mountinfo"
+        fake_mnt.write_text("21 1 259:1 / / rw - ext4 /dev/root rw\n")
+        blk_c = self.base / "fake_blk_stat.c"
+        blk_so = self.base / "libfake_blk_stat.so"
+        blk_c.write_text(
+            '#define _GNU_SOURCE\n'
+            '#define _LARGEFILE64_SOURCE\n'
+            '#include <dlfcn.h>\n#include <stdio.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <sys/sysmacros.h>\n#include <unistd.h>\n'
+            'static int match_canary(const char *p) { return p && strstr(p, "canary_topo.img") != NULL; }\n'
+            'int lstat(const char *p, struct stat *st) {\n'
+            '    int (*real_fn)(const char *, struct stat *) = dlsym(RTLD_NEXT, "lstat");\n'
+            '    int rc = real_fn(p, st);\n'
+            '    if (rc == 0 && match_canary(p)) { st->st_mode = S_IFBLK | 0600; st->st_rdev = makedev(259, 90); }\n'
+            '    return rc;\n'
+            '}\n'
+            'int lstat64(const char *p, struct stat64 *st) {\n'
+            '    int (*real_fn)(const char *, struct stat64 *) = dlsym(RTLD_NEXT, "lstat64");\n'
+            '    int rc = real_fn(p, st);\n'
+            '    if (rc == 0 && match_canary(p)) { st->st_mode = S_IFBLK | 0600; st->st_rdev = makedev(259, 90); }\n'
+            '    return rc;\n'
+            '}\n'
+            'int fstat(int fd, struct stat *st) {\n'
+            '    int (*real_fn)(int, struct stat *) = dlsym(RTLD_NEXT, "fstat");\n'
+            '    char lnk[64], buf[512];\n'
+            '    int rc = real_fn(fd, st);\n'
+            '    snprintf(lnk, sizeof(lnk), "/proc/self/fd/%d", fd);\n'
+            '    ssize_t n = readlink(lnk, buf, sizeof(buf) - 1);\n'
+            '    if (rc == 0 && n > 0) { buf[n] = 0; if (match_canary(buf)) { st->st_mode = S_IFBLK | 0600; st->st_rdev = makedev(259, 90); } }\n'
+            '    return rc;\n'
+            '}\n'
+            'int fstat64(int fd, struct stat64 *st) {\n'
+            '    int (*real_fn)(int, struct stat64 *) = dlsym(RTLD_NEXT, "fstat64");\n'
+            '    char lnk[64], buf[512];\n'
+            '    int rc = real_fn(fd, st);\n'
+            '    snprintf(lnk, sizeof(lnk), "/proc/self/fd/%d", fd);\n'
+            '    ssize_t n = readlink(lnk, buf, sizeof(buf) - 1);\n'
+            '    if (rc == 0 && n > 0) { buf[n] = 0; if (match_canary(buf)) { st->st_mode = S_IFBLK | 0600; st->st_rdev = makedev(259, 90); } }\n'
+            '    return rc;\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["gcc", "-shared", "-fPIC", str(blk_c), "-ldl", "-o", str(blk_so)], check=True)
+        r_uboot_overlap = subprocess.run([
+            str(HARNESS), "write-slot", "--require-blk",
+            "--sysfs-block-root", str(sysfs_blk),
+            "--txdir", str(self.txdir), "--txid", txid,
+            "--image", str(self.bundle / "rootfs.img"),
+            "--target-dev", str(canary),
+            "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--mountinfo", str(fake_mnt),
+            "--sysroot", str(self.sysroot),
+        ], env=self.harness_env(preload=blk_so), capture_output=True, text=True)
+        self.assertNotEqual(r_uboot_overlap.returncode, 0)
+        self.assertIn("U-Boot env", r_uboot_overlap.stderr)
+        self.assertEqual(canary.read_bytes(), canary_data)
+
+        # 4. Pre-open lstat vs post-open fstat TOCTOU swap -> MUST reject with ZERO bytes written!
+        toctou_c = self.base / "toctou_swap.c"
+        toctou_so = self.base / "libtoctou_swap.so"
+        toctou_c.write_text(
+            '#define _GNU_SOURCE\n'
+            '#define _LARGEFILE64_SOURCE\n'
+            '#include <dlfcn.h>\n#include <stdio.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <unistd.h>\n'
+            'int fstat(int fd, struct stat *st) {\n'
+            '    int (*real_fn)(int, struct stat *) = dlsym(RTLD_NEXT, "fstat");\n'
+            '    char lnk[64], buf[512];\n'
+            '    int rc = real_fn(fd, st);\n'
+            '    snprintf(lnk, sizeof(lnk), "/proc/self/fd/%d", fd);\n'
+            '    ssize_t n = readlink(lnk, buf, sizeof(buf) - 1);\n'
+            '    if (rc == 0 && n > 0) { buf[n] = 0; if (strstr(buf, "canary_topo.img")) st->st_ino ^= 0x123456UL; }\n'
+            '    return rc;\n'
+            '}\n'
+            'int fstat64(int fd, struct stat64 *st) {\n'
+            '    int (*real_fn)(int, struct stat64 *) = dlsym(RTLD_NEXT, "fstat64");\n'
+            '    char lnk[64], buf[512];\n'
+            '    int rc = real_fn(fd, st);\n'
+            '    snprintf(lnk, sizeof(lnk), "/proc/self/fd/%d", fd);\n'
+            '    ssize_t n = readlink(lnk, buf, sizeof(buf) - 1);\n'
+            '    if (rc == 0 && n > 0) { buf[n] = 0; if (strstr(buf, "canary_topo.img")) st->st_ino ^= 0x123456UL; }\n'
+            '    return rc;\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["gcc", "-shared", "-fPIC", str(toctou_c), "-ldl", "-o", str(toctou_so)], check=True)
+        r_toctou = subprocess.run([
+            str(HARNESS), "write-slot",
+            "--txdir", str(self.txdir), "--txid", txid,
+            "--image", str(self.bundle / "rootfs.img"),
+            "--target-dev", str(canary),
+            "--fw-cfg", str(self.fw_cfg), "--cmdline", str(self.cmdline),
+            "--mounts", str(self.mounts), "--mountinfo", "/proc/self/mountinfo",
+            "--sysroot", str(self.sysroot),
+        ], env=self.harness_env(preload=toctou_so), capture_output=True, text=True)
+        self.assertNotEqual(r_toctou.returncode, 0)
+        self.assertIn("changed between lstat and open", r_toctou.stderr)
+        self.assertEqual(canary.read_bytes(), canary_data)
+        self.assertIn("state=VERIFIED", self.inspect_txn(txid))
 
 if __name__ == "__main__":
     unittest.main()

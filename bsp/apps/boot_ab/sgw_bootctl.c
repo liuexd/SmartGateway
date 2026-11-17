@@ -234,13 +234,21 @@ int main(int argc, char **argv)
             fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
             return 1;
         }
-        printf("%s active=%s last_good=%s state=confirmed tx=%s boot_id=%s health=%s\n",
-               res.recovered ? "RECOVERED_CONFIRMED" : "CONFIRMED",
-               ab_slot_str(res.running_slot),
-               ab_slot_str(res.last_good_slot),
-               res.transaction_id,
-               res.boot_id,
-               sgw_health_state_name(res.overall_state));
+        if (res.recovered) {
+            printf("RECOVERED_CONFIRMED active=%s last_good=%s state=confirmed tx=%s boot_id=%s ledger_reconciled=1 current_health=NOT_SAMPLED\n",
+                   ab_slot_str(res.running_slot),
+                   ab_slot_str(res.last_good_slot),
+                   res.transaction_id,
+                   res.boot_id);
+        } else {
+            printf("CONFIRMED active=%s last_good=%s state=confirmed tx=%s boot_id=%s health=%s local_pipeline_only=%d\n",
+                   ab_slot_str(res.running_slot),
+                   ab_slot_str(res.last_good_slot),
+                   res.transaction_id,
+                   res.boot_id,
+                   sgw_health_state_name(res.overall_state),
+                   res.local_pipeline_only);
+        }
         return 0;
     }
 

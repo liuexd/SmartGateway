@@ -297,7 +297,7 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
             out->running_slot = running_slot;
             out->last_good_slot = env.last_good_slot;
             out->bootcount = txn.bootcount;
-            out->overall_state = SGW_HEALTH_HEALTHY;
+            out->overall_state = SGW_HEALTH_UNKNOWN; /* Prior confirm ledger reconciled; current runtime NOT sampled */
             out->samples = 0;
             out->recovered = 1;
         }
@@ -534,6 +534,7 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
 
     if (out) {
         snprintf(out->transaction_id, sizeof(out->transaction_id), "%s", txn.id);
+        out->local_pipeline_only = (policy->gateway_flow_mode == R3C_GW_CONTROLLED_LOOPBACK && assess.state == SGW_HEALTH_DEGRADED) ? 1 : 0;
         snprintf(out->boot_id, sizeof(out->boot_id), "%s", boot_id);
         out->running_slot = running_slot;
         out->last_good_slot = env.last_good_slot;

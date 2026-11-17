@@ -6,6 +6,13 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G2-R3C 三次独立复审整改（4 项安全与语义修复，READY-FOR-INDEPENDENT-REVIEW）
+
+- **15 项系统必需文件清单与镜像一致性校验：** [bsp/apps/boot_ab/r3c_bundle.c](bsp/apps/boot_ab/r3c_bundle.c) 与 [bsp/apps/boot_ab/r3c_txn.c](bsp/apps/boot_ab/r3c_txn.c) 冻结 15 项核心启动/健康/安全服务文件并拒绝重复路径，在 `r3c_bundle_record` 阶段通过 `/usr/sbin/debugfs` 直接对 `rootfs.img` 核验 ext4 文件实体（`0xEF53`、`Type: regular`）与 SHA-256 摘要，阻止最小化/不完整 `rootfs.manifest` 绕过校验。
+- **写槽 sysfs 分区拓扑重叠与 `lstat -> open -> fstat` TOCTOU 校验：** [bsp/apps/boot_ab/r3c_txn.c](bsp/apps/boot_ab/r3c_txn.c) 校验非整盘分区、U-Boot 保留扇区（`1792..1824`）、已挂载同盘分区及 `running`/`last_good` 重叠，并在打开目标后二次核验 `st_mode`/`st_dev`/`st_ino`/`st_rdev` 与 `BLKGETSIZE64`；`test_n10_write_slot_mounted_blk_topology_overlap_and_toctou_swap` 通过 VM 真实 `/dev/sda2`、`/dev/sda`、合成 sysfs 与 `LD_PRELOAD` `fstat`/`fstat64` 验证零写入拒绝。
+- **`SGW-LOCAL/1` 队列往返 JSON 编解码与分裂恢复语义诚实化：** [gateway/health_probe.c](gateway/health_probe.c) 在 `server_link_worker` 内通过 `N1`/`N2` 分段完成 `DATA` JSON 解码->编码->解码往返校验且不外发字节；[bsp/apps/boot_ab/r3c_coordinator.c](bsp/apps/boot_ab/r3c_coordinator.c) 在 `controlled_local` 明确标记 `local_pipeline_only=1`（`state=DEGRADED`），并在分裂状态账本恢复（`samples=0`）时报告 `UNKNOWN / NOT_SAMPLED`（不再标 `HEALTHY`）。
+- **复测与证据边界：** [tests/test_g2r3c_n09_n10.py](tests/test_g2r3c_n09_n10.py) 扩展至 **13/13 OK**（`16.248 s`），其余 `boot_ab`/ARM/`fuse-image`/`g1-g2-r3`/`gateway-probe`/`core`/`supervisor`/`ota` 共 8 组回归全部通过（`test_g3_kernel_rootfs` 因本轮 `make clean` 清除了 `build/` 内 G3 指标缓存需重跑 G3 构建脚本）；未推送远端、未签发 `HOST-ACCEPTED`，详见 [G2-R3C-closed-loop-host-validation.md](bsp/docs/validation/ota/G2-R3C-closed-loop-host-validation.md)。
+
 ## G2-R3C 二次独立复审整改（5 项安全与真机可用性修复，待复审确认）
 
 - **写槽自校验与零写入保护：** 重构 `r3c_txn_write_and_verify_slot()` 自行解析运行槽、`last_good`、`mountinfo`、`!S_ISLNK && S_ISBLK` 与 `BLKGETSIZE64` 容量，未通过前零字节写入。

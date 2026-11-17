@@ -198,11 +198,12 @@ static int cmd_confirm(int argc, char **argv)
         fprintf(stderr, "CONFIRM REJECTED: %s\n", err);
         return 1;
     }
-    printf("%s slot=%s last_good=%s tx=%s boot_id=%s state=%s samples=%u\n",
+    printf("%s slot=%s last_good=%s tx=%s boot_id=%s state=%s samples=%u local_pipeline_only=%d\n",
            res.recovered ? "RECOVERED_CONFIRMED" : "CONFIRMED",
            ab_slot_str(res.running_slot), ab_slot_str(res.last_good_slot),
            res.transaction_id, res.boot_id,
-           sgw_health_state_name(res.overall_state), res.samples);
+           sgw_health_state_name(res.overall_state), res.samples,
+           res.local_pipeline_only);
     return 0;
 }
 
@@ -237,7 +238,7 @@ static int cmd_inspect_txn(int argc, char **argv)
 static int cmd_write_slot_only(int argc, char **argv)
 {
     const char *txdir_p = NULL, *txid = NULL, *image_p = NULL, *target_dev_p = NULL;
-    const char *fw_cfg_p = NULL, *cmdline_p = NULL, *mounts_p = NULL, *mountinfo_p = NULL, *sysroot_p = NULL;
+    const char *fw_cfg_p = NULL, *cmdline_p = NULL, *mounts_p = NULL, *mountinfo_p = NULL, *sysroot_p = NULL, *sysfs_block_p = NULL;
     int allow_reg = 1, i, txdir = -1, imgfd = -1, rc = 1;
     char err[256] = {0};
     fw_env_backend_cfg_t fw;
@@ -254,6 +255,7 @@ static int cmd_write_slot_only(int argc, char **argv)
         else if (strcmp(argv[i], "--mounts") == 0 && i + 1 < argc) mounts_p = argv[++i];
         else if (strcmp(argv[i], "--mountinfo") == 0 && i + 1 < argc) mountinfo_p = argv[++i];
         else if (strcmp(argv[i], "--sysroot") == 0 && i + 1 < argc) sysroot_p = argv[++i];
+        else if (strcmp(argv[i], "--sysfs-block-root") == 0 && i + 1 < argc) sysfs_block_p = argv[++i];
         else if (strcmp(argv[i], "--require-blk") == 0) allow_reg = 0;
         else return 2;
     }
@@ -276,6 +278,7 @@ static int cmd_write_slot_only(int argc, char **argv)
     memset(&wopts, 0, sizeof(wopts));
     wopts.target_dev_override = target_dev_p;
     wopts.mountinfo_path = mountinfo_p;
+    wopts.sysfs_block_root = sysfs_block_p;
     wopts.allow_regular_file_target = allow_reg;
     wopts.allow_host_slot_sim = 1;
     if (r3c_txn_write_and_verify_slot(txdir, txid, geteuid(), imgfd,

@@ -65,23 +65,171 @@ static int valid_hex64(const char *s)
     return nonzero;
 }
 
+#include <sys/wait.h>
+
+static const char *const MANDATORY_ROOTFS_PATHS[] = {
+    "/sbin/init",
+    "/etc/inittab",
+    "/etc/fstab",
+    "/etc/fw_env.config",
+    "/sbin/fw_printenv",
+    "/usr/bin/sgw_bootctl",
+    "/usr/bin/sgw_watchdog_guard",
+    "/usr/bin/service_supervisor",
+    "/usr/bin/smart_gateway",
+    "/usr/bin/ota_agent",
+    "/etc/init.d/S15sgw_ab_guard",
+    "/etc/init.d/S99smartgateway",
+    "/boot/zImage",
+    "/boot/100ask_imx6ull-14x14.dtb",
+    "/lib/libc.so.6"
+};
+#define MANDATORY_ROOTFS_COUNT (sizeof(MANDATORY_ROOTFS_PATHS) / sizeof(MANDATORY_ROOTFS_PATHS[0]))
+
 static int valid_manifest_relpath(const char *p)
 {
-    size_t n;
+    size_t i, n;
     if (!p || p[0] != '/' || p[1] == '\0') return 0;
     n = strlen(p);
     if (n >= 256 || p[n - 1] == '/' || strstr(p, "//") ||
-        strstr(p, "/../") || strstr(p, "/./") || strpbrk(p, " \t\r\n\\"))
+        strstr(p, "/../") || strstr(p, "/./"))
         return 0;
     if (n >= 3 && strcmp(p + n - 3, "/..") == 0) return 0;
     if (n >= 2 && strcmp(p + n - 2, "/.") == 0) return 0;
+    for (i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)p[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '/' || c == '.' || c == '_' || c == '-'))
+            return 0;
+    }
     return 1;
+}
+
+static int run_debugfs_cmd(const char *debugfs_bin, const char *cmd_arg, int dup_fd,
+                           int capture_sha256, char out_hex[65], int *out_is_regular)
+{
+    int pipes[2] = {-1, -1}, status = 0;
+    pid_t pid;
+    char fdpath[64];
+    unsigned char buf[8192], digest[EVP_MAX_MD_SIZE];
+    char text[4096];
+    size_t text_used = 0;
+    unsigned int dlen = 0;
+    EVP_MD_CTX *ctx = NULL;
+    ssize_t n;
+    static const char tbl[] = "0123456789abcdef";
+
+    snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", dup_fd);
+    if (pipe(pipes) != 0) return -1;
+    pid = fork();
+    if (pid < 0) { close(pipes[0]); close(pipes[1]); return -1; }
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        close(pipes[0]);
+        if (pipes[1] != STDOUT_FILENO) { dup2(pipes[1], STDOUT_FILENO); close(pipes[1]); }
+        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); if (devnull > 2) close(devnull); }
+        {
+            char *argv_df[] = { (char *)debugfs_bin, "-R", (char *)cmd_arg, fdpath, NULL };
+            execv(debugfs_bin, argv_df);
+        }
+        _exit(127);
+    }
+    close(pipes[1]);
+    if (capture_sha256) {
+        ctx = EVP_MD_CTX_new();
+        if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
+            close(pipes[0]);
+            (void)waitpid(pid, &status, 0);
+            if (ctx) EVP_MD_CTX_free(ctx);
+            return -1;
+        }
+        while ((n = read(pipes[0], buf, sizeof(buf))) > 0 || (n < 0 && errno == EINTR)) {
+            if (n > 0 && EVP_DigestUpdate(ctx, buf, (size_t)n) != 1) {
+                close(pipes[0]);
+                (void)waitpid(pid, &status, 0);
+                EVP_MD_CTX_free(ctx);
+                return -1;
+            }
+        }
+        close(pipes[0]);
+        if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+            EVP_DigestFinal_ex(ctx, digest, &dlen) != 1 || dlen != 32) {
+            EVP_MD_CTX_free(ctx);
+            return -1;
+        }
+        EVP_MD_CTX_free(ctx);
+        for (size_t i = 0; i < 32; ++i) {
+            out_hex[i * 2] = tbl[digest[i] >> 4];
+            out_hex[i * 2 + 1] = tbl[digest[i] & 15];
+        }
+        out_hex[64] = '\0';
+        return 0;
+    } else {
+        while (text_used < sizeof(text) - 1 &&
+               ((n = read(pipes[0], text + text_used, sizeof(text) - 1 - text_used)) > 0 ||
+                (n < 0 && errno == EINTR))) {
+            if (n > 0) text_used += (size_t)n;
+        }
+        close(pipes[0]);
+        if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            return -1;
+        text[text_used] = '\0';
+        if (out_is_regular) *out_is_regular = (strstr(text, "Type: regular") != NULL) ? 1 : 0;
+        return 0;
+    }
+}
+
+static const char *find_debugfs_bin(void)
+{
+    if (access("/usr/sbin/debugfs", X_OK) == 0) return "/usr/sbin/debugfs";
+    if (access("/sbin/debugfs", X_OK) == 0) return "/sbin/debugfs";
+    return NULL;
+}
+
+static int verify_manifest_matches_ext4_image(int imagefd, const unsigned char *buf, size_t len)
+{
+    unsigned char sb[2];
+    const char *df = find_debugfs_bin();
+    int dup_fd, rc = -1;
+    char *copy = NULL, *line, *save = NULL;
+
+    /* Check ext4 superblock magic 0xEF53 at offset 0x438 (little-endian: 0x53, 0xEF) */
+    if (!df || pread(imagefd, sb, 2, 0x438) != 2 || sb[0] != 0x53 || sb[1] != 0xEF)
+        return -1;
+    dup_fd = dup(imagefd); /* Without FD_CLOEXEC so debugfs child can read /proc/self/fd/<fd> */
+    if (dup_fd < 0) return -1;
+    copy = malloc(len + 1);
+    if (!copy) { close(dup_fd); return -1; }
+    memcpy(copy, buf, len);
+    copy[len] = '\0';
+
+    for (line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *sp = strchr(line, ' ');
+        char stat_cmd[320], dump_cmd[340], actual_hex[65];
+        int is_reg = 0;
+        if (!sp) goto out;
+        *sp = '\0';
+        snprintf(stat_cmd, sizeof(stat_cmd), "stat %s", line);
+        snprintf(dump_cmd, sizeof(dump_cmd), "dump %s /dev/stdout", line);
+        if (run_debugfs_cmd(df, stat_cmd, dup_fd, 0, actual_hex, &is_reg) != 0 || !is_reg)
+            goto out;
+        if (run_debugfs_cmd(df, dump_cmd, dup_fd, 1, actual_hex, NULL) != 0 ||
+            strcmp(actual_hex, sp + 1) != 0)
+            goto out;
+    }
+    rc = 0;
+out:
+    free(copy);
+    close(dup_fd);
+    return rc;
 }
 
 static int validate_rootfs_manifest_bytes(const unsigned char *buf, size_t len)
 {
     char *copy, *line, *save = NULL;
-    int count = 0;
+    char seen_paths[256][256];
+    int count = 0, i;
+    unsigned int mandatory_mask = 0;
     if (!buf || len == 0 || len > MAX_ROOTFS_MANIFEST || memchr(buf, '\0', len)) return -1;
     if (buf[len - 1] != '\n') return -1;
     copy = malloc(len + 1);
@@ -92,14 +240,23 @@ static int validate_rootfs_manifest_bytes(const unsigned char *buf, size_t len)
         char *sp = strchr(line, ' ');
         if (!sp || strchr(sp + 1, ' ') != NULL) { free(copy); return -1; }
         *sp = '\0';
-        if (!valid_manifest_relpath(line) || !valid_hex64(sp + 1)) {
+        if (!valid_manifest_relpath(line) || !valid_hex64(sp + 1) || count >= 256) {
             free(copy);
             return -1;
+        }
+        for (i = 0; i < count; ++i) {
+            if (strcmp(seen_paths[i], line) == 0) { free(copy); return -1; }
+        }
+        snprintf(seen_paths[count], sizeof(seen_paths[count]), "%s", line);
+        for (size_t m = 0; m < MANDATORY_ROOTFS_COUNT; ++m) {
+            if (strcmp(line, MANDATORY_ROOTFS_PATHS[m]) == 0)
+                mandatory_mask |= (1u << m);
         }
         count++;
     }
     free(copy);
-    return count > 0 ? 0 : -1;
+    return (count >= (int)MANDATORY_ROOTFS_COUNT &&
+            mandatory_mask == ((1u << MANDATORY_ROOTFS_COUNT) - 1u)) ? 0 : -1;
 }
 
 static int digest_fd(int fd, char hex[65], unsigned long long *length)
@@ -238,6 +395,7 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
         if (!rm_buf || secure_file(rmfd, owner, MAX_ROOTFS_MANIFEST) ||
             read_small(rmfd, rm_buf, MAX_ROOTFS_MANIFEST, &rm_len) ||
             validate_rootfs_manifest_bytes(rm_buf, rm_len) != 0 ||
+            verify_manifest_matches_ext4_image(imagefd, rm_buf, rm_len) != 0 ||
             digest_fd(rmfd, rm_hex, &rm_size) != 0)
             goto out;
     } else if (errno != ENOENT) {

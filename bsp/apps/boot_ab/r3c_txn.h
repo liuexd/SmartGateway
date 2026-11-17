@@ -35,6 +35,7 @@ typedef struct {
 typedef struct {
     const char *target_dev_override;  /* NULL in prod -> ab_slot_device(rec.target_slot) */
     const char *mountinfo_path;       /* NULL in prod -> "/proc/self/mountinfo" */
+    const char *sysfs_block_root;     /* NULL in prod -> "/sys/dev/block" */
     int allow_regular_file_target;    /* 0 in prod (requires S_ISBLK), 1 ONLY in harness */
     int allow_host_slot_sim;          /* 0 in prod, 1 ONLY in harness */
 } r3c_slot_write_opts_t;

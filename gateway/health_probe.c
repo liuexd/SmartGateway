@@ -215,11 +215,34 @@ static int business_components_ready(const char *nonce, message_queue_t *queue,
 int gateway_health_consume_local_marker(const unsigned char *data, size_t length)
 {
     size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
-    if (!data || length != pfx_len + NONCE_LEN) return 0;
+    frame_data_t decoded, roundtrip;
+    char encoded_buf[GATEWAY_MESSAGE_MAX_SIZE];
+    char full_nonce[NONCE_LEN + 1];
+    int enc_len;
+    const char *n1, *n2;
+
+    if (!data || length <= pfx_len || length > GATEWAY_MESSAGE_MAX_SIZE) return 0;
     if (memcmp(data, LOCAL_MARKER_PREFIX, pfx_len) != 0) return 0;
+    /* Run full business DATA decode -> encode -> decode roundtrip inside server_link_worker */
+    if (message_json_decode_data((const char *)(data + pfx_len), length - pfx_len, &decoded) < 0)
+        return 1; /* Consume malformed local marker without ever sending upstream */
+    if (strcmp(decoded.node_id, "_DIAG") != 0)
+        return 1;
+    enc_len = message_json_build_data(encoded_buf, sizeof(encoded_buf), &decoded);
+    if (enc_len <= 0 ||
+        message_json_decode_data(encoded_buf, (size_t)enc_len, &roundtrip) < 0)
+        return 1;
+    n1 = frame_data_find_field(&roundtrip, "N1");
+    n2 = frame_data_find_field(&roundtrip, "N2");
+    if (!n1 || !n2 || strlen(n1) != 16 || strlen(n2) != 16)
+        return 1;
+    memcpy(full_nonce, n1, 16);
+    memcpy(full_nonce + 16, n2, 16);
+    full_nonce[NONCE_LEN] = '\0';
+
     pthread_mutex_lock(&local_diag_mutex);
     if (pending_local_nonce[0] &&
-        memcmp(data + pfx_len, pending_local_nonce, NONCE_LEN) == 0) {
+        memcmp(full_nonce, pending_local_nonce, NONCE_LEN) == 0) {
         memcpy(consumed_local_nonce, pending_local_nonce, NONCE_LEN + 1);
     }
     pthread_mutex_unlock(&local_diag_mutex);
@@ -230,14 +253,19 @@ static int queue_try_push_local_marker(message_queue_t *queue, const char *nonce
 {
     gateway_message_t msg;
     size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
-    int pushed = 0;
+    char json_buf[256];
+    int jlen, pushed = 0;
 
-    if (!queue || !nonce || strlen(nonce) != NONCE_LEN ||
-        pfx_len + NONCE_LEN > GATEWAY_MESSAGE_MAX_SIZE)
+    if (!queue || !nonce || strlen(nonce) != NONCE_LEN)
+        return 0;
+    jlen = snprintf(json_buf, sizeof(json_buf),
+                    "{\"node\":\"_DIAG\",\"seq\":1,\"type\":\"DATA\",\"fields\":{\"N1\":\"%.16s\",\"N2\":\"%.16s\"}}",
+                    nonce, nonce + 16);
+    if (jlen <= 0 || pfx_len + (size_t)jlen > GATEWAY_MESSAGE_MAX_SIZE)
         return 0;
     memcpy(msg.data, LOCAL_MARKER_PREFIX, pfx_len);
-    memcpy(msg.data + pfx_len, nonce, NONCE_LEN);
-    msg.length = pfx_len + NONCE_LEN;
+    memcpy(msg.data + pfx_len, json_buf, (size_t)jlen);
+    msg.length = pfx_len + (size_t)jlen;
 
     pthread_mutex_lock(&local_diag_mutex);
     memcpy(pending_local_nonce, nonce, NONCE_LEN + 1);

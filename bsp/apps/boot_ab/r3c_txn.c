@@ -450,21 +450,144 @@ out:
     return rc;
 }
 
-static int device_is_mounted_in_mountinfo(const char *mountinfo_path,
-                                          unsigned int maj, unsigned int min)
+static int read_u64_sysfs(const char *path, uint64_t *out)
 {
+    char buf[64], *end = NULL;
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    ssize_t n;
+    unsigned long long v;
+    if (fd < 0) return -1;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buf[n] = '\0';
+    errno = 0;
+    v = strtoull(buf, &end, 10);
+    if (errno || end == buf) return -1;
+    while (*end == '\n' || *end == '\r' || *end == ' ' || *end == '\t') ++end;
+    if (*end != '\0') return -1;
+    *out = (uint64_t)v;
+    return 0;
+}
+
+static int ranges_overlap_u64(uint64_t a_start, uint64_t a_count,
+                              uint64_t b_start, uint64_t b_count)
+{
+    uint64_t a_end, b_end;
+    if (a_count == 0 || b_count == 0) return 0;
+    if (a_start > UINT64_MAX - a_count || b_start > UINT64_MAX - b_count) return 1;
+    a_end = a_start + a_count;
+    b_end = b_start + b_count;
+    return a_start < b_end && b_start < a_end;
+}
+
+static int read_blk_geom(const char *sysfs_root, unsigned int maj, unsigned int min,
+                         uint64_t *start, uint64_t *size, char *disk, size_t dcap, int *is_part)
+{
+    char linkp[PATH_MAX], res[PATH_MAX], ppart[PATH_MAX], pstart[PATH_MAX], psize[PATH_MAX];
+    char *sl, *parent_sl;
+    struct stat pst;
+    if (snprintf(linkp, sizeof(linkp), "%s/%u:%u", sysfs_root, maj, min) >= (int)sizeof(linkp))
+        return -1;
+    if (!realpath(linkp, res)) return -1;
+    sl = strrchr(res, '/');
+    if (!sl || sl == res) return -1;
+    if (snprintf(psize, sizeof(psize), "%s/%u:%u/size", sysfs_root, maj, min) >= (int)sizeof(psize))
+        return -1;
+    if (read_u64_sysfs(psize, size) != 0 || *size == 0) return -1;
+    if (snprintf(ppart, sizeof(ppart), "%s/partition", res) >= (int)sizeof(ppart))
+        return -1;
+    if (stat(ppart, &pst) == 0) {
+        *is_part = 1;
+        *sl = '\0';
+        parent_sl = strrchr(res, '/');
+        if (!parent_sl || snprintf(disk, dcap, "%s", parent_sl + 1) >= (int)dcap) return -1;
+        if (snprintf(pstart, sizeof(pstart), "%s/%u:%u/start", sysfs_root, maj, min) >= (int)sizeof(pstart))
+            return -1;
+        if (read_u64_sysfs(pstart, start) != 0) return -1;
+    } else {
+        *is_part = 0;
+        *start = 0;
+        if (snprintf(disk, dcap, "%s", sl + 1) >= (int)dcap) return -1;
+    }
+    return 0;
+}
+
+static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
+                                                    const char *sysfs_root,
+                                                    unsigned int maj, unsigned int min,
+                                                    const char *running_dev,
+                                                    const char *lg_dev,
+                                                    int require_blk_geom,
+                                                    char *err, size_t errlen)
+{
+    const char *sysfs = (sysfs_root && sysfs_root[0]) ? sysfs_root : "/sys/dev/block";
     FILE *fp = fopen((mountinfo_path && mountinfo_path[0]) ? mountinfo_path : "/proc/self/mountinfo", "re");
-    char line[4096];
-    if (!fp) return 1; /* Fail-closed if mountinfo unreadable */
+    char line[4096], t_disk[128] = {0};
+    uint64_t t_start = 0, t_size = 0;
+    int t_is_part = 0, have_t_geom = 0;
+
+    if (!fp) return fail(err, errlen, "cannot read mountinfo (fail-closed)");
+
+    if (read_blk_geom(sysfs, maj, min, &t_start, &t_size, t_disk, sizeof(t_disk), &t_is_part) == 0) {
+        have_t_geom = 1;
+        if (!t_is_part || t_start == 0) {
+            fclose(fp);
+            return fail(err, errlen, "target must be a non-MBR partition, not whole disk");
+        }
+        if (ranges_overlap_u64(t_start, t_size, 1792ULL, 32ULL)) {
+            fclose(fp);
+            return fail(err, errlen, "target partition overlaps reserved U-Boot env sectors");
+        }
+    } else if (require_blk_geom) {
+        fclose(fp);
+        return fail(err, errlen, "cannot verify target block topology in sysfs");
+    }
+
     while (fgets(line, sizeof(line), fp)) {
         unsigned int lma = 0, lmi = 0;
-        if (sscanf(line, "%*u %*u %u:%u ", &lma, &lmi) == 2 &&
-            lma == maj && lmi == min) {
-            fclose(fp);
-            return 1;
+        if (sscanf(line, "%*u %*u %u:%u ", &lma, &lmi) == 2) {
+            if (lma == maj && lmi == min) {
+                fclose(fp);
+                return fail(err, errlen, "refusing write to currently mounted target block device");
+            }
+            if (have_t_geom && lma != 0) {
+                uint64_t m_start = 0, m_size = 0;
+                char m_disk[128] = {0};
+                int m_is_part = 0;
+                if (read_blk_geom(sysfs, lma, lmi, &m_start, &m_size, m_disk, sizeof(m_disk), &m_is_part) == 0 &&
+                    strcmp(t_disk, m_disk) == 0) {
+                    if (!m_is_part || ranges_overlap_u64(t_start, t_size, m_start, m_size)) {
+                        fclose(fp);
+                        return fail(err, errlen, "target partition overlaps mounted block topology");
+                    }
+                }
+            }
         }
     }
     fclose(fp);
+
+    /* Also check running_dev and last_good_dev sysfs range exclusion if present */
+    if (have_t_geom) {
+        const char *slots[2] = { running_dev, lg_dev };
+        for (int s = 0; s < 2; ++s) {
+            struct stat sst;
+            uint64_t s_start = 0, s_size = 0;
+            char s_disk[128] = {0};
+            int s_part = 0;
+            if (!slots[s]) continue;
+            if (stat(slots[s], &sst) == 0 && S_ISBLK(sst.st_mode)) {
+                if (major(sst.st_rdev) == maj && minor(sst.st_rdev) == min)
+                    return fail(err, errlen, "target block identity matches active/last_good slot");
+                if (read_blk_geom(sysfs, major(sst.st_rdev), minor(sst.st_rdev),
+                                  &s_start, &s_size, s_disk, sizeof(s_disk), &s_part) == 0 &&
+                    strcmp(t_disk, s_disk) == 0 &&
+                    (!s_part || ranges_overlap_u64(t_start, t_size, s_start, s_size))) {
+                    return fail(err, errlen, "target partition sectors overlap active/last_good slot");
+                }
+            }
+        }
+    }
     return 0;
 }
 
@@ -483,10 +606,12 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
     uint64_t src_len = 0, rb_len = 0, off = 0, cap_bytes = 0;
     unsigned char buf[16384];
     const char *mi_path = (opts && opts->mountinfo_path) ? opts->mountinfo_path : "/proc/self/mountinfo";
+    const char *sysfs_root = (opts && opts->sysfs_block_root) ? opts->sysfs_block_root : "/sys/dev/block";
     int allow_reg = (opts && opts->allow_regular_file_target) ? 1 : 0;
     int skip_blk = (opts && opts->allow_host_slot_sim) ? 1 : 0;
     const char *target_path = NULL, *running_dev = NULL, *lg_dev = NULL;
-    struct stat tst, rst, lst_run, lst_lg;
+    struct stat tst, opened_st, rst, lst_run, lst_lg;
+    int had_pre_stat = 0;
 
     if (imagefd < 0 || !fw_cfg || !hcfg)
         return fail(err, errlen, "invalid arguments for slot write");
@@ -546,6 +671,7 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
             goto out;
         }
     } else {
+        had_pre_stat = 1;
         if (S_ISLNK(tst.st_mode)) {
             fail(err, errlen, "target slot cannot be symlink");
             goto out;
@@ -565,15 +691,15 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
                 fail(err, errlen, "target block device identity matches last_good slot");
                 goto out;
             }
-            if (device_is_mounted_in_mountinfo(mi_path, major(tst.st_rdev), minor(tst.st_rdev))) {
-                fail(err, errlen, "refusing write to currently mounted target block device");
+            if (target_conflicts_with_mountinfo_or_slots(
+                    mi_path, sysfs_root, major(tst.st_rdev), minor(tst.st_rdev),
+                    running_dev, lg_dev, !allow_reg, err, errlen) != 0) {
                 goto out;
             }
         } else if (!allow_reg || !S_ISREG(tst.st_mode)) {
             fail(err, errlen, "target slot is not a block device");
             goto out;
         } else {
-            /* Regular test file with pre-allocated size > 0 must fit image */
             if (tst.st_size > 0 && (uint64_t)tst.st_size < src_len) {
                 fail(err, errlen, "target image container smaller than verified payload");
                 goto out;
@@ -584,17 +710,34 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
     slotfd = open(target_path,
                   allow_reg ? (O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW) : (O_RDWR | O_CLOEXEC | O_NOFOLLOW),
                   0600);
-    if (slotfd < 0 || fstat(slotfd, &tst) != 0) {
+    if (slotfd < 0 || fstat(slotfd, &opened_st) != 0) {
         fail(err, errlen, "cannot open verified target slot");
         goto out;
     }
-    if (S_ISBLK(tst.st_mode)) {
+    /* Cross-verify opened fd identity against pre-open lstat to block TOCTOU device swap */
+    if (had_pre_stat) {
+        if ((opened_st.st_mode & S_IFMT) != (tst.st_mode & S_IFMT) ||
+            opened_st.st_dev != tst.st_dev || opened_st.st_ino != tst.st_ino ||
+            (S_ISBLK(opened_st.st_mode) && opened_st.st_rdev != tst.st_rdev)) {
+            fail(err, errlen, "target slot identity changed between lstat and open");
+            goto out;
+        }
+    }
+    if (S_ISBLK(opened_st.st_mode)) {
+        if (target_conflicts_with_mountinfo_or_slots(
+                mi_path, sysfs_root, major(opened_st.st_rdev), minor(opened_st.st_rdev),
+                running_dev, lg_dev, !allow_reg, err, errlen) != 0) {
+            goto out;
+        }
         if (ioctl(slotfd, BLKGETSIZE64, &cap_bytes) != 0 || cap_bytes < src_len) {
             fail(err, errlen, "target block device capacity insufficient");
             goto out;
         }
-    } else if (!allow_reg || !S_ISREG(tst.st_mode)) {
+    } else if (!allow_reg || !S_ISREG(opened_st.st_mode)) {
         fail(err, errlen, "opened target descriptor is not block device");
+        goto out;
+    } else if (had_pre_stat && opened_st.st_size > 0 && (uint64_t)opened_st.st_size < src_len) {
+        fail(err, errlen, "opened target container smaller than verified payload");
         goto out;
     }
 
@@ -680,6 +823,18 @@ int r3c_txn_verify_installed_rootfs(int txdir, const r3c_txn_record_t *rec, uid_
     }
     mbuf[n] = '\0';
 
+    static const char *const MANDATORY_PATHS[] = {
+        "/sbin/init", "/etc/inittab", "/etc/fstab", "/etc/fw_env.config",
+        "/sbin/fw_printenv", "/usr/bin/sgw_bootctl", "/usr/bin/sgw_watchdog_guard",
+        "/usr/bin/service_supervisor", "/usr/bin/smart_gateway", "/usr/bin/ota_agent",
+        "/etc/init.d/S15sgw_ab_guard", "/etc/init.d/S99smartgateway",
+        "/boot/zImage", "/boot/100ask_imx6ull-14x14.dtb", "/lib/libc.so.6"
+    };
+    const size_t MANDATORY_N = sizeof(MANDATORY_PATHS) / sizeof(MANDATORY_PATHS[0]);
+    unsigned int mandatory_mask = 0;
+    char seen_paths[256][256];
+    int seen_count = 0;
+
     for (line = strtok_r(mbuf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
         char *sp = strchr(line, ' ');
         char full[PATH_MAX], fhex[65];
@@ -706,6 +861,21 @@ int r3c_txn_verify_installed_rootfs(int txdir, const r3c_txn_record_t *rec, uid_
             goto out;
         }
         close(ffd);
+        if (seen_count >= 256) { fail(err, errlen, "too many manifest entries"); goto out; }
+        for (int s = 0; s < seen_count; ++s) {
+            if (strcmp(seen_paths[s], line) == 0) {
+                fail(err, errlen, "duplicate path in txn rootfs.manifest");
+                goto out;
+            }
+        }
+        snprintf(seen_paths[seen_count++], 256, "%s", line);
+        for (size_t m = 0; m < MANDATORY_N; ++m) {
+            if (strcmp(line, MANDATORY_PATHS[m]) == 0) mandatory_mask |= (1u << m);
+        }
+    }
+    if (mandatory_mask != ((1u << MANDATORY_N) - 1u)) {
+        fail(err, errlen, "txn rootfs.manifest missing mandatory protected system file");
+        goto out;
     }
     rc = 0;
 out:

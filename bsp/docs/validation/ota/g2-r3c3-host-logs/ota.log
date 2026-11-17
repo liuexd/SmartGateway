@@ -4,7 +4,7 @@ gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-result \
 	ota_supervisor_test.c \
 	-o /tmp/ota_supervisor_test_host
 ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）
-临时目录: /tmp/d25-2-s1-fLBSlX
+临时目录: /tmp/d25-2-s1-rieAeo
 
 == 1. 无 pidfile -> STOPPED ==
   PASS  read 应失败
@@ -15,7 +15,7 @@ ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）
 == 2. 捕获自身身份 -> RUNNING ==
   PASS  capture_identity 成功
   PASS  pid 正确
-  PASS  starttime 非 0（实际 131953180）
+  PASS  starttime 非 0（实际 132233171）
   PASS  pidfile_write 成功
   PASS  pidfile_read 成功
   PASS  pid 往返一致
@@ -24,14 +24,14 @@ ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）
   PASS  pid 输出正确
 
 == 3. 进程退出后 -> STOPPED ==
-  PASS  fork 哨兵进程 pid=1120591
+  PASS  fork 哨兵进程 pid=1138940
   PASS  捕获子进程身份
   PASS  写入 pidfile
   PASS  运行中 -> RUNNING（实际 RUNNING）
   PASS  退出后 -> STOPPED（实际 STOPPED）
 
 == 4. pid 复用 -> STOPPED（不误杀）==
-  PASS  fork 哨兵进程 pid=1120592
+  PASS  fork 哨兵进程 pid=1138941
   PASS  捕获真实身份
   PASS  starttime 不符 -> STOPPED（实际 STOPPED）
   PASS  哨兵进程仍存活，未被误杀
@@ -78,8 +78,8 @@ GARBAGE"
 
 == 8. comm 含空格与括号 -> starttime 正确 ==
   PASS  解析成功
-  PASS  starttime 非 0（实际 131953181）
-  PASS  与独立解析一致（131953181）
+  PASS  starttime 非 0（实际 132233172）
+  PASS  与独立解析一致（132233172）
   PASS  特殊 comm 进程 -> RUNNING
 
 == 9. pidfile 权限 0600 ==
@@ -119,7 +119,7 @@ GARBAGE"
   PASS  能读取僵尸进程的 state
   PASS  state 为 'Z'（实际 'Z'）
   PASS  state_is_alive('Z') == 0
-  PASS  僵尸的 starttime 仍可读（131953196），故仅比对它不够
+  PASS  僵尸的 starttime 仍可读（132233187），故仅比对它不够
   PASS  僵尸 -> STOPPED（实际 STOPPED）
   PASS  写入僵尸身份
   PASS  query -> STOPPED（实际 STOPPED）
@@ -153,8 +153,8 @@ GARBAGE"
   PASS  确有写入成功（累计 200 次）
   PASS  成功次数不少于进程数（200 >= 4）
   PASS  并发写后 pidfile 仍可完整解析
-  PASS  pid 合法（1120604）
-  PASS  starttime 合法（131956229）
+  PASS  pid 合法（1138951）
+  PASS  starttime 合法（132234220）
   PASS  并发后无临时文件残留（实际 0 个）
 
 == 18. boot_id 跨重启校验 ==
@@ -181,7 +181,7 @@ GARBAGE"
   PASS  read_state 成功
   PASS  read_starttime 成功
   PASS  state 一致（'R' vs 'R'）
-  PASS  starttime 一致（131953180 vs 131953180）
+  PASS  starttime 一致（132233171 vs 132233171）
   PASS  仅取 state 也可成功
   PASS  仅取 starttime 也可成功
   PASS  两个输出都为 NULL 被拒绝
@@ -212,11 +212,11 @@ gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-result \
 	ota_supervisor_s2_test.c \
 	-o /tmp/ota_supervisor_s2_test_host
 ota_supervisor S2 自管 Supervisor 测试
-临时目录: /tmp/d25-2-s2-5mG9Vh
+临时目录: /tmp/d25-2-s2-86f1ky
 
 == 1. 正常启动 + 停止 ==
   PASS  启动成功
-  PASS  pid 有效（1120622）
+  PASS  pid 有效（1138971）
   PASS  starttime 非 0
   PASS  owner 记录为本进程
   PASS  pidfile 可读
