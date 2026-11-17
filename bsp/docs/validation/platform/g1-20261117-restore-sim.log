@@ -1,0 +1,22 @@
+OK emmc-reserved-pre-p1.bin (2098176 bytes)
+OK emmc-p1.img (1048576000 bytes)
+OK emmc-p2.img (1572864000 bytes)
+OK emmc-p3.img (524288000 bytes)
+OK emmc-tail.img (761265152 bytes)
+OK emmc-boot0.img (4194304 bytes)
+OK emmc-boot1.img (4194304 bytes)
+User area SHA256 (ordered segments): 3f7e250c3f6cd842974f5e17a6a4617196c3141f410dca53a6ffacfa222ee7f0
+Archive consistency only: boot and restoration remain unverified.
+RESTORED emmc-reserved-pre-p1.bin -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/disk.img @ 0 (2098176 bytes)
+RESTORED emmc-p1.img -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/disk.img @ 2098176 (1048576000 bytes)
+RESTORED emmc-p2.img -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/disk.img @ 1050674176 (1572864000 bytes)
+RESTORED emmc-p3.img -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/disk.img @ 2623538176 (524288000 bytes)
+RESTORED emmc-tail.img -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/disk.img @ 3147826176 (761265152 bytes)
+RESTORED emmc-boot0.img -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/boot0.img (4194304 bytes)
+RESTORED emmc-boot1.img -> /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/boot1.img (4194304 bytes)
+3f7e250c3f6cd842974f5e17a6a4617196c3141f410dca53a6ffacfa222ee7f0  /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/disk.img
+3f7e250c3f6cd842974f5e17a6a4617196c3141f410dca53a6ffacfa222ee7f0  /home/ubuntu/.sgw-g1-recovery-prep/reconstruction-20261117.img
+40ea8aa42a5ee300052577b6b4b44ab88108a269ef6c2912c430198f9699c726  /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/boot0.img
+40ea8aa42a5ee300052577b6b4b44ab88108a269ef6c2912c430198f9699c726  /home/ubuntu/.sgw-g1-recovery-prep/backup-20261117/emmc-boot0.img
+af805de78d95a82eabbccb357da47a8a99c11bfdbb0849d87cba0a17e0e556b4  /home/ubuntu/.sgw-g1-recovery-prep/tmp-restore-test/boot1.img
+af805de78d95a82eabbccb357da47a8a99c11bfdbb0849d87cba0a17e0e556b4  /home/ubuntu/.sgw-g1-recovery-prep/backup-20261117/emmc-boot1.img

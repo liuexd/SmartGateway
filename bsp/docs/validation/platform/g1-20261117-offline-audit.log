@@ -1,0 +1,25 @@
+OK emmc-reserved-pre-p1.bin (2098176 bytes)
+OK emmc-p1.img (1048576000 bytes)
+OK emmc-p2.img (1572864000 bytes)
+OK emmc-p3.img (524288000 bytes)
+OK emmc-tail.img (761265152 bytes)
+OK emmc-boot0.img (4194304 bytes)
+OK emmc-boot1.img (4194304 bytes)
+User area SHA256 (ordered segments): 3f7e250c3f6cd842974f5e17a6a4617196c3141f410dca53a6ffacfa222ee7f0
+Archive consistency only: boot and restoration remain unverified.
+AUDIT_TARGET=/home/ubuntu/.sgw-g1-recovery-prep/backup-20261117
+pre_p1_ivt_0x400=True banners=['U-Boot 2017.03 (Jul 21 2024 - 05:57:43 -0400)']
+pre_p1_env_0xC0000_crc_ok=True var_count=46
+pre_p1_env_0xE0000_crc_ok=True crc=0x7d67365e var_count=44 mmcdev=1 mmcpart=2 mmcroot='/dev/mmcblk1p2 rootwait rw' update=yes panel=TFT7016 has_ethaddr=True has_eth1addr=True
+pre_p1_redund_0xE2000_all_zero=True
+boot0_ivt_0x400=True banners=['U-Boot 2017.03-g8ba4c5bb19-dirty (Jun 10 2026 - 10:24:59 +0800)']
+boot1_ivt_0x400=False banners=[]
+p1_bytes=1048576000 nonzero_chunks=824/1000 first_nonzero_offset=52429824 sb_at_0=None sb_at_50MiB={'inodes': 44832, 'blocks': 179200, 'free_blocks': 24613, 'free_inodes': 28493, 'block_size': 4096, 'used_bytes': 633188352, 'fs_bytes': 734003200, 'mtime': 0, 'wtime': 1639713664}
+p3_bytes=524288000 nonzero_chunks=0/500 first_nonzero_offset=None
+tail_bytes=761265152 nonzero_chunks=4/726 first_nonzero_offset=270531584 sb_at_0=None
+p2_sb={'inodes': 89664, 'blocks': 384000, 'free_blocks': 201095, 'free_inodes': 71736, 'block_size': 4096, 'used_bytes': 749178880, 'fs_bytes': 1572864000, 'mtime': 4, 'wtime': 4}
+p2_boot_entries=['100ask_imx6ull-14x14.dtb', '100ask_imx6ull_mini.dtb', '100ask_myir_imx6ull_mini.dtb', 'zImage', 'sgw-d08-test.dtb', 'sgw-d11-ap3216.dtb']
+p2_swupdate_entries=['postupdate.sh', 'swupdate-public.pem', 'swupdate.cfg']
+p2_opt_entries=['bin', 'releases', 'run', 'logs', 'current', 'service.conf', '.ota.lock', 'state', 'packages', 'install.sh', 'S99smartgateway']
+p2_ssh_host_keys=['ssh_host_ecdsa_key.pub', 'ssh_host_rsa_key', 'ssh_host_rsa_key.pub', 'ssh_host_dsa_key', 'ssh_host_dsa_key.pub', 'ssh_host_ecdsa_key', 'ssh_host_ed25519_key', 'ssh_host_ed25519_key.pub']
+p2_swu_or_sw_description_hits=[]
