@@ -19,4 +19,7 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
                                      device_manager_t *devices);
 void gateway_health_listener_close(gateway_health_listener_t *listener);
 
+/* Diagnostic only: a successful transport send is not a remote receipt. */
+void gateway_health_observe_forwarded(const unsigned char *data, size_t length);
+
 #endif

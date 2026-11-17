@@ -23,8 +23,16 @@ int r3c_data_mountinfo_matches(const char *text, const char *mountpoint,
 /* Verify the live mount, block identity, capacity, permissions and schema=1. */
 int r3c_data_inspect(const r3c_data_policy_t *policy, char *reason, size_t reason_size);
 
+/* Contents check only; caller must separately authenticate the mount/device. */
+int r3c_data_inspect_contents(int dirfd, uid_t owner, uint64_t minimum_available_bytes,
+                              char *reason, size_t reason_size);
+
 /* Inspect existing application OTA state under a pre-existing shared lock. */
 int r3c_app_ota_inspect(const char *install_dir, uid_t owner,
                         char *reason, size_t reason_size);
+
+/* On success the caller owns *lockfd and must hold it until its operation ends. */
+int r3c_app_ota_inspect_locked(const char *install_dir, uid_t owner, int *lockfd,
+                               char *reason, size_t reason_size);
 
 #endif

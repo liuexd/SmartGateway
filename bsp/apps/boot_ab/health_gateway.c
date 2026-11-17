@@ -34,9 +34,9 @@ static int wait_fd(int fd, short events, long long deadline)
     }
 }
 
-int sgw_health_gateway_probe(const char *socket_path, uid_t trusted_uid,
-                             pid_t expected_pid, unsigned long long expected_start,
-                             int timeout_ms)
+static int gateway_probe(const char *socket_path, uid_t trusted_uid,
+                         pid_t expected_pid, unsigned long long expected_start,
+                         int timeout_ms, int flow)
 {
     unsigned char random[16];
     char nonce[33], request[64], expected[80], response[80];
@@ -66,10 +66,13 @@ int sgw_health_gateway_probe(const char *socket_path, uid_t trusted_uid,
         nonce[i * 2 + 1] = hex[random[i] & 15];
     }
     nonce[32] = '\0';
-    n = snprintf(request, sizeof(request), "SGW-PROBE/1 %s\n", nonce);
+    n = snprintf(request, sizeof(request), "%s%s\n",
+                 flow ? "SGW-FLOWX/1 " : "SGW-PROBE/1 ", nonce);
     if (n <= 0 || (size_t)n >= sizeof(request)) return -1;
     request_len = (size_t)n;
-    n = snprintf(expected, sizeof(expected), "SGW-PROBE/1 %s READY\n", nonce);
+    n = snprintf(expected, sizeof(expected), "%s%s %s\n",
+                 flow ? "SGW-FLOWX/1 " : "SGW-PROBE/1 ", nonce,
+                 flow ? "FORWARDED" : "READY");
     if (n <= 0 || (size_t)n >= sizeof(expected)) return -1;
     expected_len = (size_t)n;
     start = now_ms();
@@ -113,4 +116,20 @@ int sgw_health_gateway_probe(const char *socket_path, uid_t trusted_uid,
 out:
     if (fd >= 0) close(fd);
     return rc;
+}
+
+int sgw_health_gateway_probe(const char *socket_path, uid_t trusted_uid,
+                             pid_t expected_pid, unsigned long long expected_start,
+                             int timeout_ms)
+{
+    return gateway_probe(socket_path, trusted_uid, expected_pid, expected_start,
+                         timeout_ms, 0);
+}
+
+int sgw_health_gateway_flow_probe(const char *socket_path, uid_t trusted_uid,
+                                  pid_t expected_pid, unsigned long long expected_start,
+                                  int timeout_ms)
+{
+    return gateway_probe(socket_path, trusted_uid, expected_pid, expected_start,
+                         timeout_ms, 1);
 }

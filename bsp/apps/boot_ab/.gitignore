@@ -11,3 +11,4 @@ health_devices_test
 health_network_test
 r3c_binding_test
 r3c_probe_cli
+r3c_bundle_cli

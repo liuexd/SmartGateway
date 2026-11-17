@@ -96,6 +96,28 @@ class DataTests(unittest.TestCase):
         self.assertNotEqual(self.run_probe("app", self.app).returncode, 0)
         self.assertFalse(lockpath.exists())
 
+    def test_snapshot_lock_can_be_held_through_decision(self):
+        proc = subprocess.Popen([str(PROBE), "hold-app", str(self.app)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(proc.stdout.readline().strip(), "LOCKED")
+            with (self.app / ".ota.lock").open("r+") as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            proc.stdin.write("\n")
+            proc.stdin.flush()
+            self.assertEqual(proc.wait(timeout=5), 0)
+            with (self.app / ".ota.lock").open("r+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            proc.stdin.close()
+            proc.stdout.close()
+            proc.stderr.close()
+
     def test_missing_release_and_symlink_state_rejected(self):
         (self.app / "releases/v1/smart_gateway").unlink()
         self.assertNotEqual(self.run_probe("app", self.app).returncode, 0)

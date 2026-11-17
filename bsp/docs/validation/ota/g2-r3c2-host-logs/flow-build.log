@@ -1,0 +1,21 @@
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c common/crc16.c -o build/r3b-gateway/common/crc16.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c common/frame.c -o build/r3b-gateway/common/frame.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c common/frame_parser.c -o build/r3b-gateway/common/frame_parser.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c common/line_parser.c -o build/r3b-gateway/common/line_parser.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c common/message_json.c -o build/r3b-gateway/common/message_json.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/main.c -o build/r3b-gateway/gateway/main.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/gateway_app.c -o build/r3b-gateway/gateway/gateway_app.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/gateway_loop.c -o build/r3b-gateway/gateway/gateway_loop.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/health_probe.c -o build/r3b-gateway/gateway/health_probe.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/bluetooth_worker.c -o build/r3b-gateway/gateway/bluetooth_worker.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/wifi_server.c -o build/r3b-gateway/gateway/wifi_server.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/wifi_client.c -o build/r3b-gateway/gateway/wifi_client.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/serial_port.c -o build/r3b-gateway/gateway/serial_port.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/tcp_client.c -o build/r3b-gateway/gateway/tcp_client.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/message_queue.c -o build/r3b-gateway/gateway/message_queue.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/server_link.c -o build/r3b-gateway/gateway/server_link.o
+gcc -Icommon -Igateway -Iserver -Wall -Wextra -Werror -std=c11 -pthread -DSGW_GATEWAY_HEALTH_TESTING -c gateway/device_manager.c -o build/r3b-gateway/gateway/device_manager.o
+gcc build/r3b-gateway/common/crc16.o build/r3b-gateway/common/frame.o build/r3b-gateway/common/frame_parser.o build/r3b-gateway/common/line_parser.o build/r3b-gateway/common/message_json.o build/r3b-gateway/gateway/main.o build/r3b-gateway/gateway/gateway_app.o build/r3b-gateway/gateway/gateway_loop.o build/r3b-gateway/gateway/health_probe.o build/r3b-gateway/gateway/bluetooth_worker.o build/r3b-gateway/gateway/wifi_server.o build/r3b-gateway/gateway/wifi_client.o build/r3b-gateway/gateway/serial_port.o build/r3b-gateway/gateway/tcp_client.o build/r3b-gateway/gateway/message_queue.o build/r3b-gateway/gateway/server_link.o build/r3b-gateway/gateway/device_manager.o -pthread -o build/r3b-gateway/smart_gateway
+make: Entering directory '/tmp/sgw-r3c2-rOMqb4/repo/bsp/apps/service_supervisor'
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I../../../common main.c service_supervisor.c ../../../common/service_ipc.c -o service_supervisor
+make: Leaving directory '/tmp/sgw-r3c2-rOMqb4/repo/bsp/apps/service_supervisor'

@@ -108,16 +108,19 @@ class GatewayProbeTests(unittest.TestCase):
         if getattr(self, "log", None): self.log.close()
         if getattr(self, "tmp", None): shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def probe(self, pid=None, start=None, timeout=800):
-        return subprocess.run([str(GW_PROBE), str(self.health_sock), str(os.getuid()),
-                               str(self.gateway_pid if pid is None else pid),
-                               str(self.starttime if start is None else start),
-                               str(timeout)], capture_output=True, text=True, timeout=5)
+    def probe(self, pid=None, start=None, timeout=800, flow=False):
+        args = [str(GW_PROBE), str(self.health_sock), str(os.getuid()),
+                str(self.gateway_pid if pid is None else pid),
+                str(self.starttime if start is None else start), str(timeout)]
+        if flow:
+            args.append("f")
+        return subprocess.run(args, capture_output=True, text=True, timeout=5)
 
     def test_actual_gateway_components_and_no_upstream_pollution(self):
         result = self.probe()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("components-ready", result.stdout)
+        self.assertNotEqual(self.probe(flow=True).returncode, 0)
         self.upstream.settimeout(0.3)
         with self.assertRaises(socket.timeout):
             self.upstream.recv(4096)
@@ -136,6 +139,13 @@ class GatewayProbeTests(unittest.TestCase):
         self.assertEqual(data["node"], "NODE01")
         self.assertEqual(data["seq"], 17)
         self.assertEqual(data["fields"], {"T": "253", "H": "601"})
+        self.assertEqual(self.probe(flow=True).returncode, 0)
+        # No probe traffic is sent upstream. Idle/stale evidence is UNKNOWN.
+        self.upstream.settimeout(0.3)
+        with self.assertRaises(socket.timeout):
+            self.upstream.recv(4096)
+        time.sleep(6.1)
+        self.assertNotEqual(self.probe(flow=True).returncode, 0)
 
     def test_live_pid_but_unresponsive_gateway_is_rejected(self):
         os.kill(self.gateway_pid, signal.SIGSTOP)

@@ -3,6 +3,7 @@
 #include "server_link.h"
 
 #include "gateway_app.h"
+#include "health_probe.h"
 #include "line_parser.h"
 #include "tcp_client.h"
 
@@ -239,6 +240,8 @@ void *server_link_worker(void *arg)
             }
 
             context->tcp_send++;
+            gateway_health_observe_forwarded(pending_messsage.data,
+                                             pending_messsage.length);
 
             printf("[SERVER WORKER] sent, bytes=%u\n",
                 (unsigned int)pending_messsage.length);

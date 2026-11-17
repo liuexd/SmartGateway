@@ -31,6 +31,8 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 
 ## G2-R3 系统健康检查
 
+[G2-R3C 后续隔离测试](../validation/ota/G2-R3C-signed-bundle-and-flow.md)：独立 DATA 镜像、签名记录与 Gateway 被动转发观察；生产确认链和 N09/N10 仍 BLOCKED。
+
 [G2-R3C DATA 与可信事务设计草案](09-g2-r3c-data-and-trust-design.md)及[主机增量报告](../validation/ota/G2-R3C-host-increment.md)：只读 DATA 前置、应用 OTA 状态检查和事务字段比较；完整可信确认仍 BLOCKED。
 
 [G2-R3B 主机增量验收](../validation/ota/G2-R3B-trusted-health-integration.md)：本地组件探针、设备与网络诊断、原始日志及尚未完成的 DATA/可信事务；HOST-ACCEPTED 和板端放行均为 BLOCKED。

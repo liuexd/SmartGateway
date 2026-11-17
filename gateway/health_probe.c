@@ -5,7 +5,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,8 +18,35 @@
 #include <unistd.h>
 
 #define QUERY_PREFIX "SGW-PROBE/1 "
+#define FLOW_PREFIX  "SGW-FLOWX/1 "
 #define NONCE_LEN 32
 #define PROBE_TIMEOUT_MS 200
+#define FLOW_MAX_AGE_SECONDS 5u
+
+_Static_assert(sizeof(QUERY_PREFIX) == sizeof(FLOW_PREFIX), "query prefix lengths");
+static atomic_uint last_forwarded_seconds;
+
+void gateway_health_observe_forwarded(const unsigned char *data, size_t length)
+{
+    frame_data_t frame;
+    struct timespec ts;
+    if (!data || length == 0 ||
+        message_json_decode_data((const char *)data, length, &frame) < 0 ||
+        clock_gettime(CLOCK_MONOTONIC, &ts) != 0 ||
+        ts.tv_sec <= 0 || (unsigned long long)ts.tv_sec > UINT_MAX) return;
+    atomic_store_explicit(&last_forwarded_seconds, (unsigned int)ts.tv_sec,
+                          memory_order_release);
+}
+
+static int recent_forwarded(void)
+{
+    struct timespec ts;
+    unsigned int last = atomic_load_explicit(&last_forwarded_seconds, memory_order_acquire);
+    if (last == 0 || clock_gettime(CLOCK_MONOTONIC, &ts) != 0 ||
+        ts.tv_sec < 0 || (unsigned long long)ts.tv_sec > UINT_MAX ||
+        (unsigned int)ts.tv_sec < last) return 0;
+    return (unsigned int)ts.tv_sec - last <= FLOW_MAX_AGE_SECONDS;
+}
 
 /* No environment override is present in a production build. */
 static const char *health_directory(void)
@@ -191,7 +220,8 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
     }
     if (used != sizeof(QUERY_PREFIX) - 1 + NONCE_LEN + 1 ||
         request[used - 1] != '\n' ||
-        memcmp(request, QUERY_PREFIX, sizeof(QUERY_PREFIX) - 1) != 0) {
+        (memcmp(request, QUERY_PREFIX, sizeof(QUERY_PREFIX) - 1) != 0 &&
+         memcmp(request, FLOW_PREFIX, sizeof(FLOW_PREFIX) - 1) != 0)) {
         close(client);
         return;
     }
@@ -201,9 +231,12 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
 
     {
         const char *nonce = request + sizeof(QUERY_PREFIX) - 1;
-        int n = snprintf(response, sizeof(response), "SGW-PROBE/1 %s %s\n",
-                         nonce, business_components_ready(nonce, queue, devices) ?
-                         "READY" : "NOT_READY");
+        int flow = memcmp(request, FLOW_PREFIX, sizeof(FLOW_PREFIX) - 1) == 0;
+        int n = snprintf(response, sizeof(response), "%s%s %s\n",
+                         flow ? FLOW_PREFIX : QUERY_PREFIX, nonce,
+                         flow ? (recent_forwarded() ? "FORWARDED" : "UNKNOWN") :
+                         (business_components_ready(nonce, queue, devices) ?
+                          "READY" : "NOT_READY"));
         if (n > 0 && (size_t)n < sizeof(response))
             (void)send(client, response, (size_t)n, MSG_NOSIGNAL | MSG_DONTWAIT);
     }

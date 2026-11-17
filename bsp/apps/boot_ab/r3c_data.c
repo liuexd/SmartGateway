@@ -126,14 +126,46 @@ error:
     return -1;
 }
 
+int r3c_data_inspect_contents(int dir, uid_t owner, uint64_t minimum,
+                              char *reason, size_t size)
+{
+    struct stat schema, directory;
+    struct statvfs vfs;
+    char content[16];
+    int fd = -1, rc = -1;
+    ssize_t n;
+    if (dir < 0 || minimum == 0 || fstat(dir, &directory) != 0 ||
+        !S_ISDIR(directory.st_mode) || directory.st_uid != owner ||
+        (directory.st_mode & 0022))
+        return fail(reason, size, "untrusted DATA directory");
+    if (fstatvfs(dir, &vfs) != 0 || (vfs.f_flag & ST_RDONLY) ||
+        vfs.f_frsize == 0 ||
+        vfs.f_bavail < (minimum / vfs.f_frsize +
+                        (minimum % vfs.f_frsize != 0)) ||
+        faccessat(dir, ".", W_OK, AT_EACCESS) != 0) {
+        return fail(reason, size, "DATA read-only, inaccessible or low on space");
+    }
+    fd = openat(dir, ".sgw-data-schema", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0 || fstat(fd, &schema) != 0 || !S_ISREG(schema.st_mode) ||
+        schema.st_uid != owner || (schema.st_mode & 0022) || schema.st_size != 9) {
+        fail(reason, size, "missing or untrusted DATA schema"); goto out;
+    }
+    n = read(fd, content, sizeof(content));
+    if (n != 9 || memcmp(content, "schema=1\n", 9) != 0) {
+        fail(reason, size, "unsupported or invalid DATA schema"); goto out;
+    }
+    if (reason && size) snprintf(reason, size, "DATA contents prerequisites observed");
+    rc = 0;
+out:
+    if (fd >= 0) close(fd);
+    return rc;
+}
+
 int r3c_data_inspect(const r3c_data_policy_t *p, char *reason, size_t size)
 {
-    struct stat dev, root, mnt, schema;
-    struct statvfs vfs;
+    struct stat dev, root, mnt;
     char *mountinfo = NULL;
-    char content[16];
-    int dir = -1, fd = -1, rc = -1;
-    ssize_t n;
+    int dir = -1, rc = -1;
     if (!p || !safe_absolute(p->mountpoint) || !safe_absolute(p->device) ||
         p->minimum_available_bytes == 0)
         return fail(reason, size, "invalid or incomplete policy");
@@ -151,27 +183,12 @@ int r3c_data_inspect(const r3c_data_policy_t *p, char *reason, size_t size)
                                    major(dev.st_rdev), minor(dev.st_rdev)) != 0) {
         fail(reason, size, "mountinfo identity or mode invalid"); goto out;
     }
-    if (fstatvfs(dir, &vfs) != 0 || (vfs.f_flag & ST_RDONLY) ||
-        vfs.f_frsize == 0 ||
-        vfs.f_bavail < (p->minimum_available_bytes / vfs.f_frsize +
-                        (p->minimum_available_bytes % vfs.f_frsize != 0)) ||
-        faccessat(dir, ".", W_OK, AT_EACCESS) != 0) {
-        fail(reason, size, "DATA read-only, inaccessible or low on space"); goto out;
-    }
-    fd = openat(dir, ".sgw-data-schema", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-    if (fd < 0 || fstat(fd, &schema) != 0 || !S_ISREG(schema.st_mode) ||
-        schema.st_uid != p->owner || (schema.st_mode & 0022) || schema.st_size != 9) {
-        fail(reason, size, "missing or untrusted DATA schema"); goto out;
-    }
-    n = read(fd, content, sizeof(content));
-    if (n != 9 || memcmp(content, "schema=1\n", 9) != 0) {
-        fail(reason, size, "unsupported or invalid DATA schema"); goto out;
-    }
+    if (r3c_data_inspect_contents(dir, p->owner, p->minimum_available_bytes,
+                                  reason, size) != 0) goto out;
     if (reason && size) snprintf(reason, size, "DATA prerequisites observed");
     rc = 0;
 out:
     free(mountinfo);
-    if (fd >= 0) close(fd);
     if (dir >= 0) close(dir);
     return rc;
 }
@@ -255,7 +272,8 @@ out:
     return rc;
 }
 
-int r3c_app_ota_inspect(const char *path, uid_t owner, char *reason, size_t size)
+int r3c_app_ota_inspect_locked(const char *path, uid_t owner, int *lockfd,
+                               char *reason, size_t size)
 {
     static const char *const state_keys[] = {
         "\"schema_version\"", "\"state\"", "\"confirmed_version\"", "\"candidate_version\""
@@ -270,6 +288,8 @@ int r3c_app_ota_inspect(const char *path, uid_t owner, char *reason, size_t size
     int dir = -1, lock = -1, statefd = -1, releases = -1, release = -1;
     int present = 0, rc = -1, n;
     ssize_t len;
+    if (!lockfd) return fail(reason, size, "missing lock output");
+    *lockfd = -1;
     if (trusted_dirs(path, owner) != 0)
         return fail(reason, size, "untrusted application directory");
     dir = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
@@ -310,6 +330,8 @@ int r3c_app_ota_inspect(const char *path, uid_t owner, char *reason, size_t size
                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (release < 0 || secure_node(release, "smart_gateway", owner, 0) != 0)
         goto invalid;
+    *lockfd = lock;
+    lock = -1;
     if (reason && size) snprintf(reason, size, "application OTA appears settled");
     rc = 0;
     goto out;
@@ -321,5 +343,13 @@ out:
     if (statefd >= 0) close(statefd);
     if (lock >= 0) { (void)flock(lock, LOCK_UN); close(lock); }
     if (dir >= 0) close(dir);
+    return rc;
+}
+
+int r3c_app_ota_inspect(const char *path, uid_t owner, char *reason, size_t size)
+{
+    int lock = -1;
+    int rc = r3c_app_ota_inspect_locked(path, owner, &lock, reason, size);
+    if (lock >= 0) { (void)flock(lock, LOCK_UN); close(lock); }
     return rc;
 }
