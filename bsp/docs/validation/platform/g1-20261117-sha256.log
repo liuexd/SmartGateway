@@ -1,0 +1,7 @@
+emmc-reserved-pre-p1.bin: OK
+emmc-p1.img: OK
+emmc-p2.img: OK
+emmc-p3.img: OK
+emmc-tail.img: OK
+emmc-boot0.img: OK
+emmc-boot1.img: OK

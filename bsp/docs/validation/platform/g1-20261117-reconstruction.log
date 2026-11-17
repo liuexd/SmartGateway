@@ -1,0 +1,11 @@
+PASS: reconstructed isolated user-area image; bytes=3909091328 SHA256=3f7e250c3f6cd842974f5e17a6a4617196c3141f410dca53a6ffacfa222ee7f0
+Only regular VM files were written; no board restore was executed.
+label: dos
+label-id: 0x00000000
+device: /home/ubuntu/.sgw-g1-recovery-prep/reconstruction-20261117.img
+unit: sectors
+sector-size: 512
+
+/home/ubuntu/.sgw-g1-recovery-prep/reconstruction-20261117.img1 : start=        4098, size=     2048000, type=83, bootable
+/home/ubuntu/.sgw-g1-recovery-prep/reconstruction-20261117.img2 : start=     2052098, size=     3072000, type=83, bootable
+/home/ubuntu/.sgw-g1-recovery-prep/reconstruction-20261117.img3 : start=     5124098, size=     1024000, type=c

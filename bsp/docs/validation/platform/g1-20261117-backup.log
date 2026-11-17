@@ -1,0 +1,17 @@
+Receiving emmc-reserved-pre-p1.bin (2098176 bytes)
+Receiving emmc-p1.img (1048576000 bytes)
+Receiving emmc-p2.img (1572864000 bytes)
+Receiving emmc-p3.img (524288000 bytes)
+Receiving emmc-tail.img (761265152 bytes)
+Receiving emmc-boot0.img (4194304 bytes)
+Receiving emmc-boot1.img (4194304 bytes)
+OK emmc-reserved-pre-p1.bin (2098176 bytes)
+OK emmc-p1.img (1048576000 bytes)
+OK emmc-p2.img (1572864000 bytes)
+OK emmc-p3.img (524288000 bytes)
+OK emmc-tail.img (761265152 bytes)
+OK emmc-boot0.img (4194304 bytes)
+OK emmc-boot1.img (4194304 bytes)
+User area SHA256 (ordered segments): 3f7e250c3f6cd842974f5e17a6a4617196c3141f410dca53a6ffacfa222ee7f0
+Archive consistency only: boot and restoration remain unverified.
+Archive internally verified; recovery boot and restoration are separate requirements.
