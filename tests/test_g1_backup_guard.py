@@ -74,6 +74,18 @@ class TopologyTests(unittest.TestCase):
         with self.assertRaises(g1.SafetyError):
             g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
 
+    def test_ram_root_is_allowed_without_hiding_block_mounts(self):
+        for kind in ("rootfs", "ramfs", "tmpfs"):
+            with self.subTest(kind=kind):
+                mounts = g1.parse_mountinfo([
+                    "41 1 0:1 / / rw - " + kind + " rootfs rw",
+                    "42 1 179:10 / /mnt/p2 ro - ext4 /dev/root ro",
+                ])
+                g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
+                mounts.append(((179, 10), {"rw"}, "ext4", "/other"))
+                with self.assertRaises(g1.SafetyError):
+                    g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
+
     def test_usb_functionfs_does_not_hide_block_device_writes(self):
         mounts = g1.parse_mountinfo([
             "42 1 179:10 / /mnt/p2 ro - ext4 /dev/root ro",

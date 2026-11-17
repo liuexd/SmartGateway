@@ -1,0 +1,40 @@
+test_block_readonly_flag_is_required (tests.test_g1_backup_guard.TopologyTests.test_block_readonly_flag_is_required) ... ok
+test_copy_checks_full_length_and_readback (tests.test_g1_backup_guard.TopologyTests.test_copy_checks_full_length_and_readback) ... ok
+test_destination_on_emmc_rejected_before_directory_creation (tests.test_g1_backup_guard.TopologyTests.test_destination_on_emmc_rejected_before_directory_creation) ... ok
+test_device_mapper_to_emmc_is_rejected (tests.test_g1_backup_guard.TopologyTests.test_device_mapper_to_emmc_is_rejected) ... ok
+test_direct_and_uuid_alias_have_same_underlying_identity (tests.test_g1_backup_guard.TopologyTests.test_direct_and_uuid_alias_have_same_underlying_identity) ... ok
+test_malformed_mountinfo_rejected (tests.test_g1_backup_guard.TopologyTests.test_malformed_mountinfo_rejected) ... ok
+test_missing_p3_aborts_validation (tests.test_g1_backup_guard.TopologyTests.test_missing_p3_aborts_validation) ... ok
+test_p2_rw_at_nonroot_mount_fails (tests.test_g1_backup_guard.TopologyTests.test_p2_rw_at_nonroot_mount_fails) ... ok
+test_ram_root_is_allowed_without_hiding_block_mounts (tests.test_g1_backup_guard.TopologyTests.test_ram_root_is_allowed_without_hiding_block_mounts) ... ok
+test_read_only_emmc_and_external_sd_allowed (tests.test_g1_backup_guard.TopologyTests.test_read_only_emmc_and_external_sd_allowed) ... ok
+test_rejects_existing_target_and_missing_parent (tests.test_g1_backup_guard.TopologyTests.test_rejects_existing_target_and_missing_parent) ... ok
+test_unknown_and_overlay_fail_closed (tests.test_g1_backup_guard.TopologyTests.test_unknown_and_overlay_fail_closed) ... ok
+test_usb_functionfs_does_not_hide_block_device_writes (tests.test_g1_backup_guard.TopologyTests.test_usb_functionfs_does_not_hide_block_device_writes) ... ok
+test_complete_archive_and_ordered_digest (tests.test_g1_verify_segments.BackupSegmentsTests.test_complete_archive_and_ordered_digest) ... ok
+test_duplicate_manifest_and_symlink_rejected (tests.test_g1_verify_segments.BackupSegmentsTests.test_duplicate_manifest_and_symlink_rejected) ... ok
+test_tamper_and_missing_segments_rejected (tests.test_g1_verify_segments.BackupSegmentsTests.test_tamper_and_missing_segments_rejected) ... ok
+test_wrong_partition_table_rejected_even_if_hash_updated (tests.test_g1_verify_segments.BackupSegmentsTests.test_wrong_partition_table_rejected_even_if_hash_updated) ... ok
+test_complete_ssh_stream_hash_and_readback (tests.test_g1_network_transport.TransportTests.test_complete_ssh_stream_hash_and_readback) ... ok
+test_existing_output_and_symlink_rejected (tests.test_g1_network_transport.TransportTests.test_existing_output_and_symlink_rejected) ... ok
+test_incomplete_transfer_never_creates_manifest (tests.test_g1_network_transport.TransportTests.test_incomplete_transfer_never_creates_manifest) ... OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+OK emmc-p2.img (1024 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+Receiving emmc-p1.img (4 bytes)
+ERROR: incomplete backup remains; do not use for recovery.
+ok
+test_nonzero_and_timeout_rejected (tests.test_g1_network_transport.TransportTests.test_nonzero_and_timeout_rejected) ... ok
+test_rejects_untrusted_key_and_existing_destination (tests.test_g1_network_transport.TransportTests.test_rejects_untrusted_key_and_existing_destination) ... ok
+test_sender_aborts_before_open_on_writable_source (tests.test_g1_network_transport.TransportTests.test_sender_aborts_before_open_on_writable_source) ... ok
+test_sender_streams_exact_range_after_all_guards (tests.test_g1_network_transport.TransportTests.test_sender_streams_exact_range_after_all_guards) ... ok
+test_short_excess_and_wrong_digest_rejected (tests.test_g1_network_transport.TransportTests.test_short_excess_and_wrong_digest_rejected) ... ok
+test_pinned_ssh_stream_and_wrong_host_key (tests.test_g1_ssh_loopback.SshLoopbackTests.test_pinned_ssh_stream_and_wrong_host_key) ... ok
+
+----------------------------------------------------------------------
+Ran 26 tests in 0.456s
+
+OK
