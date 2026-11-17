@@ -48,11 +48,13 @@ static int has_option(const char *options, const char *wanted)
     return 0;
 }
 
-int r3c_data_mountinfo_matches(const char *text, const char *mountpoint,
-                               unsigned int dev_major, unsigned int dev_minor)
+int r3c_data_mountinfo_matches_fstype(const char *text, const char *mountpoint,
+                                      unsigned int dev_major, unsigned int dev_minor,
+                                      const char *expected_fstype)
 {
     char *copy, *line, *save = NULL;
     int found = 0, good = 0;
+    const char *fst = (expected_fstype && expected_fstype[0]) ? expected_fstype : "ext4";
     if (!text || !safe_absolute(mountpoint)) return -1;
     copy = strdup(text);
     if (!copy) return -1;
@@ -71,11 +73,17 @@ int r3c_data_mountinfo_matches(const char *text, const char *mountpoint,
         if (strcmp(mnt, mountpoint) != 0) continue;
         ++found;
         good = maj == dev_major && min == dev_minor &&
-               strcmp(root, "/") == 0 && strcmp(type, "ext4") == 0 &&
+               strcmp(root, "/") == 0 && strcmp(type, fst) == 0 &&
                has_option(opts, "rw") && !has_option(opts, "ro");
     }
     free(copy);
     return found == 1 && good ? 0 : -1;
+}
+
+int r3c_data_mountinfo_matches(const char *text, const char *mountpoint,
+                               unsigned int dev_major, unsigned int dev_minor)
+{
+    return r3c_data_mountinfo_matches_fstype(text, mountpoint, dev_major, dev_minor, "ext4");
 }
 
 static int trusted_dirs(const char *path, uid_t owner)
@@ -99,13 +107,13 @@ static int trusted_dirs(const char *path, uid_t owner)
     return 0;
 }
 
-static int read_mountinfo(char **out)
+static int read_mountinfo_at(const char *path, char **out)
 {
     FILE *fp;
     char *line = NULL, *all = NULL;
     size_t cap = 0, used = 0;
     ssize_t n;
-    fp = fopen("/proc/self/mountinfo", "re");
+    fp = fopen((path && path[0]) ? path : "/proc/self/mountinfo", "re");
     if (!fp) return -1;
     while ((n = getline(&line, &cap, fp)) > 0) {
         char *next;
@@ -178,7 +186,7 @@ int r3c_data_inspect(const r3c_data_policy_t *p, char *reason, size_t size)
         mnt.st_dev == root.st_dev) {
         fail(reason, size, "mount device does not match or is root"); goto out;
     }
-    if (read_mountinfo(&mountinfo) != 0 ||
+    if (read_mountinfo_at(NULL, &mountinfo) != 0 ||
         r3c_data_mountinfo_matches(mountinfo, p->mountpoint,
                                    major(dev.st_rdev), minor(dev.st_rdev)) != 0) {
         fail(reason, size, "mountinfo identity or mode invalid"); goto out;
@@ -351,5 +359,256 @@ int r3c_app_ota_inspect(const char *path, uid_t owner, char *reason, size_t size
     int lock = -1;
     int rc = r3c_app_ota_inspect_locked(path, owner, &lock, reason, size);
     if (lock >= 0) { (void)flock(lock, LOCK_UN); close(lock); }
+    return rc;
+}
+
+
+#include <sys/random.h>
+
+static int read_u64_file(const char *path, uint64_t *out)
+{
+    char buf[64], *end = NULL;
+    int fd;
+    ssize_t n;
+    unsigned long long v;
+    fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buf[n] = '\0';
+    errno = 0;
+    v = strtoull(buf, &end, 10);
+    if (errno || end == buf) return -1;
+    while (*end == '\n' || *end == '\r' || *end == ' ' || *end == '\t') ++end;
+    if (*end != '\0') return -1;
+    *out = (uint64_t)v;
+    return 0;
+}
+
+static int ranges_overlap(uint64_t a_start, uint64_t a_count,
+                          uint64_t b_start, uint64_t b_count)
+{
+    uint64_t a_end, b_end;
+    if (a_count == 0 || b_count == 0) return 0;
+    if (a_start > UINT64_MAX - a_count || b_start > UINT64_MAX - b_count) return 1;
+    a_end = a_start + a_count;
+    b_end = b_start + b_count;
+    return a_start < b_end && b_start < a_end;
+}
+
+static int resolve_disk_parent(const char *sysfs_root, unsigned int maj, unsigned int min,
+                               char *disk_out, size_t cap)
+{
+    char linkpath[PATH_MAX], resolved[PATH_MAX], *slash, *last;
+    int n = snprintf(linkpath, sizeof(linkpath), "%s/%u:%u", sysfs_root, maj, min);
+    if (n <= 0 || (size_t)n >= sizeof(linkpath)) return -1;
+    if (!realpath(linkpath, resolved)) return -1;
+    /* Partition entries live under .../<disk>/<part>, disk entries under .../<disk>. */
+    slash = strrchr(resolved, '/');
+    if (!slash || slash == resolved) return -1;
+    /* Check if 'partition' attribute exists in resolved dir; if so parent is disk. */
+    {
+        char partpath[PATH_MAX];
+        struct stat pst;
+        n = snprintf(partpath, sizeof(partpath), "%s/partition", resolved);
+        if (n <= 0 || (size_t)n >= sizeof(partpath)) return -1;
+        if (stat(partpath, &pst) == 0) {
+            *slash = '\0';
+            last = strrchr(resolved, '/');
+            if (!last) return -1;
+            if (snprintf(disk_out, cap, "%s", last + 1) >= (int)cap) return -1;
+            return 1; /* is partition */
+        }
+    }
+    if (snprintf(disk_out, cap, "%s", slash + 1) >= (int)cap) return -1;
+    return 0; /* whole disk */
+}
+
+static int read_sysfs_geom(const char *sysfs_root, unsigned int maj, unsigned int min,
+                           uint64_t *start, uint64_t *size, char *disk, size_t disk_cap,
+                           int *is_part)
+{
+    char pstart[PATH_MAX], psize[PATH_MAX];
+    int part_rc;
+    part_rc = resolve_disk_parent(sysfs_root, maj, min, disk, disk_cap);
+    if (part_rc < 0) return -1;
+    *is_part = part_rc;
+    if (snprintf(psize, sizeof(psize), "%s/%u:%u/size", sysfs_root, maj, min) >= (int)sizeof(psize))
+        return -1;
+    if (read_u64_file(psize, size) != 0 || *size == 0) return -1;
+    if (part_rc == 1) {
+        if (snprintf(pstart, sizeof(pstart), "%s/%u:%u/start", sysfs_root, maj, min) >= (int)sizeof(pstart))
+            return -1;
+        if (read_u64_file(pstart, start) != 0) return -1;
+    } else {
+        *start = 0;
+    }
+    return 0;
+}
+
+int r3c_data_check_slot_exclusion_sysfs(unsigned int dev_major, unsigned int dev_minor,
+                                        const char *data_device,
+                                        const char *const *excluded_devices,
+                                        size_t excluded_count,
+                                        const r3c_sector_range_t *reserved_sectors,
+                                        size_t reserved_count,
+                                        const char *sysfs_block_root,
+                                        char *reason, size_t reason_size)
+{
+    const char *sysfs = (sysfs_block_root && sysfs_block_root[0]) ? sysfs_block_root : "/sys/dev/block";
+    uint64_t d_start = 0, d_size = 0;
+    char d_disk[128] = {0};
+    int d_is_part = 0, have_d_geom = 0;
+    size_t i;
+
+    if (!data_device || !safe_absolute(data_device))
+        return fail(reason, reason_size, "invalid data device path");
+
+    for (i = 0; i < excluded_count; ++i) {
+        struct stat est;
+        const char *ex = excluded_devices ? excluded_devices[i] : NULL;
+        if (!ex || !ex[0]) continue;
+        if (strcmp(data_device, ex) == 0)
+            return fail(reason, reason_size, "DATA device matches excluded system slot path");
+        if (stat(ex, &est) == 0 && S_ISBLK(est.st_mode) &&
+            major(est.st_rdev) == dev_major && minor(est.st_rdev) == dev_minor) {
+            return fail(reason, reason_size, "DATA block identity matches excluded system slot");
+        }
+    }
+
+    if (read_sysfs_geom(sysfs, dev_major, dev_minor, &d_start, &d_size,
+                        d_disk, sizeof(d_disk), &d_is_part) == 0) {
+        have_d_geom = 1;
+        if (!d_is_part || d_start == 0)
+            return fail(reason, reason_size, "DATA must be a dedicated non-MBR partition");
+    } else {
+        return fail(reason, reason_size, "cannot read DATA sysfs block geometry");
+    }
+
+    if (have_d_geom) {
+        for (i = 0; i < reserved_count; ++i) {
+            if (ranges_overlap(d_start, d_size,
+                               reserved_sectors[i].start_sector,
+                               reserved_sectors[i].sector_count)) {
+                return fail(reason, reason_size, "DATA partition overlaps reserved boot/env sectors");
+            }
+        }
+        for (i = 0; i < excluded_count; ++i) {
+            struct stat est;
+            uint64_t e_start = 0, e_size = 0;
+            char e_disk[128] = {0};
+            int e_part = 0;
+            const char *ex = excluded_devices ? excluded_devices[i] : NULL;
+            if (!ex || !ex[0]) continue;
+            if (stat(ex, &est) == 0 && S_ISBLK(est.st_mode)) {
+                if (read_sysfs_geom(sysfs, major(est.st_rdev), minor(est.st_rdev),
+                                    &e_start, &e_size, e_disk, sizeof(e_disk), &e_part) == 0) {
+                    if (strcmp(d_disk, e_disk) == 0 &&
+                        ranges_overlap(d_start, d_size, e_start, e_size)) {
+                        return fail(reason, reason_size, "DATA partition overlaps excluded system slot sectors");
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int r3c_data_verify_persistence(int dirfd, uid_t owner, char *reason, size_t reason_size)
+{
+    char name[64];
+    unsigned char nonce[32], readbuf[32];
+    int fd = -1, rfd = -1, rc = -1;
+    ssize_t n;
+    size_t i;
+    struct stat st;
+
+    if (dirfd < 0) return fail(reason, reason_size, "invalid DATA fd");
+    if (getrandom(nonce, sizeof(nonce), GRND_NONBLOCK) != (ssize_t)sizeof(nonce))
+        return fail(reason, reason_size, "entropy unavailable for DATA persistence probe");
+    if (snprintf(name, sizeof(name), ".sgw-data-probe.%ld", (long)getpid()) >= (int)sizeof(name))
+        return fail(reason, reason_size, "probe name overflow");
+    (void)unlinkat(dirfd, name, 0);
+    fd = openat(dirfd, name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0) return fail(reason, reason_size, "cannot create DATA persistence probe");
+    for (i = 0; i < sizeof(nonce); ) {
+        n = write(fd, nonce + i, sizeof(nonce) - i);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) goto out;
+        i += (size_t)n;
+    }
+    if (fsync(fd) != 0) { fail(reason, reason_size, "DATA probe fsync failed"); goto out; }
+    if (close(fd) != 0) { fd = -1; fail(reason, reason_size, "DATA probe close failed"); goto out; }
+    fd = -1;
+
+    rfd = openat(dirfd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (rfd < 0 || fstat(rfd, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_uid != owner || (size_t)st.st_size != sizeof(nonce)) {
+        fail(reason, reason_size, "DATA probe readback stat failed");
+        goto out;
+    }
+    for (i = 0; i < sizeof(readbuf); ) {
+        n = read(rfd, readbuf + i, sizeof(readbuf) - i);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) goto out;
+        i += (size_t)n;
+    }
+    close(rfd); rfd = -1;
+    if (memcmp(nonce, readbuf, sizeof(nonce)) != 0) {
+        fail(reason, reason_size, "DATA probe readback mismatch");
+        goto out;
+    }
+    if (unlinkat(dirfd, name, 0) != 0 || fsync(dirfd) != 0) {
+        fail(reason, reason_size, "DATA probe cleanup fsync failed");
+        goto out;
+    }
+    rc = 0;
+out:
+    if (fd >= 0) close(fd);
+    if (rfd >= 0) close(rfd);
+    if (rc != 0) { (void)unlinkat(dirfd, name, 0); (void)fsync(dirfd); }
+    return rc;
+}
+
+int r3c_data_inspect_full(const r3c_data_full_policy_t *p, char *reason, size_t size)
+{
+    struct stat dev, root, mnt;
+    char *mountinfo = NULL;
+    int dir = -1, rc = -1;
+    if (!p || !safe_absolute(p->mountpoint) || !safe_absolute(p->device) ||
+        p->minimum_available_bytes == 0)
+        return fail(reason, size, "invalid or incomplete policy");
+    if (trusted_dirs(p->mountpoint, p->owner) != 0 ||
+        stat(p->device, &dev) != 0 || !S_ISBLK(dev.st_mode) ||
+        stat("/", &root) != 0)
+        return fail(reason, size, "untrusted mount path or block device");
+    if (p->excluded_count > 0 || p->reserved_count > 0) {
+        if (r3c_data_check_slot_exclusion_sysfs(major(dev.st_rdev), minor(dev.st_rdev),
+                                                p->device, p->excluded_devices, p->excluded_count,
+                                                p->reserved_sectors, p->reserved_count,
+                                                p->sysfs_block_root, reason, size) != 0)
+            return -1;
+    }
+    dir = open(p->mountpoint, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dir < 0 || fstat(dir, &mnt) != 0 || mnt.st_dev != dev.st_rdev ||
+        mnt.st_dev == root.st_dev) {
+        fail(reason, size, "mount device does not match or is root"); goto out;
+    }
+    if (read_mountinfo_at(p->mountinfo_path, &mountinfo) != 0 ||
+        r3c_data_mountinfo_matches_fstype(mountinfo, p->mountpoint,
+                                          major(dev.st_rdev), minor(dev.st_rdev),
+                                          p->expected_fstype) != 0) {
+        fail(reason, size, "mountinfo identity or mode invalid"); goto out;
+    }
+    if (r3c_data_inspect_contents(dir, p->owner, p->minimum_available_bytes,
+                                  reason, size) != 0) goto out;
+    if (p->verify_write_persistence &&
+        r3c_data_verify_persistence(dir, p->owner, reason, size) != 0) goto out;
+    if (reason && size) snprintf(reason, size, "DATA prerequisites observed");
+    rc = 0;
+out:
+    free(mountinfo);
+    if (dir >= 0) close(dir);
     return rc;
 }

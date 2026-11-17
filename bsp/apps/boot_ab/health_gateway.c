@@ -66,13 +66,12 @@ static int gateway_probe(const char *socket_path, uid_t trusted_uid,
         nonce[i * 2 + 1] = hex[random[i] & 15];
     }
     nonce[32] = '\0';
-    n = snprintf(request, sizeof(request), "%s%s\n",
-                 flow ? "SGW-FLOWX/1 " : "SGW-PROBE/1 ", nonce);
+    const char *pfx = (flow == 1) ? "SGW-FLOWX/1 " : ((flow == 2) ? "SGW-LOCAL/1 " : "SGW-PROBE/1 ");
+    const char *exp = (flow == 1) ? "FORWARDED" : ((flow == 2) ? "LOCAL_OK" : "READY");
+    n = snprintf(request, sizeof(request), "%s%s\n", pfx, nonce);
     if (n <= 0 || (size_t)n >= sizeof(request)) return -1;
     request_len = (size_t)n;
-    n = snprintf(expected, sizeof(expected), "%s%s %s\n",
-                 flow ? "SGW-FLOWX/1 " : "SGW-PROBE/1 ", nonce,
-                 flow ? "FORWARDED" : "READY");
+    n = snprintf(expected, sizeof(expected), "%s%s %s\n", pfx, nonce, exp);
     if (n <= 0 || (size_t)n >= sizeof(expected)) return -1;
     expected_len = (size_t)n;
     start = now_ms();
@@ -132,4 +131,12 @@ int sgw_health_gateway_flow_probe(const char *socket_path, uid_t trusted_uid,
 {
     return gateway_probe(socket_path, trusted_uid, expected_pid, expected_start,
                          timeout_ms, 1);
+}
+
+int sgw_health_gateway_local_probe(const char *socket_path, uid_t trusted_uid,
+                                   pid_t expected_pid, unsigned long long expected_start,
+                                   int timeout_ms)
+{
+    return gateway_probe(socket_path, trusted_uid, expected_pid, expected_start,
+                         timeout_ms, 2);
 }

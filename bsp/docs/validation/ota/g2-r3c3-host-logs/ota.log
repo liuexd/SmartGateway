@@ -1,0 +1,282 @@
+make: Entering directory '/home/ubuntu/Desktop/project/SmartGateway-BSP/bsp/apps/ota_agent'
+gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-result \
+	ota_supervisor.c ota_process.c \
+	ota_supervisor_test.c \
+	-o /tmp/ota_supervisor_test_host
+ota_supervisor 单元测试（D25-2 S1 + S1-R + S2-R）
+临时目录: /tmp/d25-2-s1-oeR964
+
+== 1. 无 pidfile -> STOPPED ==
+  PASS  read 应失败
+  PASS  errno=ENOENT（实际 2: No such file or directory）
+  PASS  query -> STOPPED（实际 STOPPED）
+  PASS  pid 输出保持 -1
+
+== 2. 捕获自身身份 -> RUNNING ==
+  PASS  capture_identity 成功
+  PASS  pid 正确
+  PASS  starttime 非 0（实际 131572918）
+  PASS  pidfile_write 成功
+  PASS  pidfile_read 成功
+  PASS  pid 往返一致
+  PASS  starttime 往返一致
+  PASS  query -> RUNNING（实际 RUNNING）
+  PASS  pid 输出正确
+
+== 3. 进程退出后 -> STOPPED ==
+  PASS  fork 哨兵进程 pid=1115797
+  PASS  捕获子进程身份
+  PASS  写入 pidfile
+  PASS  运行中 -> RUNNING（实际 RUNNING）
+  PASS  退出后 -> STOPPED（实际 STOPPED）
+
+== 4. pid 复用 -> STOPPED（不误杀）==
+  PASS  fork 哨兵进程 pid=1115798
+  PASS  捕获真实身份
+  PASS  starttime 不符 -> STOPPED（实际 STOPPED）
+  PASS  哨兵进程仍存活，未被误杀
+
+== 5. pid=1 -> UNKNOWN（绝不发信号）==
+  PASS  pid=1 -> UNKNOWN（实际 UNKNOWN）
+  PASS  pid=0 -> UNKNOWN
+  PASS  pid=-5 -> UNKNOWN
+  PASS  NULL -> UNKNOWN
+  PASS  init 进程仍正常存在
+
+== 6. pidfile 内容损坏 -> UNKNOWN ==
+  PASS  拒绝损坏内容 #0: ""
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #1: "abc
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #2: "12345
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #3: "-1 999
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #4: "0 999
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #5: "12345 0
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #6: "12345 678
+GARBAGE"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #7: "12345 678 999
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+  PASS  拒绝损坏内容 #8: "12345 678999999999999999999999
+"
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+
+== 7. pidfile 是符号链接 -> 拒绝 ==
+  PASS  符号链接被拒绝
+  PASS  errno=ELOOP（实际 40: Too many levels of symbolic links）
+  PASS  query -> UNKNOWN（实际 UNKNOWN）
+
+== 8. comm 含空格与括号 -> starttime 正确 ==
+  PASS  解析成功
+  PASS  starttime 非 0（实际 131572918）
+  PASS  与独立解析一致（131572918）
+  PASS  特殊 comm 进程 -> RUNNING
+
+== 9. pidfile 权限 0600 ==
+  PASS  捕获身份
+  PASS  写入 pidfile
+  PASS  构造路径
+  PASS  stat pidfile
+  PASS  权限为 0600（实际 0600）
+  PASS  临时文件路径构造成功
+  PASS  临时文件已清理
+
+== 10. 多次写入后读取一致 ==
+  PASS  20 次写入/读取全部一致
+
+== 11. remove 与不存在的情况 ==
+  PASS  删除存在的 pidfile 成功
+  PASS  删除后读取 -> ENOENT
+  PASS  重复删除不报错
+  PASS  无 pidfile -> STOPPED
+
+== 12. 路径构造与截断检测 ==
+  PASS  正常路径构造成功
+  PASS  路径内容正确：/opt/sgw/run/gateway.pid
+  PASS  缓冲区过小被拒绝
+  PASS  errno=ENAMETOOLONG（实际 36）
+  PASS  NULL install_dir 被拒绝
+  PASS  空 install_dir 被拒绝
+  PASS  query(NULL) -> UNKNOWN
+
+== 13. 不完整身份拒绝写入 ==
+  PASS  starttime=0 被拒绝
+  PASS  errno=EINVAL（实际 22）
+  PASS  pid=0 被拒绝
+  PASS  NULL 身份被拒绝
+
+== 14. 僵尸进程 -> STOPPED（S1-R 关键修正）==
+  PASS  能读取僵尸进程的 state
+  PASS  state 为 'Z'（实际 'Z'）
+  PASS  state_is_alive('Z') == 0
+  PASS  僵尸的 starttime 仍可读（131572934），故仅比对它不够
+  PASS  僵尸 -> STOPPED（实际 STOPPED）
+  PASS  写入僵尸身份
+  PASS  query -> STOPPED（实际 STOPPED）
+  PASS  STOPPED 时不输出 pid
+
+== 15. 状态字符分类 ==
+  PASS  'R' 运行
+  PASS  'S' 可中断睡眠
+  PASS  'D' 不可中断
+  PASS  'T' 停止（受控）
+  PASS  'Z' 僵尸不算运行
+  PASS  'X' 已死亡不算运行
+  PASS  'x' 已死亡不算运行
+
+== 16. 临时文件隔离与清理 ==
+  PASS  捕获身份
+  PASS  写入 pidfile
+  PASS  run 路径合法
+  PASS  run 目录确实存在
+  PASS  命令构造成功
+  PASS  run/ 目录内无残留临时文件（实际 0 个）
+  PASS  检查方法能发现人为残留（实际 1 个）
+  PASS  写 A
+  PASS  写 B
+  PASS  读回成功
+  PASS  后写者生效（222）
+
+== 17. 并发写入不产生坏文件 ==
+  PASS  起始状态已清空（无遗留 pidfile）
+  PASS  所有写者进程正常退出
+  PASS  确有写入成功（累计 200 次）
+  PASS  成功次数不少于进程数（200 >= 4）
+  PASS  并发写后 pidfile 仍可完整解析
+  PASS  pid 合法（1115810）
+  PASS  starttime 合法（131575967）
+  PASS  并发后无临时文件残留（实际 0 个）
+
+== 18. boot_id 跨重启校验 ==
+  PASS  能读取 boot_id
+  boot_id = 0a023e15-9190-44fa-becc-c3dfb34712ba
+  PASS  boot_id 长度为 36（实际 36）
+  PASS  捕获身份
+  PASS  身份中的 boot_id 与当前一致
+  PASS  写入带 boot_id 的 pidfile
+  PASS  读回成功
+  PASS  boot_id 往返一致
+  PASS  同启动周期 -> RUNNING（实际 RUNNING）
+  PASS  boot_id 不同（模拟跨重启）-> STOPPED（实际 STOPPED）
+  PASS  无 boot_id 的旧记录仍按 (pid,starttime) 判定 -> RUNNING
+  PASS  两段式旧格式仍可解析
+  PASS  旧格式 pid 正确
+  PASS  旧格式 starttime 正确
+  PASS  旧格式 boot_id 为空
+  PASS  三段式新格式可解析
+  PASS  新格式 boot_id 正确
+
+== 19. 单次读取快照一致性 ==
+  PASS  probe_process 成功
+  PASS  read_state 成功
+  PASS  read_starttime 成功
+  PASS  state 一致（'R' vs 'R'）
+  PASS  starttime 一致（131572918 vs 131572918）
+  PASS  仅取 state 也可成功
+  PASS  仅取 starttime 也可成功
+  PASS  两个输出都为 NULL 被拒绝
+  PASS  不存在的 pid -> ENOENT
+
+== 20. 临时文件名唯一性 ==
+  PASS  20 次连续写入全部成功（实际 20 次）
+  PASS  最终可读
+  PASS  最后一次生效（7019）
+
+== 21. 孤儿临时文件清理 ==
+  PASS  只删除 1 个陈旧临时文件（实际 1）
+  PASS  陈旧临时文件已删除
+  PASS  新鲜临时文件被保留（不误删活跃写者）
+
+== 22. 旧格式 pidfile 识别 ==
+  PASS  旧格式可识别
+  PASS  识别为旧格式（实际 1）
+  PASS  新格式可识别
+  PASS  识别为新格式（实际 0）
+  PASS  无记录时返回 -1/ENOENT
+
+============================
+检查项: 145, 失败: 0
+结果: PASS
+gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-result \
+	ota_supervisor.c ota_process.c \
+	ota_supervisor_s2_test.c \
+	-o /tmp/ota_supervisor_s2_test_host
+ota_supervisor S2 自管 Supervisor 测试
+临时目录: /tmp/d25-2-s2-OLHyj0
+
+== 1. 正常启动 + 停止 ==
+  PASS  启动成功
+  PASS  pid 有效（1115828）
+  PASS  starttime 非 0
+  PASS  owner 记录为本进程
+  PASS  pidfile 可读
+  PASS  pidfile pid 一致
+  PASS  pidfile starttime 一致
+  PASS  query -> RUNNING（实际 RUNNING）
+  PASS  query 返回正确 pid
+  PASS  停止成功（rc=0, 21ms）
+  PASS  pidfile 已清理
+  PASS  停止后 -> STOPPED（实际 STOPPED）
+
+== 2. 重复启动被拒 ==
+  PASS  第一个实例启动成功
+  PASS  第二个实例被拒绝
+  PASS  errno=EALREADY（实际 114: Operation already in progress）
+  PASS  原实例仍 RUNNING
+  PASS  pidfile 未被第二个实例覆盖
+
+== 3. 非所有者不能停止 ==
+  PASS  跨所有者 stop 被拒绝
+  PASS  errno=EPERM（实际 1）
+  PASS  进程仍在运行，未被误杀
+
+== 4. exec 失败不留 pidfile ==
+  PASS  启动失败
+  PASS  未留下 pidfile
+  PASS  状态为 STOPPED
+
+== 5. 进程被外部杀掉 -> STOPPED ==
+  PASS  外部发送 SIGKILL
+  PASS  僵尸状态 -> STOPPED（实际 STOPPED）
+  PASS  清理 pidfile
+
+== 6. 正常停止后无僵尸残留 ==
+  PASS  停止成功（rc=0）
+  PASS  进程已被回收（无僵尸，waitpid=-1/ECHILD）
+  PASS  /proc 条目已消失
+
+== 7. 状态 UNKNOWN 时拒绝启动 ==
+  PASS  run 路径合法
+  PASS  构造路径
+  PASS  损坏 pidfile -> UNKNOWN（实际 UNKNOWN）
+  PASS  UNKNOWN 状态下拒绝启动
+  PASS  errno=EBUSY（实际 16: Device or resource busy）
+
+== 8. 参数校验 ==
+  PASS  install_dir=NULL 被拒
+  PASS  executable=NULL 被拒
+  PASS  argv=NULL 被拒
+  PASS  handle=NULL 被拒
+  PASS  handle=NULL 被拒（stop）
+  PASS  pid=1 被拒（绝不操作 init）
+
+== 9. 启动后立即退出 ==
+  PASS  启动成功（进程可能已退出）
+  PASS  立即退出后 -> STOPPED（实际 STOPPED）
+  PASS  无僵尸残留（实际 0 个）
+  PASS  未出现长时间阻塞（耗时 0s）
+
+============================
+检查项: 44, 失败: 0
+结果: PASS
+make: Leaving directory '/home/ubuntu/Desktop/project/SmartGateway-BSP/bsp/apps/ota_agent'

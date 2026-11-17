@@ -201,46 +201,74 @@ static int bound_driver(const char *link, const char *driver)
     return base && strcmp(base + 1, driver) == 0 ? 1 : 0;
 }
 
-sgw_health_state_t sgw_health_ap3216_read(unsigned int *raw, int timeout_ms)
+sgw_health_state_t sgw_health_ap3216_read_at(const char *als_path,
+                                             const char *stats_path,
+                                             const char *driver_link,
+                                             unsigned int *raw,
+                                             int timeout_ms)
 {
     read_result_t result;
-    int driver = bound_driver("/sys/bus/i2c/devices/0-001e/driver", "sgw_ap3216");
+    int driver;
+    if (!als_path || !stats_path || !driver_link || !raw) return SGW_HEALTH_UNKNOWN;
+    driver = bound_driver(driver_link, "sgw_ap3216");
     if (driver < 0) return failure_state(errno);
     if (driver == 0) return SGW_HEALTH_UNHEALTHY;
-    if (bounded_read("/sys/bus/i2c/devices/0-001e/als_raw", timeout_ms, &result) != 0)
+    if (bounded_read(als_path, timeout_ms, &result) != 0)
         return SGW_HEALTH_UNKNOWN;
     if (result.error) return failure_state(result.error);
     if (sgw_health_parse_als(result.text, raw) != 0) return SGW_HEALTH_UNKNOWN;
-    if (bounded_read("/sys/bus/i2c/devices/0-001e/stats", timeout_ms, &result) != 0)
+    if (bounded_read(stats_path, timeout_ms, &result) != 0)
         return SGW_HEALTH_UNKNOWN;
     if (result.error) return failure_state(result.error);
     if (!sgw_health_ap3216_stats_valid(result.text)) return SGW_HEALTH_UNKNOWN;
     return SGW_HEALTH_HEALTHY;
 }
 
-sgw_health_state_t sgw_health_gpio_inventory(int timeout_ms)
+sgw_health_state_t sgw_health_ap3216_read(unsigned int *raw, int timeout_ms)
+{
+    return sgw_health_ap3216_read_at("/sys/bus/i2c/devices/0-001e/als_raw",
+                                     "/sys/bus/i2c/devices/0-001e/stats",
+                                     "/sys/bus/i2c/devices/0-001e/driver",
+                                     raw, timeout_ms);
+}
+
+sgw_health_state_t sgw_health_gpio_inventory_at(const char *dev_node,
+                                                const char *misc_dev_path,
+                                                const char *stats_path,
+                                                const char *driver_link,
+                                                int timeout_ms)
 {
     struct stat st;
     read_result_t dev, stats;
     unsigned int maj, min;
     int used = 0, driver;
 
-    if (stat("/dev/sgw_event0", &st) != 0) return failure_state(errno);
+    if (!dev_node || !misc_dev_path || !stats_path || !driver_link)
+        return SGW_HEALTH_UNKNOWN;
+    if (stat(dev_node, &st) != 0) return failure_state(errno);
     if (!S_ISCHR(st.st_mode)) return SGW_HEALTH_UNHEALTHY;
-    driver = bound_driver("/sys/bus/platform/devices/sgw-gpio-event/driver",
-                          "sgw-gpio-event");
+    driver = bound_driver(driver_link, "sgw-gpio-event");
     if (driver < 0) return failure_state(errno);
     if (driver == 0) return SGW_HEALTH_UNHEALTHY;
-    if (bounded_read("/sys/class/misc/sgw_event0/dev", timeout_ms, &dev) != 0)
+    if (bounded_read(misc_dev_path, timeout_ms, &dev) != 0)
         return SGW_HEALTH_UNKNOWN;
     if (dev.error) return failure_state(dev.error);
     if (sscanf(dev.text, "%u:%u\n%n", &maj, &min, &used) != 2 || dev.text[used] ||
         maj != major(st.st_rdev) || min != minor(st.st_rdev))
         return SGW_HEALTH_UNHEALTHY;
-    if (bounded_read("/sys/bus/platform/devices/sgw-gpio-event/stats",
-                     timeout_ms, &stats) != 0)
+    if (bounded_read(stats_path, timeout_ms, &stats) != 0)
         return SGW_HEALTH_UNKNOWN;
     if (stats.error) return failure_state(stats.error);
     if (!sgw_health_gpio_stats_valid(stats.text)) return SGW_HEALTH_UNKNOWN;
     return SGW_HEALTH_HEALTHY;
+}
+
+sgw_health_state_t sgw_health_gpio_inventory(int timeout_ms)
+{
+    return sgw_health_gpio_inventory_at(
+        "/dev/sgw_event0",
+        "/sys/class/misc/sgw_event0/dev",
+        "/sys/bus/platform/devices/sgw-gpio-event/stats",
+        "/sys/bus/platform/devices/sgw-gpio-event/driver",
+        timeout_ms);
 }

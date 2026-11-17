@@ -1,0 +1,9 @@
+test_n09_controlled_local_policy_decoupling_without_upstream_traffic (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_controlled_local_policy_decoupling_without_upstream_traffic) ... ok
+test_n09_strict_forward_end_to_end_confirm_and_n10_replay_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_strict_forward_end_to_end_confirm_and_n10_replay_rejected) ... ok
+test_n10_persistence_fsync_failure_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_persistence_fsync_failure_rejected) ... ok
+test_n10_tamper_lock_contention_device_and_policy_faults_rejected (tests.test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_tamper_lock_contention_device_and_policy_faults_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 6.989s
+
+OK

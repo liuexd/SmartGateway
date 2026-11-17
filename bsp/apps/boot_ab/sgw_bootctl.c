@@ -1,6 +1,8 @@
 #include "ab_state.h"
 #include "ab_health.h"
 #include "fw_env_backend.h"
+#include "r3c_coordinator.h"
+#include "r3c_policy.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -281,10 +283,9 @@ int main(int argc, char **argv)
 
     if (strcmp(cmd, "confirm") == 0) {
         ab_slot_t caller_running = AB_SLOT_NONE;
-        ab_slot_t detected_running = AB_SLOT_NONE;
-        unsigned long long svc_pid = 0;
         int has_caller_running = 0;
-        int health_ok = 0; /* FAIL-CLOSED by default */
+        r3c_policy_t r3c_pol;
+        r3c_confirm_result_t res;
 
         while (idx < argc) {
             if (strcmp(argv[idx], "--running") == 0 && idx + 1 < argc) {
@@ -297,31 +298,25 @@ int main(int argc, char **argv)
                 return 2;
             }
         }
-        if (ab_verify_system_health(&hcfg, &env, &detected_running, &svc_pid,
-                                    errbuf, sizeof(errbuf)) != 0) {
+        /* Production confirm: root-owned /etc/smartgateway/r3c-policy.conf, zero CLI/env bypasses */
+        if (r3c_policy_load(R3C_DEFAULT_POLICY_PATH, 0, &r3c_pol, errbuf, sizeof(errbuf)) != 0) {
             fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
             return 1;
         }
-        if (has_caller_running && caller_running != detected_running) {
-            fprintf(stderr,
-                    "CONFIRM REJECTED: caller --running %s disagrees with verified OS root slot %s\n",
-                    ab_slot_str(caller_running), ab_slot_str(detected_running));
+        if (r3c_coordinator_confirm(&r3c_pol, &cfg, &hcfg, NULL, &res, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "CONFIRM REJECTED: %s\n", errbuf);
             return 1;
         }
-        health_ok = 1;
-        if (ab_confirm_trial(&env, detected_running, health_ok, errbuf, sizeof(errbuf)) != 0) {
-            fprintf(stderr, "CONFIRM ERROR: %s\n", errbuf);
+        if (has_caller_running && caller_running != res.running_slot) {
+            fprintf(stderr, "CONFIRM REJECTED: caller --running disagrees with verified slot\n");
             return 1;
         }
-        if (fw_env_backend_save(&cfg, &env, errbuf, sizeof(errbuf)) != 0) {
-            fprintf(stderr, "SAVE ERROR: %s\n", errbuf);
-            return 1;
-        }
-        printf("CONFIRMED active=%s last_good=%s state=%s service_pid=%llu\n",
-               ab_slot_str(env.active_slot),
-               ab_slot_str(env.last_good_slot),
-               ab_state_str(env.ab_state),
-               svc_pid);
+        printf("CONFIRMED active=%s last_good=%s state=confirmed tx=%s boot_id=%s health=%s\n",
+               ab_slot_str(res.running_slot),
+               ab_slot_str(res.last_good_slot),
+               res.transaction_id,
+               res.boot_id,
+               sgw_health_state_name(res.overall_state));
         return 0;
     }
 

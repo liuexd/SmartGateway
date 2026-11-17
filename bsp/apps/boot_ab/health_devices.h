@@ -14,6 +14,16 @@ int sgw_health_read_text_bounded(const char *path, int timeout_ms,
 
 /* Read-only diagnostics; they never read the GPIO event queue. */
 sgw_health_state_t sgw_health_ap3216_read(unsigned int *raw, int timeout_ms);
+sgw_health_state_t sgw_health_ap3216_read_at(const char *als_path,
+                                             const char *stats_path,
+                                             const char *driver_link,
+                                             unsigned int *raw,
+                                             int timeout_ms);
 sgw_health_state_t sgw_health_gpio_inventory(int timeout_ms);
+sgw_health_state_t sgw_health_gpio_inventory_at(const char *dev_node,
+                                                const char *misc_dev_path,
+                                                const char *stats_path,
+                                                const char *driver_link,
+                                                int timeout_ms);
 
 #endif

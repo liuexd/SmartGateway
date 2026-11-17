@@ -19,12 +19,15 @@
 
 #define QUERY_PREFIX "SGW-PROBE/1 "
 #define FLOW_PREFIX  "SGW-FLOWX/1 "
+#define LOCAL_PREFIX "SGW-LOCAL/1 "
 #define NONCE_LEN 32
 #define PROBE_TIMEOUT_MS 200
 #define FLOW_MAX_AGE_SECONDS 5u
 
 _Static_assert(sizeof(QUERY_PREFIX) == sizeof(FLOW_PREFIX), "query prefix lengths");
+_Static_assert(sizeof(QUERY_PREFIX) == sizeof(LOCAL_PREFIX), "local prefix lengths");
 static atomic_uint last_forwarded_seconds;
+static atomic_uint last_worker_tick_seconds;
 
 void gateway_health_observe_forwarded(const unsigned char *data, size_t length)
 {
@@ -38,14 +41,33 @@ void gateway_health_observe_forwarded(const unsigned char *data, size_t length)
                           memory_order_release);
 }
 
-static int recent_forwarded(void)
+void gateway_health_observe_worker_tick(void)
 {
     struct timespec ts;
-    unsigned int last = atomic_load_explicit(&last_forwarded_seconds, memory_order_acquire);
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0 ||
+        ts.tv_sec <= 0 || (unsigned long long)ts.tv_sec > UINT_MAX) return;
+    atomic_store_explicit(&last_worker_tick_seconds, (unsigned int)ts.tv_sec,
+                          memory_order_release);
+}
+
+static int recent_timestamp(atomic_uint *stamp)
+{
+    struct timespec ts;
+    unsigned int last = atomic_load_explicit(stamp, memory_order_acquire);
     if (last == 0 || clock_gettime(CLOCK_MONOTONIC, &ts) != 0 ||
         ts.tv_sec < 0 || (unsigned long long)ts.tv_sec > UINT_MAX ||
         (unsigned int)ts.tv_sec < last) return 0;
     return (unsigned int)ts.tv_sec - last <= FLOW_MAX_AGE_SECONDS;
+}
+
+static int recent_forwarded(void)
+{
+    return recent_timestamp(&last_forwarded_seconds);
+}
+
+static int recent_worker_tick(void)
+{
+    return recent_timestamp(&last_worker_tick_seconds);
 }
 
 /* No environment override is present in a production build. */
@@ -221,7 +243,8 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
     if (used != sizeof(QUERY_PREFIX) - 1 + NONCE_LEN + 1 ||
         request[used - 1] != '\n' ||
         (memcmp(request, QUERY_PREFIX, sizeof(QUERY_PREFIX) - 1) != 0 &&
-         memcmp(request, FLOW_PREFIX, sizeof(FLOW_PREFIX) - 1) != 0)) {
+         memcmp(request, FLOW_PREFIX, sizeof(FLOW_PREFIX) - 1) != 0 &&
+         memcmp(request, LOCAL_PREFIX, sizeof(LOCAL_PREFIX) - 1) != 0)) {
         close(client);
         return;
     }
@@ -232,11 +255,19 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
     {
         const char *nonce = request + sizeof(QUERY_PREFIX) - 1;
         int flow = memcmp(request, FLOW_PREFIX, sizeof(FLOW_PREFIX) - 1) == 0;
-        int n = snprintf(response, sizeof(response), "%s%s %s\n",
-                         flow ? FLOW_PREFIX : QUERY_PREFIX, nonce,
-                         flow ? (recent_forwarded() ? "FORWARDED" : "UNKNOWN") :
-                         (business_components_ready(nonce, queue, devices) ?
-                          "READY" : "NOT_READY"));
+        int local = memcmp(request, LOCAL_PREFIX, sizeof(LOCAL_PREFIX) - 1) == 0;
+        const char *prefix = flow ? FLOW_PREFIX : (local ? LOCAL_PREFIX : QUERY_PREFIX);
+        const char *verdict;
+        int n;
+        if (flow) {
+            verdict = recent_forwarded() ? "FORWARDED" : "UNKNOWN";
+        } else if (local) {
+            verdict = (business_components_ready(nonce, queue, devices) &&
+                       recent_worker_tick()) ? "LOCAL_OK" : "STALLED";
+        } else {
+            verdict = business_components_ready(nonce, queue, devices) ? "READY" : "NOT_READY";
+        }
+        n = snprintf(response, sizeof(response), "%s%s %s\n", prefix, nonce, verdict);
         if (n > 0 && (size_t)n < sizeof(response))
             (void)send(client, response, (size_t)n, MSG_NOSIGNAL | MSG_DONTWAIT);
     }

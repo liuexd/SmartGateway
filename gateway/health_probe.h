@@ -21,5 +21,7 @@ void gateway_health_listener_close(gateway_health_listener_t *listener);
 
 /* Diagnostic only: a successful transport send is not a remote receipt. */
 void gateway_health_observe_forwarded(const unsigned char *data, size_t length);
+/* Diagnostic only: server_link loop heartbeat (not external receipt). */
+void gateway_health_observe_worker_tick(void);
 
 #endif

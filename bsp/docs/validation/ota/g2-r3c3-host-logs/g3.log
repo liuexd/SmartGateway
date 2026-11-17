@@ -1,0 +1,7 @@
+test_kernel_baseline_vs_trimmed_metrics_and_constraints (tests.test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_kernel_baseline_vs_trimmed_metrics_and_constraints) ... ok
+test_rootfs_trimmed_image_contents_and_bounds (tests.test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_rootfs_trimmed_image_contents_and_bounds) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.118s
+
+OK

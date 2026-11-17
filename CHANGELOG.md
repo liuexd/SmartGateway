@@ -6,6 +6,12 @@
 - 当前 BSP 系统扩展分支：`feature/imx6ull-system-ab-ota`
 - 当前文档体系：按 system-ab / reference / validation / archive 分类
 
+## G2-R3C — 主机端可信确认全链闭环与 N09/N10 通过（HOST-ACCEPTED，未写板）
+
+- **完整可信确认链路：** 新增 [r3c_policy.{h,c}](bsp/apps/boot_ab/r3c_policy.c)、[r3c_txn.{h,c}](bsp/apps/boot_ab/r3c_txn.c) 与 [r3c_coordinator.{h,c}](bsp/apps/boot_ab/r3c_coordinator.c)，并将生产 [sgw_bootctl.c](bsp/apps/boot_ab/sgw_bootctl.c) `confirm` 接入统一持锁协调器（`.ota.lock` + `.sgw-transaction.lock`）：覆盖共享 DATA 槽位/保留扇区重叠校验与写入-`fsync`-读回验证、RSA/SHA-256 事务 `VERIFIED -> WRITTEN -> PENDING -> CONFIRMING -> CONFIRMED`（`consumed=1` 抗重放）、`boot_id`/`bootcount` 绑定与多轮稳定采样、及 `fw_env` 写后读回校验。
+- **Gateway 机制与策略解耦：** [gateway/server_link.c](gateway/server_link.c) 与 [gateway/health_probe.c](gateway/health_probe.c) 新增工作线程原子心跳与 `SGW-LOCAL/1` 本地健康检查；通过根/属主受保护策略 `r3c-policy.conf` 解耦 `strict_forward` 与 `controlled_local` + `allow_external_degraded` 策略（默认严格 Fail-Closed，零上游垃圾流量）。
+- **N09 / N10 主机端全链验收（`HOST-ACCEPTED`）：** 新增 [tests/test_g2r3c_n09_n10.py](tests/test_g2r3c_n09_n10.py)（4/4 OK）与 `r3c_data_exclusion_test`（PASS），全仓主机回归与 ARM 交叉编译全部通过（详见证据 [G2-R3C-closed-loop-host-validation.md](bsp/docs/validation/ota/G2-R3C-closed-loop-host-validation.md)）；开发板 eMMC、真实块设备挂点及 Watchdog 真机验证仍处于 `BOARD-PENDING`。
+
 ## G3-0 & G3 — Linux 4.9.88 内核与 Buildroot 2020.02 RootFS 裁剪定制（HOST-TESTED，未写板）
 
 - **G3-0 裁剪前基线与 G3 内核/DTS 裁剪：** 新增隔离构建脚本 [bsp/kernel/build_kernel_g3.sh](bsp/kernel/build_kernel_g3.sh)、DTS CMA 裁剪补丁 [bsp/kernel/patches/0001-dts-trim-cma-from-320m-to-32m.patch](bsp/kernel/patches/0001-dts-trim-cma-from-320m-to-32m.patch)（`linux,cma` `320 MiB -> 32 MiB`，释放 `288 MiB`）及内核配置片段 [bsp/kernel/g3_trimmed.fragment](bsp/kernel/g3_trimmed.fragment)（保留全部 BSP 驱动、`ap3216@1e`、ConfigFS ADB、FEC/RTL8723BU WiFi、eMMC/ext4、WDOG1 与 `perf` 钩子）。实测 `zImage` 由 `8,873,360 B` 降至 `4,848,520 B`（`-45.4%`），`vmlinux` `text+data+bss` 降至 `9,365,578 B`（`-49.5%`），模块体积由 `3,304,232 B` 降至 `1,131,700 B`（`-65.7%`），5 个外部 `.ko` 均兼容编出。

@@ -131,6 +131,8 @@ void *server_link_worker(void *arg)
         int queue_result;
         int sent_message =0;
 
+        gateway_health_observe_worker_tick();
+
         /*
          * -------------------------------------------------
          * 1. 尝试从 upstream queue 取一条消息。

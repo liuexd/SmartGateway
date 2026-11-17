@@ -1,0 +1,11 @@
+test_crc16             PASS
+test_frame             PASS
+test_frame_parser      PASS
+test_line_parser       PASS
+test_message_json      PASS
+test_message_queue     PASS
+test_node_store        PASS
+test_device_manager    PASS
+test_command_manager   PASS
+test_tcp_send_timeout  PASS
+全部单元测试通过

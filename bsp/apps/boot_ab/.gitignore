@@ -12,3 +12,5 @@ health_network_test
 r3c_binding_test
 r3c_probe_cli
 r3c_bundle_cli
+r3c_confirm_harness
+r3c_data_exclusion_test

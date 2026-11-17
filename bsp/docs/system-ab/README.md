@@ -35,6 +35,8 @@ cat /tmp/sgw-g0-readonly-inventory.txt
 
 [G2-R3C DATA 与可信事务设计草案](09-g2-r3c-data-and-trust-design.md)及[主机增量报告](../validation/ota/G2-R3C-host-increment.md)：只读 DATA 前置、应用 OTA 状态检查和事务字段比较；完整可信确认仍 BLOCKED。
 
+[G2-R3C 主机端闭环验收（HOST-ACCEPTED）](../validation/ota/G2-R3C-closed-loop-host-validation.md)：共享 DATA 槽位排重与持久性校验、完整签名事务状态机、Gateway 机制/策略解耦及 N09/N10 端到端闭环（板端仍 BLOCKED）。
+
 [G2-R3B 主机增量验收](../validation/ota/G2-R3B-trusted-health-integration.md)：本地组件探针、设备与网络诊断、原始日志及尚未完成的 DATA/可信事务；HOST-ACCEPTED 和板端放行均为 BLOCKED。
 
 [只读诊断、健康模型与未关闭事项](../validation/ota/G2-R3-health-agent.md)：必需检查项、Supervisor 身份核验、DATA/事务缺口与测试边界。生产确认仍关闭。

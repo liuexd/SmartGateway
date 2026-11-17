@@ -138,10 +138,12 @@ static int find_root_mount_info(const char *mounts_path,
     return 0;
 }
 
-int ab_detect_running_slot(const ab_health_cfg_t *cfg,
-                           ab_slot_t *out_slot,
-                           char *errbuf,
-                           size_t errlen)
+int ab_detect_running_slot_full(const ab_health_cfg_t *cfg,
+                                const char *mountinfo_path,
+                                int skip_blk_identity,
+                                ab_slot_t *out_slot,
+                                char *errbuf,
+                                size_t errlen)
 {
     ab_health_cfg_t effective;
     char cmdline[1024];
@@ -197,6 +199,7 @@ int ab_detect_running_slot(const ab_health_cfg_t *cfg,
         return -1;
     }
 
+    if (!skip_blk_identity) {
     /*
      * cmdline describes boot intent.  The VFS root device and mountinfo are
      * authoritative for what is actually mounted.  Reject overlays, tmpfs,
@@ -216,7 +219,7 @@ int ab_detect_running_slot(const ab_health_cfg_t *cfg,
             set_err(errbuf, errlen, "actual root device does not match requested slot");
             return -1;
         }
-        fp = fopen("/proc/self/mountinfo", "r");
+        fp = fopen((mountinfo_path && mountinfo_path[0]) ? mountinfo_path : "/proc/self/mountinfo", "r");
         if (!fp) {
             set_err(errbuf, errlen, "cannot read root mount identity");
             return -1;
@@ -237,8 +240,28 @@ int ab_detect_running_slot(const ab_health_cfg_t *cfg,
         }
     }
 
+    }
+
     *out_slot = cmdline_slot;
     return 0;
+}
+
+int ab_detect_running_slot_with_mountinfo(const ab_health_cfg_t *cfg,
+                                          const char *mountinfo_path,
+                                          ab_slot_t *out_slot,
+                                          char *errbuf,
+                                          size_t errlen)
+{
+    return ab_detect_running_slot_full(cfg, mountinfo_path, 0, out_slot, errbuf, errlen);
+}
+
+int ab_detect_running_slot(const ab_health_cfg_t *cfg,
+                           ab_slot_t *out_slot,
+                           char *errbuf,
+                           size_t errlen)
+{
+    return ab_detect_running_slot_with_mountinfo(cfg, "/proc/self/mountinfo",
+                                               out_slot, errbuf, errlen);
 }
 
 static int check_sysroot_file(const char *prefix, const char *relpath, char *errbuf, size_t errlen)

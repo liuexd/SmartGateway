@@ -29,12 +29,25 @@ int ab_detect_running_slot(const ab_health_cfg_t *cfg,
                            char *errbuf,
                            size_t errlen);
 
+int ab_detect_running_slot_with_mountinfo(const ab_health_cfg_t *cfg,
+                                          const char *mountinfo_path,
+                                          ab_slot_t *out_slot,
+                                          char *errbuf,
+                                          size_t errlen);
+
 int ab_verify_system_health(const ab_health_cfg_t *cfg,
                             const ab_env_t *env,
                             ab_slot_t *out_running_slot,
                             unsigned long long *out_supervisor_pid,
                             char *errbuf,
                             size_t errlen);
+
+int ab_detect_running_slot_full(const ab_health_cfg_t *cfg,
+                                const char *mountinfo_path,
+                                int skip_blk_identity,
+                                ab_slot_t *out_slot,
+                                char *errbuf,
+                                size_t errlen);
 
 #ifdef __cplusplus
 }
