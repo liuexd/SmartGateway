@@ -1,0 +1,139 @@
+make: Entering directory '/tmp/sgw-r3c-nzNYvJ/repo/bsp/apps/service_supervisor'
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I../../../common -I. \
+	tests/service_supervisor_test.c \
+	service_supervisor.c \
+	../../../common/service_ipc.c \
+	-o service_supervisor_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I../../../common \
+	../../../common/service_ipc_test.c \
+	../../../common/service_ipc.c \
+	-o service_ipc_test
+== IPC 协议测试 ==
+== service_ipc 协议测试 ==
+
+PASS: 请求编码成功
+PASS: 请求编码内容正确
+PASS: 请求解码成功
+PASS: 请求解码一致
+PASS: 请求编码成功
+PASS: 请求编码内容正确
+PASS: 请求解码成功
+PASS: 请求解码一致
+PASS: 请求编码成功
+PASS: 请求编码内容正确
+PASS: 请求解码成功
+PASS: 请求解码一致
+PASS: 请求编码成功
+PASS: 请求编码内容正确
+PASS: 请求解码成功
+PASS: 请求解码一致
+
+PASS: 接受 \r\n
+PASS: 接受前导空格
+PASS: 接受无换行
+
+PASS: 拒绝空串
+PASS: 拒绝未知命令
+PASS: 拒绝前缀匹配
+PASS: 拒绝超长输入
+PASS: 拒绝多余参数
+PASS: 拒绝 STOP 带参数
+
+PASS: 响应编码成功
+PASS: 响应解码成功
+PASS: 响应 result 一致
+PASS: 响应 pid 一致
+PASS: 响应 starttime 一致
+PASS: 响应 detail 一致
+
+PASS: 编码含换行的 detail 成功
+PASS: 换行被压缩为空格
+PASS: 整体只有结尾一个换行
+
+PASS: 空 detail 编码成功
+PASS: 空 detail 解码成功
+PASS: 空 detail 结果为 NOT_RUNNING
+PASS: 空 detail 为空串
+
+PASS: 拒绝空响应
+PASS: 拒绝未知 result
+PASS: 拒绝缺字段
+PASS: 拒绝非数字 pid
+PASS: 拒绝负 pid
+PASS: 拒绝溢出的 starttime
+PASS: 拒绝非数字 starttime
+
+PASS: 路径生成成功
+PASS: 路径内容正确
+PASS: 路径截断时报错
+PASS: 空目录名报错
+
+PASS: 创建监听 socket
+PASS: socket 文件存在
+PASS: socket 权限为 0600
+PASS: 重复绑定被拒绝
+
+PASS: 创建陈旧 socket 文件
+PASS: 陈旧 socket 被自动清理并重建
+
+PASS: 并发绑定：恰好一个成功
+PASS: 并发绑定：其余均报告 EADDRINUSE
+PASS: 并发绑定：无异常退出
+
+检查项: 58, 失败: 0
+结果: PASS
+
+== supervisor 单元测试 ==
+FAIL: executable must be an absolute path
+FAIL: config has no executable entry: /tmp/suptest_cfgrel_Jb32Wx/test.conf
+FAIL: invalid port
+FAIL: invalid port
+== service_supervisor 单元测试 ==
+
+-- 状态查询 --
+PASS: 无 pidfile 时查询成功
+PASS: 无 pidfile 判为未运行
+PASS: 能读到真实进程 starttime
+PASS: 真实进程查询成功
+PASS: 真实进程判为运行
+PASS: pid 正确
+PASS: starttime 正确
+PASS: 前置：进程已进入僵尸态
+PASS: 僵尸查询成功
+PASS: 僵尸判为未运行（关键） (进程确实是 Z 状态)
+PASS: pid 复用场景查询成功
+PASS: starttime 不匹配判为未运行
+PASS: 进程本身未被影响
+PASS: 损坏 pidfile #1 被拒绝
+PASS: 损坏 pidfile #2 被拒绝 (not-a-pid)
+PASS: 损坏 pidfile #3 被拒绝 (123)
+PASS: 损坏 pidfile #4 被拒绝 (-5 100
+)
+PASS: 损坏 pidfile #5 被拒绝 (0 100
+)
+PASS: 损坏 pidfile #6 被拒绝 (123 abc
+)
+PASS: 损坏 pidfile #7 被拒绝 (123 0
+)
+PASS: 损坏 pidfile #8 被拒绝 (123 999999999999999999999999
+)
+
+-- 配置解析 --
+PASS: 不存在的配置报错
+PASS: 相对 executable 被拒绝
+PASS: 缺少 executable 被拒绝
+PASS: 合法配置加载成功
+PASS: executable 正确
+PASS: server 覆盖生效
+PASS: port 使用默认值
+PASS: baud 使用默认值
+PASS: stop_timeout_ms 有默认值
+PASS: 非法 port 被拒绝
+PASS: 非数字 port 被拒绝
+PASS: 首次写默认配置成功
+PASS: 重复写被拒绝（不覆盖）
+PASS: 原配置未被修改
+
+检查项: 35, 失败: 0
+结果: PASS
+make: Leaving directory '/tmp/sgw-r3c-nzNYvJ/repo/bsp/apps/service_supervisor'

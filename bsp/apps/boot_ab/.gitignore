@@ -9,3 +9,5 @@ gateway_probe_cli
 system_health_test
 health_devices_test
 health_network_test
+r3c_binding_test
+r3c_probe_cli

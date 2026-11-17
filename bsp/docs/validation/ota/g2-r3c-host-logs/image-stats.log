@@ -1,0 +1,54 @@
+debugfs 1.47.2 (1-Jan-2025)
+Filesystem volume name:   SGW_R3C_FIXTURE
+Last mounted on:          <not available>
+Filesystem UUID:          ddc4b7e7-4580-4b04-9050-565f9cb9563e
+Filesystem magic number:  0xEF53
+Filesystem revision #:    1 (dynamic)
+Filesystem features:      has_journal ext_attr resize_inode dir_index orphan_file filetype extent 64bit flex_bg metadata_csum_seed sparse_super large_file huge_file dir_nlink extra_isize metadata_csum
+Filesystem flags:         signed_directory_hash
+Default mount options:    user_xattr acl
+Filesystem state:         clean
+Errors behavior:          Continue
+Filesystem OS type:       Linux
+Inode count:              4096
+Block count:              4096
+Reserved block count:     204
+Overhead clusters:        1285
+Free blocks:              2773
+Free inodes:              4084
+First block:              0
+Block size:               4096
+Fragment size:            4096
+Group descriptor size:    64
+Reserved GDT blocks:      1
+Blocks per group:         32768
+Fragments per group:      32768
+Inodes per group:         4096
+Inode blocks per group:   256
+Flex block group size:    16
+Filesystem created:       Tue Nov 17 14:40:39 2026
+Last mount time:          n/a
+Last write time:          Tue Nov 17 14:40:39 2026
+Mount count:              0
+Maximum mount count:      -1
+Last checked:             Tue Nov 17 14:40:39 2026
+Check interval:           0 (<none>)
+Lifetime writes:          145 kB
+Reserved blocks uid:      0 (user root)
+Reserved blocks gid:      0 (group root)
+First inode:              11
+Inode size:               256
+Required extra isize:     32
+Desired extra isize:      32
+Journal inode:            8
+Default directory hash:   half_md4
+Directory Hash Seed:      acb1f472-42dd-4920-812b-30afa913980c
+Journal backup:           inode blocks
+Checksum type:            crc32c
+Checksum:                 0x1371e81e
+Checksum seed:            0xb619edee
+Orphan file inode:        12
+Directories:              2
+ Group  0: block bitmap at 3, inode bitmap at 19, inode table at 35
+           2773 free blocks, 4084 free inodes, 2 used directories, 4084 unused inodes
+           [Checksum 0xc63f]

@@ -1,0 +1,5 @@
+Test upstream port: 39795
+Gateway PID: 1098801
+Probe sent: node=OTA01, seq=512712815
+Gateway exit code: 0
+PASS: OTA L2 business health

@@ -1,0 +1,85 @@
+make: Entering directory '/tmp/sgw-r3c-nzNYvJ/repo/bsp/apps/boot_ab'
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. tests/ab_state_test.c ab_state.c -o ab_state_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. tests/fw_env_backend_test.c fw_env_backend.c ab_state.c -o fw_env_backend_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/ab_health_test.c ab_health.c ab_state.c ../../../common/service_ipc.c -o ab_health_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/system_health_test.c system_health.c ab_state.c -o system_health_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/health_devices_test.c health_devices.c -o health_devices_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/health_network_test.c health_network.c health_supervisor.c ../../../common/service_ipc.c -o health_network_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. tests/r3c_binding_test.c r3c_binding.c -o r3c_binding_test
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../ota_agent tests/r3c_probe_cli.c r3c_data.c ../ota_agent/ota_state_io.c ../ota_agent/ota_state.c ../ota_agent/ota_oplog.c -ljson-c -o r3c_probe_cli
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/supervisor_probe_cli.c health_supervisor.c ../../../common/service_ipc.c -o supervisor_probe_cli
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common tests/gateway_probe_cli.c health_gateway.c health_supervisor.c ../../../common/service_ipc.c -o gateway_probe_cli
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common sgw_bootctl.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c -o sgw_bootctl
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common sgw_watchdog_guard.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c -o sgw_watchdog_guard
+gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c -o sgw_system_health
+ab_state_test: PASS=100 FAIL=0
+fw_env_backend_test: PASS=31 FAIL=0
+ab_health_test: FAIL=0; unverified roots and missing health rejected
+system_health_test: checks=195 failures=0
+health_devices_test: checks=21 failures=0
+health_network_test: checks=5 failures=0
+r3c_binding_test: checks=16 failures=0
+test_incomplete_corrupt_or_untrusted_app_state (tests.test_g2r3c_data.DataTests.test_incomplete_corrupt_or_untrusted_app_state) ... ok
+test_lock_is_required_and_busy_fails_without_creating_it (tests.test_g2r3c_data.DataTests.test_lock_is_required_and_busy_fails_without_creating_it) ... ok
+test_missing_release_and_symlink_state_rejected (tests.test_g2r3c_data.DataTests.test_missing_release_and_symlink_state_rejected) ... ok
+test_mountinfo_identity_and_mode (tests.test_g2r3c_data.DataTests.test_mountinfo_identity_and_mode) ... ok
+test_real_root_directory_or_character_device_is_not_data (tests.test_g2r3c_data.DataTests.test_real_root_directory_or_character_device_is_not_data) ... ok
+test_settled_confirmed_and_rolled_back (tests.test_g2r3c_data.DataTests.test_settled_confirmed_and_rolled_back) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.113s
+
+OK
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror \
+	-mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm \
+	--sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
+	-I. -I../../../common \
+	sgw_bootctl.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
+	-o ../../../build/arm-ab/sgw_bootctl
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror \
+	-mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm \
+	--sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
+	-I. -I../../../common \
+	sgw_watchdog_guard.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
+	-o ../../../build/arm-ab/sgw_watchdog_guard
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
+	-I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
+	-o ../../../build/arm-ab/sgw_system_health
+-rwxrwxr-x 1 ubuntu ubuntu 82K Nov 17 14:35 ../../../build/arm-ab/sgw_bootctl
+-rwxrwxr-x 1 ubuntu ubuntu 96K Nov 17 14:35 ../../../build/arm-ab/sgw_watchdog_guard
+== sgw_bootctl ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.28
+== sgw_watchdog_guard ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.28
+== sgw_system_health ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.28
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot -I. -I../ota_agent \
+	tests/r3c_probe_cli.c r3c_data.c ../ota_agent/ota_state_io.c ../ota_agent/ota_state.c ../ota_agent/ota_oplog.c -ljson-c -o ../../../build/arm-ab/r3c-probe-test
+/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot -I. \
+	tests/r3c_binding_test.c r3c_binding.c -o ../../../build/arm-ab/r3c-binding-test
+== r3c-probe-test ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libjson-c.so.4]
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.7
+== r3c-binding-test ==
+  Class:                             ELF32
+  Type:                              EXEC (Executable file)
+  Machine:                           ARM
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+GLIBC_2.4
+make: Leaving directory '/tmp/sgw-r3c-nzNYvJ/repo/bsp/apps/boot_ab'

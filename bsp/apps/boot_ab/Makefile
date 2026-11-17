@@ -2,6 +2,7 @@ CC := gcc
 CFLAGS := -std=gnu11 -O0 -g -Wall -Wextra -Werror
 
 COMMON_DIR := ../../../common
+OTA_DIR := ../ota_agent
 INC_FLAGS := -I. -I$(COMMON_DIR)
 
 COMMON_SRCS := ab_state.c ab_health.c fw_env_backend.c $(COMMON_DIR)/service_ipc.c
@@ -56,13 +57,15 @@ arm-check: arm
 		$(ARM_CROSS)readelf --version-info $(ARM_BUILD_DIR)/$$bin | grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1 || true; \
 	done
 
-test: ab_state_test fw_env_backend_test ab_health_test system_health_test health_devices_test health_network_test supervisor_probe_cli gateway_probe_cli sgw_bootctl sgw_watchdog_guard sgw_system_health
+test: ab_state_test fw_env_backend_test ab_health_test system_health_test health_devices_test health_network_test r3c_binding_test r3c_probe_cli supervisor_probe_cli gateway_probe_cli sgw_bootctl sgw_watchdog_guard sgw_system_health
 	@timeout $(TEST_TIMEOUT) ./ab_state_test
 	@timeout $(TEST_TIMEOUT) ./fw_env_backend_test
 	@timeout $(TEST_TIMEOUT) ./ab_health_test
 	@timeout $(TEST_TIMEOUT) ./system_health_test
 	@timeout $(TEST_TIMEOUT) ./health_devices_test
 	@timeout $(TEST_TIMEOUT) ./health_network_test
+	@timeout $(TEST_TIMEOUT) ./r3c_binding_test
+	@cd ../../.. && timeout $(TEST_TIMEOUT) python3 -m unittest -v tests.test_g2r3c_data
 
 ab_state_test: tests/ab_state_test.c ab_state.c ab_state.h
 	$(CC) $(CFLAGS) -I. tests/ab_state_test.c ab_state.c -o $@
@@ -88,8 +91,28 @@ supervisor_probe_cli: tests/supervisor_probe_cli.c health_supervisor.c health_su
 gateway_probe_cli: tests/gateway_probe_cli.c health_gateway.c health_gateway.h health_supervisor.c health_supervisor.h $(COMMON_DIR)/service_ipc.c $(COMMON_DIR)/service_ipc.h
 	$(CC) $(CFLAGS) $(INC_FLAGS) tests/gateway_probe_cli.c health_gateway.c health_supervisor.c $(COMMON_DIR)/service_ipc.c -o $@
 
+r3c_binding_test: tests/r3c_binding_test.c r3c_binding.c r3c_binding.h
+	$(CC) $(CFLAGS) -I. tests/r3c_binding_test.c r3c_binding.c -o $@
+
+r3c_probe_cli: tests/r3c_probe_cli.c r3c_data.c r3c_data.h $(OTA_DIR)/ota_state_io.c $(OTA_DIR)/ota_state.c $(OTA_DIR)/ota_oplog.c
+	$(CC) $(CFLAGS) -I. -I$(OTA_DIR) tests/r3c_probe_cli.c r3c_data.c $(OTA_DIR)/ota_state_io.c $(OTA_DIR)/ota_state.c $(OTA_DIR)/ota_oplog.c -ljson-c -o $@
+
+# Test-only ARM artifact; no production component or confirmation integration.
+arm-r3c-check:
+	@mkdir -p $(ARM_BUILD_DIR)
+	$(ARM_CC) $(CFLAGS) $(ARM_ARCH_FLAGS) --sysroot=$(ARM_SYSROOT) -I. -I$(OTA_DIR) \
+		tests/r3c_probe_cli.c r3c_data.c $(OTA_DIR)/ota_state_io.c $(OTA_DIR)/ota_state.c $(OTA_DIR)/ota_oplog.c -ljson-c -o $(ARM_BUILD_DIR)/r3c-probe-test
+	$(ARM_CC) $(CFLAGS) $(ARM_ARCH_FLAGS) --sysroot=$(ARM_SYSROOT) -I. \
+		tests/r3c_binding_test.c r3c_binding.c -o $(ARM_BUILD_DIR)/r3c-binding-test
+	@for bin in r3c-probe-test r3c-binding-test; do \
+		echo "== $$bin =="; \
+		$(ARM_CROSS)readelf -h $(ARM_BUILD_DIR)/$$bin | grep -E "Class|Machine|Type"; \
+		$(ARM_CROSS)readelf -d $(ARM_BUILD_DIR)/$$bin | grep NEEDED || true; \
+		$(ARM_CROSS)readelf --version-info $(ARM_BUILD_DIR)/$$bin | grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1 || true; \
+	done
+
 clean:
-	rm -f sgw_bootctl sgw_watchdog_guard sgw_system_health supervisor_probe_cli gateway_probe_cli ab_state_test fw_env_backend_test ab_health_test system_health_test health_devices_test health_network_test
+	rm -f sgw_bootctl sgw_watchdog_guard sgw_system_health supervisor_probe_cli gateway_probe_cli ab_state_test fw_env_backend_test ab_health_test system_health_test health_devices_test health_network_test r3c_binding_test r3c_probe_cli
 
 clean-arm:
 	rm -rf $(ARM_BUILD_DIR)
