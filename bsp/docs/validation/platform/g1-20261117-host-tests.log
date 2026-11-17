@@ -1,0 +1,28 @@
+test_block_readonly_flag_is_required (tests.test_g1_backup_guard.TopologyTests.test_block_readonly_flag_is_required) ... ok
+test_copy_checks_full_length_and_readback (tests.test_g1_backup_guard.TopologyTests.test_copy_checks_full_length_and_readback) ... ok
+test_destination_on_emmc_rejected_before_directory_creation (tests.test_g1_backup_guard.TopologyTests.test_destination_on_emmc_rejected_before_directory_creation) ... ok
+test_device_mapper_to_emmc_is_rejected (tests.test_g1_backup_guard.TopologyTests.test_device_mapper_to_emmc_is_rejected) ... ok
+test_direct_and_uuid_alias_have_same_underlying_identity (tests.test_g1_backup_guard.TopologyTests.test_direct_and_uuid_alias_have_same_underlying_identity) ... ok
+test_malformed_mountinfo_rejected (tests.test_g1_backup_guard.TopologyTests.test_malformed_mountinfo_rejected) ... ok
+test_missing_p3_aborts_validation (tests.test_g1_backup_guard.TopologyTests.test_missing_p3_aborts_validation) ... ok
+test_p2_rw_at_nonroot_mount_fails (tests.test_g1_backup_guard.TopologyTests.test_p2_rw_at_nonroot_mount_fails) ... ok
+test_read_only_emmc_and_external_sd_allowed (tests.test_g1_backup_guard.TopologyTests.test_read_only_emmc_and_external_sd_allowed) ... ok
+test_rejects_existing_target_and_missing_parent (tests.test_g1_backup_guard.TopologyTests.test_rejects_existing_target_and_missing_parent) ... ok
+test_unknown_and_overlay_fail_closed (tests.test_g1_backup_guard.TopologyTests.test_unknown_and_overlay_fail_closed) ... ok
+test_usb_functionfs_does_not_hide_block_device_writes (tests.test_g1_backup_guard.TopologyTests.test_usb_functionfs_does_not_hide_block_device_writes) ... ok
+test_complete_archive_and_ordered_digest (tests.test_g1_verify_segments.BackupSegmentsTests.test_complete_archive_and_ordered_digest) ... ok
+test_duplicate_manifest_and_symlink_rejected (tests.test_g1_verify_segments.BackupSegmentsTests.test_duplicate_manifest_and_symlink_rejected) ... ok
+test_tamper_and_missing_segments_rejected (tests.test_g1_verify_segments.BackupSegmentsTests.test_tamper_and_missing_segments_rejected) ... ok
+test_wrong_partition_table_rejected_even_if_hash_updated (tests.test_g1_verify_segments.BackupSegmentsTests.test_wrong_partition_table_rejected_even_if_hash_updated) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 0.025s
+
+OK
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+OK emmc-p2.img (1024 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)

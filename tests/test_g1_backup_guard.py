@@ -74,6 +74,19 @@ class TopologyTests(unittest.TestCase):
         with self.assertRaises(g1.SafetyError):
             g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
 
+    def test_usb_functionfs_does_not_hide_block_device_writes(self):
+        mounts = g1.parse_mountinfo([
+            "42 1 179:10 / /mnt/p2 ro - ext4 /dev/root ro",
+            "43 1 0:20 / /dev/usb-ffs/adb rw - functionfs adb rw",
+        ])
+        g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
+        # The same filesystem name does not excuse an unresolved block identity.
+        mounts = g1.parse_mountinfo([
+            "43 1 179:99 / /dev/usb-ffs/adb rw - functionfs adb rw",
+        ])
+        with self.assertRaises(g1.SafetyError):
+            g1.assert_no_rw_emmc(mounts, self.emmc, self.sys)
+
     def test_device_mapper_to_emmc_is_rejected(self):
         dm = self.sys / "devices/virtual/block/dm-0"
         (dm / "slaves").mkdir(parents=True)

@@ -26,7 +26,7 @@ BOOT_SECTORS = 8192
 VIRTUAL_FS = {"proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup",
               "cgroup2", "pstore", "securityfs", "debugfs", "tracefs",
               "configfs", "mqueue", "hugetlbfs", "bpf", "fusectl",
-              "autofs", "nsfs", "efivarfs", "binfmt_misc"}
+              "autofs", "nsfs", "efivarfs", "binfmt_misc", "functionfs"}
 
 
 class SafetyError(Exception):
