@@ -209,24 +209,7 @@ chmod 600 "$TARGET_DIR/opt/smartgateway/service.conf"
 if [ -x "$REPO_DIR/build/arm-s5/service_supervisor" ]; then
     install -m 0700 "$REPO_DIR/build/arm-s5/service_supervisor" "$TARGET_DIR/opt/smartgateway/bin/service_supervisor"
 fi
-cat > "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run" <<'SREOF'
-#!/bin/sh
-trap 'exit 0' TERM INT
-ROOT="${SMARTGATEWAY_ROOT:-/opt/smartgateway}"
-RUN_DIR="$ROOT/run"
-if [ -n "${SMARTGATEWAY_STOP_FLAG:-}" ]; then
-    STOP_FLAG="$SMARTGATEWAY_STOP_FLAG"
-elif [ "$ROOT" = "/opt/smartgateway" ] && [ -d /run ] && [ -w /run ]; then
-    STOP_FLAG="/run/smartgateway.disabled"
-else
-    STOP_FLAG="$RUN_DIR/supervisor.disabled"
-fi
-while [ -f "$STOP_FLAG" ]; do
-    sleep 1
-done
-exec "$ROOT/bin/service_supervisor" run --root "$ROOT" >> "$ROOT/logs/supervisor.log" 2>&1
-SREOF
-chmod 0700 "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run"
+install -m 0700 "$REPO_DIR/bsp/apps/service_supervisor/service_supervisor_run" "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run"
 if [ -x "$REPO_DIR/build/arm-d25/ota_agent" ]; then
     install -m 0700 "$REPO_DIR/build/arm-d25/ota_agent" "$TARGET_DIR/opt/smartgateway/bin/ota_agent"
 fi

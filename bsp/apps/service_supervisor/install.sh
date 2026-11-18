@@ -1,67 +1,32 @@
 #!/bin/sh
 #
-# install.sh - 把 Service Supervisor 安装到板端（G4a + G4b）
+# install.sh - 安装 Service Supervisor（与 G3 镜像构建脚本统一使用 service_supervisor_run）
 #
-# 用法（在板端执行）：
-#   sh install.sh /opt/smartgateway
+# 用法：
+#   sh install.sh [/opt/smartgateway]
 #
-# 它做四件事：
-#   1. 创建目录结构
-#   2. 安装 init 脚本
-#   3. **向 /etc/inittab 注册 respawn 条目**（G4b）
-#   4. 触发现有实例按新配置重新拉起
-#
-# ============================================================
-# 关于 G4b 与 respawn
-# ============================================================
-#
-# 问题（S5 遗留 L12）：
-#   S5 只由 rcS 启动一次 supervisor。它崩溃后没有任何机制重拉，
-#   服务消失直到下次重启。这不是"崩溃自愈"。
-#
-# 解决：
-#   在 /etc/inittab 加一行
-#       ::respawn:/opt/smartgateway/bin/service_supervisor run --root ...
-#   BusyBox init 会在该进程退出后自动重新执行它。
-#
-# 实测确认（板端 i.MX6ULL / BusyBox init）：
-#   - kill -HUP 1 会重载 inittab 并立即应用新条目
-#   - kill -9 掉被 respawn 的进程后，init 会重新拉起（新 pid）
-#   - init 对快速退出的进程有节流（实测约 1 次/秒），
-#     不会因为"启动即崩溃"而把 CPU 烧满
-#
-# ============================================================
-# 为什么必须与 start-stop-daemon 解耦
-# ============================================================
-#
-# respawn 之后，supervisor 由 init fork，不再是 init 脚本
-# fork 的。此时：
-#   - start-stop-daemon --make-pidfile 写出的 pid 无效
-#   - 用 pidfile 判断"是否在运行"会得出错误结论
-# 因此 S99smartgateway 已改为通过 socket 连通性判断，
-# 本脚本也不再生成任何 supervisor pidfile。
-#
-# ============================================================
-# 幂等性
-# ============================================================
-#
-# 本脚本可重复执行：
-#   - 目录创建用 mkdir -p
-#   - inittab 条目先删除旧的再加，不会重复
-#   - 配置文件不覆盖（保留现场调整）
+# 设计约定：
+#   1. 安装 $ROOT/bin/service_supervisor_run 与 /etc/init.d/S99smartgateway。
+#   2. 若 $INITTAB 已包含统一的 service_supervisor_run respawn 条目（如 G3 签名镜像），
+#      则保持 $INITTAB 只读不改动（绝不生成备份或破坏签名清单摘要）。
+#   3. 仅当 $INITTAB 尚未注册统一 respawn 条目时（如独立/全新环境），才写入统一样式的
+#      sgw0::respawn:...service_supervisor_run（SysV init）或 ::respawn:...（BusyBox init），
+#      且后续 S99smartgateway start/stop 仅通过运行时 $STOP_FLAG 控制，不再修改 $INITTAB。
 #
 set -e
 
 ROOT=${1:-/opt/smartgateway}
 BIN="$ROOT/bin/service_supervisor"
+RUN_WRAPPER="$ROOT/bin/service_supervisor_run"
 RUN_DIR="$ROOT/run"
+SOCK="$RUN_DIR/supervisor.sock"
 LOGS="$ROOT/logs"
 CONF="$ROOT/service.conf"
-INITTAB=/etc/inittab
-INITD=/etc/init.d/S99smartgateway
+INITTAB=${SMARTGATEWAY_INITTAB:-/etc/inittab}
+INITD=${SMARTGATEWAY_INITD:-/etc/init.d/S99smartgateway}
+INIT_PID=${SMARTGATEWAY_INIT_PID:-1}
 RELEASES="$ROOT/releases"
 
-# respawn 条目的标记，用于幂等替换
 MARKER="# smartgateway-supervisor-respawn"
 
 say() { printf '%s\n' "$*"; }
@@ -71,23 +36,19 @@ fail() {
     exit 1
 }
 
-[ "$(id -u)" = "0" ] || fail "must run as root"
+if [ "$INITTAB" = "/etc/inittab" ] || [ "$INITD" = "/etc/init.d/S99smartgateway" ]; then
+    [ "$(id -u)" = "0" ] || fail "must run as root"
+fi
 
 say "== 安装 Service Supervisor 到 $ROOT =="
 
-# ------------------------------------------------------------
 # 1. 目录结构
-# ------------------------------------------------------------
 mkdir -p "$ROOT/bin" "$RUN_DIR" "$LOGS" "$RELEASES"
-
-[ -x "$BIN" ] || fail "$BIN not found; copy the ARM binary first"
+[ -x "$BIN" ] || fail "$BIN not found; copy the binary first"
 [ -d "$RELEASES" ] || fail "cannot create $RELEASES"
-
 say "目录就绪"
 
-# ------------------------------------------------------------
 # 2. 配置（不覆盖已有文件）
-# ------------------------------------------------------------
 if [ -f "$CONF" ]; then
     say "配置已存在，保留：$CONF"
 else
@@ -96,12 +57,16 @@ else
     say "已写出默认配置：$CONF"
 fi
 
-# ------------------------------------------------------------
-# 3. init 脚本
-# ------------------------------------------------------------
+# 3. 安装统一的 S99smartgateway 与 service_supervisor_run
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
+[ -f "$SCRIPT_DIR/service_supervisor_run" ] || fail "找不到 $SCRIPT_DIR/service_supervisor_run"
+cp "$SCRIPT_DIR/service_supervisor_run" "$RUN_WRAPPER"
+chmod 0700 "$RUN_WRAPPER"
+say "已安装 $RUN_WRAPPER"
+
 if [ -f "$SCRIPT_DIR/S99smartgateway" ]; then
+    mkdir -p "$(dirname "$INITD")"
     cp "$SCRIPT_DIR/S99smartgateway" "$INITD"
     chmod 0755 "$INITD"
     say "已安装 $INITD"
@@ -111,97 +76,76 @@ else
     fail "找不到 S99smartgateway（与 install.sh 同目录）"
 fi
 
-# ------------------------------------------------------------
-# 4. inittab respawn 条目（G4b）
-# ------------------------------------------------------------
-#
-# 关键细节：先备份，再就地重写。
-#
-# 不用 `echo >> inittab` 的原因：那会造成重复条目，
-# 而重复的 respawn 会让 init 拉起两个 supervisor
-# （第二个因 socket 冲突退出，于是陷入"退出-重拉"循环）。
-#
-if [ -f "$INITTAB" ]; then
-    cp -a "$INITTAB" "$INITTAB.bak.$(date +%s)"
+# 4. 统一 respawn 条目：已固定存在则不改动 $INITTAB（保护签名清单摘要）
+INITTAB_CHANGED=0
+if grep -q ':initdefault:' "$INITTAB" 2>/dev/null; then
+    RESPAWN_PREFIX="sgw0::respawn:"
+else
+    RESPAWN_PREFIX="::respawn:"
 fi
+PROCESS_FIELD="/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $RUN_WRAPPER'"
+UNIFIED_ENTRY="${RESPAWN_PREFIX}${PROCESS_FIELD}"
 
-TMP=$(mktemp)
-
-#
-# 清理旧条目时刻意"宽进"：不只用 MARKER 匹配。
-#
-# 原因（这次踩到了）：早期版本没有 marker 注释，只靠
-# MARKER 过滤会留下旧行，于是 inittab 里同时存在两条 respawn，
-# init 便拉起两个 supervisor —— 第二个因 socket 冲突退出，
-# 然后被反复重拉。
-#
-# 因此这里按"任何指向本 BIN 的 respawn 行"统统删掉，
-# 无论它长什么样、有没有 marker。
-#
-grep -v "$MARKER" "$INITTAB" 2>/dev/null \
-    | grep -v "^::respawn:.*service_supervisor" \
-    > "$TMP" || true
-
-cat >> "$TMP" <<EOF
+if grep -qF "$RUN_WRAPPER" "$INITTAB" 2>/dev/null && \
+   grep -Eq '^[^#]*:respawn:.*service_supervisor_run' "$INITTAB" 2>/dev/null; then
+    say "检测到 $INITTAB 已存在统一 respawn 条目，保持只读不修改"
+else
+    if [ "${#PROCESS_FIELD}" -gt 127 ] && [ "$RESPAWN_PREFIX" = "sgw0::respawn:" ]; then
+        fail "process field exceeds sysvinit 127-char limit (${#PROCESS_FIELD}): $PROCESS_FIELD"
+    fi
+    if [ -f "$INITTAB" ]; then
+        cp -a "$INITTAB" "$INITTAB.bak.$(date +%s)"
+    fi
+    TMP=$(mktemp)
+    if [ -f "$INITTAB" ]; then
+        grep -v "$MARKER" "$INITTAB" 2>/dev/null \
+            | grep -v '^# G4b:' \
+            | grep -Ev '^[^#]*:respawn:.*service_supervisor' \
+            > "$TMP" || true
+    fi
+    cat >> "$TMP" <<EOF
 
 $MARKER
-# G4b：supervisor 崩溃后由 init 自动重新拉起。
-#
-# 实测（BusyBox init / i.MX6ULL）：
-#   kill -HUP 1         -> 立即应用新条目
-#   kill -9 supervisor  -> init 重新执行该命令
-# SMARTGATEWAY_RESPAWN=1 告诉 supervisor 它处于 init 监督下。
-# 在这个模式下，若发现上一代 supervisor 留下的孤儿 Gateway，
-# 它会**领养**而不是拒绝启动 —— 否则 init 会无限重拉一个
-# 必然失败的命令，形成永久重启循环。
-#
-# 为什么要包一层 sh -c：
-#   respawn 直接 exec 命令，没有 shell 解析 "VAR=1 cmd" 或
-#   重定向。不重定向的后果是 supervisor 的启动输出（包括
-#   "adopting orphaned gateway" 这类关键诊断）全部丢失，
-#   排查时看到的是一个空日志文件。
-#
-#   用 "exec" 而不是直接运行：exec 让 sh 被 supervisor 取代，
-#   于是 init 监督的是 supervisor 本身而不是中间那层 sh。
-#   若不 exec，supervisor 崩溃时退出的是 sh，init 仍会重拉，
-#   但 PID 关系与信号传递都多绕一层，容易误判。
-::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $BIN run --root $ROOT >> $LOGS/supervisor.log 2>&1'
+# G4b: init respawns service_supervisor_run automatically (runtime pause via STOP_FLAG).
+$UNIFIED_ENTRY
 EOF
-
-mv "$TMP" "$INITTAB"
-sync
-
-say "已在 $INITTAB 注册 respawn 条目"
-say "（此后由 S99smartgateway start 添加、stop 移除）"
-
-# ------------------------------------------------------------
-# 5. 让新配置立即生效
-# ------------------------------------------------------------
-#
-# 先停掉由 rcS 启动的旧实例，再让 init 通过 respawn 接管。
-#
-# 为什么不直接 kill -HUP 1 就完事：
-#   已经存在的 supervisor 是 rcS 的子进程（父已退出，被 init
-#   收养），HUP 不会改变它的父子关系。必须先停掉，让 respawn
-#   条目从头接管，ppid 才会稳定是 1。
-#
-if [ -S "$RUN_DIR/supervisor.sock" ]; then
-    say "停止已有 supervisor，交给 respawn 接管"
-    "$INITD" stop >/dev/null 2>&1 || true
+    mv "$TMP" "$INITTAB"
+    sync
+    INITTAB_CHANGED=1
+    say "已在 $INITTAB 注册统一 respawn 条目（后续由 S99smartgateway 运行时状态控制）"
 fi
 
-kill -HUP 1 2>/dev/null || fail "cannot signal init"
-sleep 2
+# 5. 让 init 接管（若从旧版直连进程升级则先停旧实例再通过 S99smartgateway start 恢复）
+export SMARTGATEWAY_ROOT="$ROOT"
+export SMARTGATEWAY_INITTAB="$INITTAB"
+export SMARTGATEWAY_INIT_PID="$INIT_PID"
 
-# ------------------------------------------------------------
+if [ "$INITTAB_CHANGED" = "1" ]; then
+    for p in /proc/[0-9]*; do
+        e=$(readlink "$p/exe" 2>/dev/null) || continue
+        case "$e" in
+            */service_supervisor) ;;
+            *) continue ;;
+        esac
+        cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
+        case "$cmd" in
+            *"run --root $ROOT"*)
+                kill -TERM "${p#/proc/}" 2>/dev/null || true
+                ;;
+        esac
+    done
+    sleep 0.5
+    rm -f "$SOCK"
+    kill -HUP "$INIT_PID" 2>/dev/null || fail "cannot signal init ($INIT_PID)"
+fi
+
+"$INITD" start
+
 # 6. 验证
-# ------------------------------------------------------------
 say ""
 say "-- 验证 --"
-
 ok=1
-
-if [ -S "$RUN_DIR/supervisor.sock" ]; then
+if [ -S "$SOCK" ]; then
     say "  OK   supervisor socket 存在"
 else
     say "  FAIL supervisor socket 不存在"
@@ -218,12 +162,6 @@ fi
 if [ "$ok" -eq 1 ]; then
     say ""
     say "安装完成。"
-    say ""
-    say "验证 G4b（崩溃自愈）："
-    say "  1. 找到 supervisor 的 pid："
-    say "     for p in /proc/[0-9]*; do readlink \$p/exe 2>/dev/null | grep -q service_supervisor && echo \${p#/proc/}; done"
-    say "  2. kill -9 <该 pid>，等 1-2 秒"
-    say "  3. $INITD status   # 应重新出现，且 ppid=1"
     exit 0
 fi
 

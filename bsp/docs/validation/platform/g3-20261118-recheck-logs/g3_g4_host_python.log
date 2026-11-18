@@ -98,6 +98,8 @@ test_persistence_failure_never_reports_success (test_g2r3c_signed_bundle.SignedB
 test_signed_package_records_two_distinct_random_ids (test_g2r3c_signed_bundle.SignedBundleTests.test_signed_package_records_two_distinct_random_ids) ... ok
 test_tamper_image_manifest_and_signature_rejected (test_g2r3c_signed_bundle.SignedBundleTests.test_tamper_image_manifest_and_signature_rejected) ... ok
 test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
+test_install_on_pre_pinned_inittab_preserves_signed_digest (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_install_on_pre_pinned_inittab_preserves_signed_digest) ... ok
+test_standalone_install_uses_unified_wrapper_and_stop_start_preserves_inittab (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_standalone_install_uses_unified_wrapper_and_stop_start_preserves_inittab) ... ok
 test_start_refuses_mutating_inittab_when_entry_missing (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_start_refuses_mutating_inittab_when_entry_missing) ... ok
 test_stop_start_crash_recovery_preserve_inittab_digest (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_stop_start_crash_recovery_preserve_inittab_digest) ... ok
 test_kernel_baseline_vs_trimmed_metrics_and_constraints (test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_kernel_baseline_vs_trimmed_metrics_and_constraints) ... ok
@@ -109,7 +111,7 @@ test_reject_bad_signature_corrupt_payload_wrong_board_wrong_slot_and_capacity (t
 test_reject_unsafe_cpio_path_traversal (test_g4_swu_isolated.TestG4SwuIsolated.test_reject_unsafe_cpio_path_traversal) ... ok
 
 ----------------------------------------------------------------------
-Ran 89 tests in 58.845s
+Ran 91 tests in 81.490s
 
 OK
 OK emmc-reserved-pre-p1.bin (512 bytes)
@@ -121,13 +123,13 @@ OK emmc-boot0.img (1024 bytes)
 OK emmc-boot1.img (1024 bytes)
 User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
 Archive consistency only: boot and restoration remain unverified.
-RESTORED emmc-reserved-pre-p1.bin -> /tmp/g1-restore-5l6r0om8/restored.img @ 0 (512 bytes)
-RESTORED emmc-p1.img -> /tmp/g1-restore-5l6r0om8/restored.img @ 512 (1024 bytes)
-RESTORED emmc-p2.img -> /tmp/g1-restore-5l6r0om8/restored.img @ 1536 (1536 bytes)
-RESTORED emmc-p3.img -> /tmp/g1-restore-5l6r0om8/restored.img @ 3072 (512 bytes)
-RESTORED emmc-tail.img -> /tmp/g1-restore-5l6r0om8/restored.img @ 3584 (512 bytes)
-RESTORED emmc-boot0.img -> /tmp/g1-restore-5l6r0om8/boot0.img (1024 bytes)
-RESTORED emmc-boot1.img -> /tmp/g1-restore-5l6r0om8/boot1.img (1024 bytes)
+RESTORED emmc-reserved-pre-p1.bin -> /tmp/g1-restore-it83lb_q/restored.img @ 0 (512 bytes)
+RESTORED emmc-p1.img -> /tmp/g1-restore-it83lb_q/restored.img @ 512 (1024 bytes)
+RESTORED emmc-p2.img -> /tmp/g1-restore-it83lb_q/restored.img @ 1536 (1536 bytes)
+RESTORED emmc-p3.img -> /tmp/g1-restore-it83lb_q/restored.img @ 3072 (512 bytes)
+RESTORED emmc-tail.img -> /tmp/g1-restore-it83lb_q/restored.img @ 3584 (512 bytes)
+RESTORED emmc-boot0.img -> /tmp/g1-restore-it83lb_q/boot0.img (1024 bytes)
+RESTORED emmc-boot1.img -> /tmp/g1-restore-it83lb_q/boot1.img (1024 bytes)
 OK emmc-reserved-pre-p1.bin (512 bytes)
 OK emmc-p1.img (1024 bytes)
 OK emmc-p2.img (1536 bytes)
@@ -146,8 +148,8 @@ OK emmc-boot0.img (1024 bytes)
 OK emmc-boot1.img (1024 bytes)
 User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
 Archive consistency only: boot and restoration remain unverified.
-RESTORED emmc-p1.img -> /tmp/g1-restore-c4x2n4kd/p1_target.img (1024 bytes) sha256=431379dc3272b4227e74eadca33b071254ff006d74110b0de8d7ff9f2ac91de0
-RESTORED <stdin> -> /tmp/g1-restore-c4x2n4kd/stream_p1.img (512 bytes) sha256=9b998801996b57ff99e05c9d0b0168605c10ad169e217ced8ea35485688155f1
+RESTORED emmc-p1.img -> /tmp/g1-restore-beoq0puo/p1_target.img (1024 bytes) sha256=431379dc3272b4227e74eadca33b071254ff006d74110b0de8d7ff9f2ac91de0
+RESTORED <stdin> -> /tmp/g1-restore-beoq0puo/stream_p1.img (512 bytes) sha256=9b998801996b57ff99e05c9d0b0168605c10ad169e217ced8ea35485688155f1
 OK emmc-reserved-pre-p1.bin (512 bytes)
 OK emmc-p1.img (512 bytes)
 OK emmc-p2.img (1024 bytes)
@@ -158,6 +160,6 @@ OK emmc-p1.img (512 bytes)
 test_signed_manifest_matches_real_g3_image (tests.test_review4_g3_bundle.G3BundleTest.test_signed_manifest_matches_real_g3_image) ... ok
 
 ----------------------------------------------------------------------
-Ran 1 test in 0.504s
+Ran 1 test in 0.498s
 
 OK

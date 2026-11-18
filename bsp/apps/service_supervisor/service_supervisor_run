@@ -1,0 +1,17 @@
+#!/bin/sh
+trap 'exit 0' TERM INT
+SELF_DIR=$(cd "$(dirname "$0")" && pwd)
+DEFAULT_ROOT=$(dirname "$SELF_DIR")
+ROOT="${SMARTGATEWAY_ROOT:-$DEFAULT_ROOT}"
+RUN_DIR="$ROOT/run"
+if [ -n "${SMARTGATEWAY_STOP_FLAG:-}" ]; then
+    STOP_FLAG="$SMARTGATEWAY_STOP_FLAG"
+elif [ "$ROOT" = "/opt/smartgateway" ] && [ -d /run ] && [ -w /run ]; then
+    STOP_FLAG="/run/smartgateway.disabled"
+else
+    STOP_FLAG="$RUN_DIR/supervisor.disabled"
+fi
+while [ -f "$STOP_FLAG" ]; do
+    sleep 1
+done
+exec "$ROOT/bin/service_supervisor" run --root "$ROOT" >> "$ROOT/logs/supervisor.log" 2>&1
