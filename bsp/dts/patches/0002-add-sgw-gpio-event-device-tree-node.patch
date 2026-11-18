@@ -1,0 +1,31 @@
+diff --git a/arch/arm/boot/dts/100ask_imx6ull-14x14.dts b/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
+index 1fa6e05..486f3a5 100644
+--- a/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
++++ b/arch/arm/boot/dts/100ask_imx6ull-14x14.dts
+@@ -701,6 +701,12 @@
+                 >;
+         };
+ 
++        pinctrl_sgw_button: sgwbuttongrp {
++            fsl,pins = <
++                MX6UL_PAD_CSI_VSYNC__GPIO4_IO19           0x000070B0
++            >;
++        };
++
+     };
+ };
+ 
+@@ -931,3 +937,13 @@
+     
+ };
+ 
++
++/ {
++    sgw_gpio_event: sgw-gpio-event {
++        compatible = "smartgateway,sgw-gpio-event";
++        pinctrl-names = "default";
++        pinctrl-0 = <&pinctrl_sgw_button>;
++        button-gpios = <&gpio4 19 GPIO_ACTIVE_LOW>;
++        status = "okay";
++    };
++};

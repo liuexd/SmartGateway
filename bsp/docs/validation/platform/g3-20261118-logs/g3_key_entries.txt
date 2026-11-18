@@ -1,0 +1,26 @@
+-rw-r--r-- 1000/1000       390 2026-11-18 13:51 ./etc/fstab
+-rwxr-xr-x 1000/1000       365 2026-11-18 13:51 ./etc/init.d/S12sgw_drivers
+-rwxr-xr-x 1000/1000      1038 2026-11-18 13:51 ./etc/init.d/S15sgw_ab_guard
+-rwxr-xr-x 1000/1000      1946 2026-11-18 13:51 ./etc/init.d/S99adbd
+-rwxr-xr-x 1000/1000     10848 2026-11-18 13:51 ./etc/init.d/S99smartgateway
+-rwxr-xr-x 1000/1000       449 2026-11-18 13:51 ./etc/init.d/rcK
+-rwxr-xr-x 1000/1000       514 2026-11-18 13:51 ./etc/init.d/rcS
+-rw-r--r-- 1000/1000      1233 2026-11-18 13:51 ./etc/inittab
+-rw-r--r-- 1000/1000     10592 2026-11-18 13:51 ./lib/modules/4.9.88/extra/sgw_ap3216.ko
+-rw-r--r-- 1000/1000     13256 2026-11-18 13:51 ./lib/modules/4.9.88/extra/sgw_gpio_event.ko
+-rwx------ 1000/1000    246400 2026-11-18 13:51 ./opt/smartgateway/bin/ota_agent
+-rwx------ 1000/1000     67000 2026-11-18 13:51 ./opt/smartgateway/bin/service_supervisor
+-rwx------ 1000/1000    234984 2026-11-18 13:51 ./opt/smartgateway/releases/0.6.0/smart_gateway
+-rwxr-xr-x 1000/1000    150176 2026-11-18 13:51 ./sbin/debugfs
+-rwxr-xr-x 1000/1000    246400 2026-11-18 13:51 ./usr/bin/ota_agent
+-rwxr-xr-x 1000/1000     67000 2026-11-18 13:51 ./usr/bin/service_supervisor
+-rwxr-xr-x 1000/1000    327464 2026-11-18 13:51 ./usr/bin/sgw_bootctl
+-rwxr-xr-x 1000/1000    125028 2026-11-18 13:51 ./usr/bin/sgw_system_health
+-rwxr-xr-x 1000/1000    327644 2026-11-18 13:51 ./usr/bin/sgw_watchdog_guard
+-rwxr-xr-x 1000/1000    234984 2026-11-18 13:51 ./usr/bin/smart_gateway
+lrwxrwxrwx 1000/1000         0 2026-11-18 13:37 ./usr/lib/libe2p.so -> libe2p.so.2
+lrwxrwxrwx 1000/1000         0 2026-11-18 13:37 ./usr/lib/libe2p.so.2 -> libe2p.so.2.3
+-rwxr-xr-x 1000/1000     27060 2026-11-18 13:51 ./usr/lib/libe2p.so.2.3
+lrwxrwxrwx 1000/1000         0 2026-11-18 13:37 ./usr/lib/libext2fs.so -> libext2fs.so.2
+lrwxrwxrwx 1000/1000         0 2026-11-18 13:37 ./usr/lib/libext2fs.so.2 -> libext2fs.so.2.4
+-rwxr-xr-x 1000/1000    327708 2026-11-18 13:51 ./usr/lib/libext2fs.so.2.4

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LINUX_SRC="${LINUX_SRC_DIR:-$HOME/Desktop/Linux-4.9.88}"
 AP3216_PATCH="$REPO_DIR/bsp/dts/patches/0001-add-ap3216-device-tree-node.patch"
+GPIO_EVENT_PATCH="$REPO_DIR/bsp/dts/patches/0002-add-sgw-gpio-event-device-tree-node.patch"
 CMA_PATCH="$SCRIPT_DIR/patches/0001-dts-trim-cma-from-320m-to-32m.patch"
 FRAGMENT="$SCRIPT_DIR/g3_trimmed.fragment"
 OUT_ROOT="${KERNEL_G3_BUILD_DIR:-$REPO_DIR/build/kernel-g3}"
@@ -41,6 +42,7 @@ build_variant() {
 
     # Apply existing ap3216@1e DTS patch so both variants include project DTS baseline
     git -C "$work" apply "$AP3216_PATCH"
+    git -C "$work" apply "$GPIO_EVENT_PATCH"
 
     make -C "$work" ARCH=arm CROSS_COMPILE="$LINARO_CROSS" 100ask_imx6ull_defconfig >/dev/null
 
@@ -124,6 +126,7 @@ for variant in ("baseline", "trimmed"):
     dtb_path = vdir / "100ask_imx6ull-14x14.dtb"
     cma_hex = subprocess.run(["fdtget", "-t", "x", str(dtb_path), "/reserved-memory/linux,cma", "size"], capture_output=True, text=True, check=True).stdout.strip()
     ap_compat = subprocess.run(["fdtget", str(dtb_path), "/soc/aips-bus@02100000/i2c@021a0000/ap3216@1e", "compatible"], capture_output=True, text=True, check=True).stdout.strip()
+    gpio_compat = subprocess.run(["fdtget", str(dtb_path), "/sgw-gpio-event", "compatible"], capture_output=True, text=True, check=True).stdout.strip()
 
     size_lines = (vdir / "vmlinux.size").read_text(encoding="utf-8").splitlines()
     text_b = data_b = bss_b = dec_b = 0
@@ -151,6 +154,7 @@ for variant in ("baseline", "trimmed"):
         "cma_bytes": int(cma_hex, 16),
         "cma_mib": int(cma_hex, 16) // (1024 * 1024),
         "ap3216_in_dtb": (ap_compat == "smartgateway,ap3216"),
+        "gpio_in_dtb": (gpio_compat == "smartgateway,sgw-gpio-event"),
         "build_seconds": int((vdir / "build_seconds").read_text(encoding="utf-8").strip()),
     }
 

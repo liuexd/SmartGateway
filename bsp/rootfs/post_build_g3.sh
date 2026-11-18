@@ -32,8 +32,8 @@ if [ -d "$BR_OVERLAY" ]; then
     chmod 755 "$TARGET_DIR/etc/init.d/S99adbd" "$TARGET_DIR/etc/init.d/S50sshd" "$TARGET_DIR/usr/bin/usb_config"
 fi
 
-# 3. Corrected /etc/fstab (ext4 matches actual runtime root mount)
-cat > "$TARGET_DIR/etc/fstab" <<'EOF'
+# 3. Corrected /etc/fstab (ext4 root + persistent /opt/smartgateway/data partition mmcblk1p3)
+cat > "$TARGET_DIR/etc/fstab" <<'FSEOF'
 # <file system>	<mount pt>	<type>	<options>	<dump>	<pass>
 /dev/root	/		ext4	rw,noauto	0	1
 proc		/proc		proc	defaults	0	0
@@ -42,14 +42,19 @@ tmpfs		/dev/shm	tmpfs	mode=0777	0	0
 tmpfs		/tmp		tmpfs	mode=1777	0	0
 tmpfs		/run		tmpfs	mode=0755,nosuid,nodev	0	0
 sysfs		/sys		sysfs	defaults	0	0
-EOF
+/dev/mmcblk1p3	/opt/smartgateway/data	ext4	defaults	0	2
+FSEOF
 
-# 4. Clean SysV rcS (without psplash) & clean /etc/profile (without Qt env bloat)
-cat > "$TARGET_DIR/etc/init.d/rcS" <<'EOF'
+# 4. Board-verified SysV rcS/rcK (without psplash) & clean /etc/profile
+#    Defer S99smartgateway until after rcS returns so BusyBox PID 1 enters RESPAWN,
+#    and avoid stripping ::respawn: from /etc/inittab during rcK reboot/shutdown.
+cat > "$TARGET_DIR/etc/init.d/rcS" <<'RCEOF'
 #!/bin/sh
 for i in /etc/init.d/S??* ; do
     [ ! -f "$i" ] && continue
     case "$i" in
+        *S99smartgateway)
+            ;;
         *.sh)
             (
                 trap - INT QUIT TSTP
@@ -63,10 +68,36 @@ for i in /etc/init.d/S??* ; do
     esac
 done
 /bin/hostname -F /etc/hostname 2>/dev/null || true
-EOF
+if [ -x /etc/init.d/S99smartgateway ]; then
+    (sleep 2; /etc/init.d/S99smartgateway start) </dev/null >/dev/console 2>&1 &
+fi
+RCEOF
 chmod 755 "$TARGET_DIR/etc/init.d/rcS"
 
-cat > "$TARGET_DIR/etc/profile" <<'EOF'
+cat > "$TARGET_DIR/etc/init.d/rcK" <<'RKEOF'
+#!/bin/sh
+for i in $(ls -r /etc/init.d/S??*) ; do
+    [ ! -f "$i" ] && continue
+    case "$i" in
+        *S99smartgateway)
+            /opt/smartgateway/bin/service_supervisor stop --root /opt/smartgateway >/dev/null 2>&1 || true
+            ;;
+        *.sh)
+            (
+                trap - INT QUIT TSTP
+                set stop
+                . "$i"
+            )
+            ;;
+        *)
+            "$i" stop
+            ;;
+    esac
+done
+RKEOF
+chmod 755 "$TARGET_DIR/etc/init.d/rcK"
+
+cat > "$TARGET_DIR/etc/profile" <<'PREOF'
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 if [ "$PS1" ]; then
     if [ "$(id -u)" -eq 0 ]; then
@@ -77,12 +108,32 @@ if [ "$PS1" ]; then
 fi
 export PAGER='/bin/more'
 export EDITOR='/bin/vi'
-EOF
+PREOF
 
-# 5. Redundant U-Boot env config + A/B tools + Service Supervisor + S15/S99 init scripts
+# 5. Redundant U-Boot env config + A/B tools + Service Supervisor + S12/S15/S99 init scripts
 cp -f "$REPO_DIR/bsp/uboot/fw_env.ab.config" "$TARGET_DIR/etc/fw_env.config"
+chmod 644 "$TARGET_DIR/etc/fw_env.config"
 cp -f "$REPO_DIR/bsp/apps/boot_ab/S15sgw_ab_guard" "$TARGET_DIR/etc/init.d/S15sgw_ab_guard"
 chmod 755 "$TARGET_DIR/etc/init.d/S15sgw_ab_guard"
+
+cat > "$TARGET_DIR/etc/init.d/S12sgw_drivers" <<'DREOF'
+#!/bin/sh
+case "$1" in
+    start)
+        for m in /lib/modules/*/extra/sgw_ap3216.ko /lib/modules/*/extra/sgw_gpio_event.ko; do
+            [ -f "$m" ] && insmod "$m" 2>/dev/null || true
+        done
+        ;;
+    stop)
+        rmmod sgw_gpio_event 2>/dev/null || true
+        rmmod sgw_ap3216 2>/dev/null || true
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+DREOF
+chmod 755 "$TARGET_DIR/etc/init.d/S12sgw_drivers"
 
 if [ -x "$REPO_DIR/bsp/apps/service_supervisor/S99smartgateway" ]; then
     cp -f "$REPO_DIR/bsp/apps/service_supervisor/S99smartgateway" "$TARGET_DIR/etc/init.d/S99smartgateway"
@@ -113,13 +164,62 @@ if [ -x "$REPO_DIR/build/uboot-ab/arm/fw_printenv" ]; then
     cp -f "$REPO_DIR/build/uboot-ab/arm/fw_printenv" "$TARGET_DIR/sbin/fw_printenv"
     ln -sf fw_printenv "$TARGET_DIR/sbin/fw_setenv"
     chmod 755 "$TARGET_DIR/sbin/fw_printenv"
-    # Keep /usr/sbin symlinks aligned if uboot-tools placed binaries there
     rm -f "$TARGET_DIR/usr/sbin/fw_printenv" "$TARGET_DIR/usr/sbin/fw_setenv"
     ln -sf ../../sbin/fw_printenv "$TARGET_DIR/usr/sbin/fw_printenv"
     ln -sf ../../sbin/fw_printenv "$TARGET_DIR/usr/sbin/fw_setenv"
 fi
 
-# 6. Install trimmed G3 Kernel, DTB, and kernel modules (plus external SmartGateway BSP .ko)
+# Pre-populate BusyBox inittab respawn entry once so signed /etc/inittab hash never mutates
+if [ -f "$TARGET_DIR/etc/inittab" ] && ! grep -q '^::respawn:.*service_supervisor' "$TARGET_DIR/etc/inittab"; then
+    cat >> "$TARGET_DIR/etc/inittab" <<'INEOF'
+
+# G4b: BusyBox init respawns service_supervisor automatically.
+::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway >> /opt/smartgateway/logs/supervisor.log 2>&1'
+INEOF
+fi
+
+# 6. Install SmartGateway runtime skeleton & strict-default network/policy dir
+install -d -m 0755 "$TARGET_DIR/opt"
+install -d -m 0700 "$TARGET_DIR/opt/smartgateway" \
+    "$TARGET_DIR/opt/smartgateway/bin" \
+    "$TARGET_DIR/opt/smartgateway/data" \
+    "$TARGET_DIR/opt/smartgateway/logs" \
+    "$TARGET_DIR/opt/smartgateway/packages" \
+    "$TARGET_DIR/opt/smartgateway/releases" \
+    "$TARGET_DIR/opt/smartgateway/releases/0.6.0" \
+    "$TARGET_DIR/opt/smartgateway/run" \
+    "$TARGET_DIR/opt/smartgateway/state"
+: > "$TARGET_DIR/opt/smartgateway/.ota.lock"
+chmod 600 "$TARGET_DIR/opt/smartgateway/.ota.lock"
+cat > "$TARGET_DIR/opt/smartgateway/state/ota_state.json" <<'OTEOF'
+{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}
+OTEOF
+chmod 600 "$TARGET_DIR/opt/smartgateway/state/ota_state.json"
+cat > "$TARGET_DIR/opt/smartgateway/service.conf" <<'SCEOF'
+executable=/opt/smartgateway/current/smart_gateway
+serial=
+baud=115200
+server=127.0.0.1
+port=9000
+stop_timeout_ms=5000
+SCEOF
+chmod 600 "$TARGET_DIR/opt/smartgateway/service.conf"
+if [ -x "$REPO_DIR/build/arm-s5/service_supervisor" ]; then
+    install -m 0700 "$REPO_DIR/build/arm-s5/service_supervisor" "$TARGET_DIR/opt/smartgateway/bin/service_supervisor"
+fi
+if [ -x "$REPO_DIR/build/arm-d25/ota_agent" ]; then
+    install -m 0700 "$REPO_DIR/build/arm-d25/ota_agent" "$TARGET_DIR/opt/smartgateway/bin/ota_agent"
+fi
+if [ -x "$REPO_DIR/build/arm-d25/smart_gateway" ]; then
+    install -m 0700 "$REPO_DIR/build/arm-d25/smart_gateway" "$TARGET_DIR/opt/smartgateway/releases/0.6.0/smart_gateway"
+fi
+ln -sfn releases/0.6.0 "$TARGET_DIR/opt/smartgateway/current"
+
+install -d -m 0700 "$TARGET_DIR/etc/smartgateway"
+printf "interface=eth0\n" > "$TARGET_DIR/etc/smartgateway/system-health-network.conf"
+chmod 600 "$TARGET_DIR/etc/smartgateway/system-health-network.conf"
+
+# 7. Install trimmed G3 Kernel, DTB, and kernel modules (plus external SmartGateway BSP .ko)
 if [ -f "$K3_OUT/zImage" ] && [ -f "$K3_OUT/100ask_imx6ull-14x14.dtb" ]; then
     cp -f "$K3_OUT/zImage" "$TARGET_DIR/boot/zImage"
     cp -f "$K3_OUT/100ask_imx6ull-14x14.dtb" "$TARGET_DIR/boot/100ask_imx6ull-14x14.dtb"
@@ -127,7 +227,6 @@ fi
 if [ -d "$K3_MODS/lib/modules" ]; then
     rm -rf "$TARGET_DIR/lib/modules"
     cp -a "$K3_MODS/lib/modules" "$TARGET_DIR/lib/modules"
-    # Remove broken source/build symlinks inside target rootfs
     find "$TARGET_DIR/lib/modules" -maxdepth 2 \( -name build -o -name source \) -exec rm -rf {} +
     kver_dir="$(find "$TARGET_DIR/lib/modules" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
     if [ -n "$kver_dir" ] && [ -d "$K3_BSP_KO" ]; then

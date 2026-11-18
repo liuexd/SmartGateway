@@ -26,6 +26,7 @@ class TestG3KernelAndRootfs(unittest.TestCase):
         self.assertEqual(base["cma_mib"], 320)
         self.assertEqual(trim["cma_mib"], 32)
         self.assertTrue(trim["ap3216_in_dtb"])
+        self.assertTrue(trim.get("gpio_in_dtb"))
 
         # External BSP driver modules must compile cleanly against trimmed kernel
         expected_bsp = {"bsp_hello.ko", "devm_demo.ko", "dt_match_demo.ko", "sgw_ap3216.ko", "sgw_gpio_event.ko"}
@@ -101,7 +102,11 @@ class TestG3KernelAndRootfs(unittest.TestCase):
                 "etc/fstab",
                 "etc/init.d/S15sgw_ab_guard",
                 "etc/init.d/S99adbd",
+                "etc/init.d/S12sgw_drivers",
                 "etc/init.d/S99smartgateway",
+                "etc/init.d/rcK",
+                "opt/smartgateway/bin/service_supervisor",
+                "opt/smartgateway/releases/0.6.0/smart_gateway",
                 "usr/bin/gdbserver",
             ):
                 self.assertIn(req, names)
@@ -114,6 +119,13 @@ class TestG3KernelAndRootfs(unittest.TestCase):
 
             fstab_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/fstab")).read().decode()
             self.assertIn("ext4", fstab_txt)
+            self.assertIn("/opt/smartgateway/data", fstab_txt)
+            rcs_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/init.d/rcS")).read().decode()
+            self.assertIn("S99smartgateway", rcs_txt)
+            rck_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/init.d/rcK")).read().decode()
+            self.assertIn("service_supervisor stop", rck_txt)
+            inittab_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/inittab")).read().decode()
+            self.assertRegex(inittab_txt, r"(?m)^::respawn:.*service_supervisor")
             fw_cfg_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/fw_env.config")).read().decode()
             self.assertIn("0xe0000", fw_cfg_txt)
             self.assertIn("0xe2000", fw_cfg_txt)
