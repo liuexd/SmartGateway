@@ -1,0 +1,77 @@
+--- UNAME & CMDLINE ---
+Linux smartgateway 4.9.88 #1 PREEMPT Wed Nov 18 13:29:23 CST 2026 armv7l GNU/Linux
+console=ttymxc0,115200 root=/dev/mmcblk1p1 rootwait rw panic=5
+--- FREE -M ---
+              total        used        free      shared  buff/cache   available
+Mem:            497          13         469           0          14         477
+Swap:             0           0           0
+--- MOUNTS ---
+/dev/root / ext4 rw,relatime,data=ordered 0 0
+devtmpfs /dev devtmpfs rw,relatime,size=237916k,nr_inodes=59479,mode=755 0 0
+proc /proc proc rw,relatime 0 0
+devpts /dev/pts devpts rw,relatime,gid=5,mode=620,ptmxmode=666 0 0
+tmpfs /dev/shm tmpfs rw,relatime,mode=777 0 0
+tmpfs /tmp tmpfs rw,relatime 0 0
+tmpfs /run tmpfs rw,nosuid,nodev,relatime,mode=755 0 0
+sysfs /sys sysfs rw,relatime 0 0
+/dev/mmcblk1p3 /opt/smartgateway/data ext4 rw,relatime,data=ordered 0 0
+none /sys/kernel/config configfs rw,relatime 0 0
+adb /dev/usb-ffs/adb functionfs rw,relatime 0 0
+--- ETH0 ---
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
+    inet 192.168.10.3/24 scope global eth0
+       valid_lft forever preferred_lft forever
+--- LSMOD ---
+Module                  Size  Used by
+sgw_gpio_event          5574  0
+sgw_ap3216              4350  0
+inv_mpu6050_spi         2052  0
+inv_mpu6050            11012  2 inv_mpu6050_spi
+evbug                   2078  0
+--- AP3216 & GPIO_EVENT ---
+crw-------    1 root     root       10,  59 Jan  1 03:38 [1;35m/dev/sgw_event0[m
+lrwxrwxrwx    1 root     root             0 Jan  1 03:38 [1;36m/sys/bus/i2c/devices/0-001e[m -> [1;34m../../../devices/soc0/soc/2100000.aips-bus/21a0000.i2c/i2c-0/0-001e[m
+0
+read_success=3
+read_errors=0
+--- S99 & PS ---
+supervisor: running
+supervisor: pid=480 ppid=1
+gateway: status: running pid=272 starttime=786
+  231 root     /usr/sbin/sshd
+  249 root     /usr/bin/adbd
+  272 root     /opt/smartgateway/current/smart_gateway --no-serial --server 127.0.0.1 --port 9000
+  480 root     /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway
+--- SGW_BOOTCTL ---
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+--- TXN ---
+total 5
+drwx------    2 root     root          1024 Jan  1 03:37 [1;34m.[m
+drwx------    4 root     root          1024 Jan  1 03:39 [1;34m..[m
+-rw-------    1 root     root             0 Jan  1 01:15 [0;0m.sgw-transaction.lock[m
+-rw-------    1 root     root           431 Jan  1 03:37 [0;0mtxn-2c9afe469b3aadc5844315723750715b9c8f30a252e961dbe05072dbfd4a749e[m
+-rw-------    1 root     root          1281 Jan  1 03:37 [0;0mtxn-2c9afe469b3aadc5844315723750715b9c8f30a252e961dbe05072dbfd4a749e.manifest[m
+SGW-TXN-1
+state=CONFIRMED
+id=2c9afe469b3aadc5844315723750715b9c8f30a252e961dbe05072dbfd4a749e
+package=97c79a15afac7b6daa3c0755f30f7279cafcd0e817451f869f1236d8794b5b80
+image=303db34cd3b19744e44573b1b9453772369671bdd25723b0e515f2c7d2955ea1
+target=1
+last_good=2
+rootfs_manifest=0338557d7575c36b36c98d30013a9632a782f61a1d5b1de1333f07b0ab176e6e
+written_size=134217728
+consumed=1
+boot_id=893f040e-b63d-4b7b-b082-9d111e5e41ab
+bootcount=1

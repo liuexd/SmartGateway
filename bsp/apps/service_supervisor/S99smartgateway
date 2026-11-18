@@ -69,8 +69,12 @@ LOG="$ROOT/logs/supervisor.log"
 INITTAB=/etc/inittab
 
 # respawn 条目的识别与内容
-RESPAWN_PREFIX="::respawn:"
-RESPAWN_MATCH="^::respawn:.*service_supervisor"
+if grep -q ':initdefault:' /etc/inittab 2>/dev/null; then
+    RESPAWN_PREFIX="sgw0::respawn:"
+else
+    RESPAWN_PREFIX="::respawn:"
+fi
+RESPAWN_MATCH="^[^#]*:respawn:.*service_supervisor"
 
 say() { printf '%s\n' "$*"; }
 
@@ -166,11 +170,17 @@ ensure_respawn_entry() {
     #
     cp -a "$INITTAB" "$INITTAB.s99bak.$$" 2>/dev/null || true
 
+    if [ -x "$ROOT/bin/service_supervisor_run" ]; then
+        RESPAWN_CMD="/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $ROOT/bin/service_supervisor_run'"
+    else
+        RESPAWN_CMD="/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $BIN run --root $ROOT >> $LOG 2>&1'"
+    fi
+
     cat >> "$INITTAB" <<EOF
 
 # G4b：supervisor 崩溃后由 init 自动重新拉起。
 # 由 S99smartgateway start 添加、stop 移除。
-$RESPAWN_PREFIX/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $BIN run --root $ROOT >> $LOG 2>&1'
+$RESPAWN_PREFIX$RESPAWN_CMD
 EOF
 
     sync

@@ -8,6 +8,7 @@ ARM_SDK_DIR="${ARM_SDK_DIR:-$HOME/Desktop/ToolChain/arm-buildroot-linux-gnueabih
 OUT_DIR="${ROOTFS_G3_BUILD_DIR:-$REPO_DIR/build/buildroot-g3}"
 DEFCONFIG_TMPL="$SCRIPT_DIR/g3_trimmed_defconfig"
 POST_BUILD="$SCRIPT_DIR/post_build_g3.sh"
+POST_FAKEROOT="$OUT_DIR/post_fakeroot_g3.sh"
 JOBS="${JOBS:-$(nproc)}"
 
 if [ ! -d "$BR_SRC/package" ]; then
@@ -22,11 +23,25 @@ fi
 mkdir -p "$OUT_DIR"
 TMP_DEF="$OUT_DIR/g3_trimmed_resolved_defconfig"
 sed "s|/REPLACE_WITH_ARM_SDK_DIR|$ARM_SDK_DIR|g" "$DEFCONFIG_TMPL" > "$TMP_DEF"
+cat > "$POST_FAKEROOT" <<'PFEOF'
+#!/bin/sh
+set -e
+# openssh sshd refuses /var/empty unless owned by root:root and mode <= 0755
+if [ -d "$1/var/empty" ]; then
+    chown -h -R 0:0 "$1/var/empty"
+    chmod 0755 "$1/var/empty"
+fi
+PFEOF
+chmod 755 "$POST_FAKEROOT"
+
 cat >> "$TMP_DEF" <<EOF
 BR2_ROOTFS_POST_BUILD_SCRIPT="$POST_BUILD"
+BR2_ROOTFS_POST_FAKEROOT_SCRIPT="$POST_FAKEROOT"
 BR2_GLOBAL_PATCH_DIR="$SCRIPT_DIR/br_patches"
 # Signed rootfs manifest verification invokes debugfs on the target.
 BR2_PACKAGE_E2FSPROGS_DEBUGFS=y
+# External SDK sysroot contains libbsd.so.0, which iproute2 dynamically links against.
+BR2_PACKAGE_LIBBSD=y
 EOF
 
 export BR2_DL_DIR="$BR_SRC/dl"
@@ -53,8 +68,30 @@ exec /usr/bin/g++ -include cstdint "$@"
 EOF
 chmod +x "$HOST_GXX_WRAPPER"
 
+if [ ! -x /usr/bin/fakeroot ]; then
+    echo "ERROR: system /usr/bin/fakeroot is required so target root ownership/setuid is preserved on Ubuntu 24.04" >&2
+    exit 1
+fi
+
 echo "=== Building Buildroot G3 Trimmed RootFS (offline dl cache + external SDK) ==="
 t0="$(date +%s)"
+# Pre-build Buildroot's host-fakeroot stamp then shim it to host /usr/bin/fakeroot,
+# because Buildroot 2020.02's host-fakeroot 1.24 fails to intercept chown/statx on modern glibc.
+make -C "$OUT_DIR" -j"$JOBS" \
+    HOSTCC="$HOST_GCC_WRAPPER" \
+    HOSTCXX="$HOST_GXX_WRAPPER" \
+    HOST_CFLAGS="-O2" \
+    ac_cv_func_pidfd_open=no \
+    ac_cv_func_pidfd_send_signal=no \
+    ac_cv_path_mkdir=/bin/mkdir \
+    MKDIR_P="/bin/mkdir -p" \
+    host-fakeroot
+cat > "$OUT_DIR/host/bin/fakeroot" <<'FREOF'
+#!/bin/sh
+exec /usr/bin/fakeroot "$@"
+FREOF
+chmod 755 "$OUT_DIR/host/bin/fakeroot"
+
 make -C "$OUT_DIR" -j"$JOBS" \
     HOSTCC="$HOST_GCC_WRAPPER" \
     HOSTCXX="$HOST_GXX_WRAPPER" \
@@ -89,8 +126,11 @@ for line in tar_list:
         except ValueError:
             pass
 
-# Check critical files exist inside rootfs.tar
-names = {line.split()[-1].lstrip("./") for line in tar_list if line.split()}
+# Check critical files exist inside rootfs.tar (including symlinks such as usr/lib/libbsd.so.0)
+import tarfile
+with tarfile.open(tar_path, "r") as _tf:
+    _members = {m.name.lstrip("./"): m for m in _tf.getmembers()}
+names = set(_members.keys())
 required = [
     "boot/zImage",
     "boot/100ask_imx6ull-14x14.dtb",
@@ -105,10 +145,28 @@ required = [
     "etc/init.d/S99adbd",
     "etc/init.d/S99smartgateway",
     "usr/bin/gdbserver",
+    "usr/lib/libbsd.so.0",
+    "opt/smartgateway/bin/service_supervisor_run",
 ]
 missing = [r for r in required if r not in names]
 if missing:
     raise RuntimeError(f"Missing required files in rootfs.tar: {missing}")
+
+with tarfile.open(tar_path, "r") as tf:
+    for root_owned in ("bin/busybox", "sbin/init", "var/empty", "usr/bin/sgw_bootctl"):
+        m = _members.get(root_owned)
+        if m is None or m.uid != 0 or m.gid != 0:
+            raise RuntimeError(f"Expected root ownership (0:0) for {root_owned}, got {m.uid if m else None}:{m.gid if m else None}")
+    inittab_txt = tf.extractfile(_members["etc/inittab"]).read().decode("utf-8")
+    for lineno, line in enumerate(inittab_txt.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split(":", 3)
+        if len(parts) == 4:
+            if not (1 <= len(parts[0]) <= 4):
+                raise RuntimeError(f"/etc/inittab line {lineno} id field invalid for sysvinit: {parts[0]!r}")
+            if len(parts[3]) > 127:
+                raise RuntimeError(f"/etc/inittab line {lineno} process field exceeds sysvinit 127-char limit ({len(parts[3])} chars)")
 
 import tempfile
 import shutil

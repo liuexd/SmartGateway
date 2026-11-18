@@ -169,12 +169,14 @@ if [ -x "$REPO_DIR/build/uboot-ab/arm/fw_printenv" ]; then
     ln -sf ../../sbin/fw_printenv "$TARGET_DIR/usr/sbin/fw_setenv"
 fi
 
-# Pre-populate BusyBox inittab respawn entry once so signed /etc/inittab hash never mutates
-if [ -f "$TARGET_DIR/etc/inittab" ] && ! grep -q '^::respawn:.*service_supervisor' "$TARGET_DIR/etc/inittab"; then
+# Pre-populate SysV/BusyBox inittab respawn entry once so signed /etc/inittab hash never mutates
+# Keep process field <= 127 chars for SysV init while preserving SMARTGATEWAY_RESPAWN=1 and service_supervisor match.
+if [ -f "$TARGET_DIR/etc/inittab" ] && ! grep -q '^sgw0::respawn:.*service_supervisor' "$TARGET_DIR/etc/inittab"; then
+    sed -i '/^::respawn:.*service_supervisor/d' "$TARGET_DIR/etc/inittab"
     cat >> "$TARGET_DIR/etc/inittab" <<'INEOF'
 
-# G4b: BusyBox init respawns service_supervisor automatically.
-::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway >> /opt/smartgateway/logs/supervisor.log 2>&1'
+# G4b: sysvinit respawns service_supervisor automatically (unique id + <= 127-char process field).
+sgw0::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec /opt/smartgateway/bin/service_supervisor_run'
 INEOF
 fi
 
@@ -207,6 +209,11 @@ chmod 600 "$TARGET_DIR/opt/smartgateway/service.conf"
 if [ -x "$REPO_DIR/build/arm-s5/service_supervisor" ]; then
     install -m 0700 "$REPO_DIR/build/arm-s5/service_supervisor" "$TARGET_DIR/opt/smartgateway/bin/service_supervisor"
 fi
+cat > "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run" <<'SREOF'
+#!/bin/sh
+exec /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway >> /opt/smartgateway/logs/supervisor.log 2>&1
+SREOF
+chmod 0700 "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run"
 if [ -x "$REPO_DIR/build/arm-d25/ota_agent" ]; then
     install -m 0700 "$REPO_DIR/build/arm-d25/ota_agent" "$TARGET_DIR/opt/smartgateway/bin/ota_agent"
 fi

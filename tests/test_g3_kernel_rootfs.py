@@ -106,7 +106,9 @@ class TestG3KernelAndRootfs(unittest.TestCase):
                 "etc/init.d/S99smartgateway",
                 "etc/init.d/rcK",
                 "opt/smartgateway/bin/service_supervisor",
+                "opt/smartgateway/bin/service_supervisor_run",
                 "opt/smartgateway/releases/0.6.0/smart_gateway",
+                "usr/lib/libbsd.so.0",
                 "usr/bin/gdbserver",
             ):
                 self.assertIn(req, names)
@@ -124,8 +126,19 @@ class TestG3KernelAndRootfs(unittest.TestCase):
             self.assertIn("S99smartgateway", rcs_txt)
             rck_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/init.d/rcK")).read().decode()
             self.assertIn("service_supervisor stop", rck_txt)
-            inittab_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/inittab")).read().decode()
-            self.assertRegex(inittab_txt, r"(?m)^::respawn:.*service_supervisor")
+            members = {m.name.lstrip("./"): m for m in tf.getmembers()}
+            for root_owned in ("bin/busybox", "sbin/init", "var/empty", "usr/bin/sgw_bootctl"):
+                m = members[root_owned]
+                self.assertEqual((m.uid, m.gid), (0, 0), f"{root_owned} must be root:root")
+            inittab_txt = tf.extractfile(members["etc/inittab"]).read().decode()
+            self.assertRegex(inittab_txt, r"(?m)^sgw0::respawn:.*service_supervisor")
+            self.assertIn("SMARTGATEWAY_RESPAWN=1", inittab_txt)
+            for lineno, line in enumerate(inittab_txt.splitlines(), 1):
+                if line.strip() and not line.lstrip().startswith("#"):
+                    parts = line.split(":", 3)
+                    if len(parts) == 4:
+                        self.assertTrue(1 <= len(parts[0]) <= 4, f"/etc/inittab line {lineno} invalid id {parts[0]!r}")
+                        self.assertLessEqual(len(parts[3]), 127, f"/etc/inittab line {lineno} > 127 chars")
             fw_cfg_txt = tf.extractfile(next(m for m in tf.getmembers() if m.name.lstrip("./") == "etc/fw_env.config")).read().decode()
             self.assertIn("0xe0000", fw_cfg_txt)
             self.assertIn("0xe2000", fw_cfg_txt)
