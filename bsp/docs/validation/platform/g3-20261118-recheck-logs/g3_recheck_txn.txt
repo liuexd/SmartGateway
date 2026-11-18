@@ -1,0 +1,12 @@
+SGW-TXN-1
+state=CONFIRMED
+id=acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936
+package=8ab96e0808c8fc6af3de229dbd7be85cd6012cc0f7fbfb2bc0677a896dda7a41
+image=ab24a7c4c656b0b39f9a1e312b1ae276fa52dda30883b7034f0043a4cf6678a0
+target=1
+last_good=2
+rootfs_manifest=018181481873274daae2d66dce4c381fe2bb2393a285be7cfda4fbff69debb03
+written_size=134217728
+consumed=1
+boot_id=85ca2953-cd27-4fb5-861f-286d1bfbacaf
+bootcount=1

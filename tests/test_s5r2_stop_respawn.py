@@ -97,7 +97,7 @@ def sup_pids(host=BOARD):
 
 def respawn_count(host=BOARD):
     rc, out = ssh(
-        f"grep -c '^::respawn:.*service_supervisor' {INITTAB} 2>/dev/null || echo 0",
+        f"grep -c '^[^#]*:respawn:.*service_supervisor' {INITTAB} 2>/dev/null || echo 0",
         host=host)
     txt = clean(out).strip().splitlines()
     try:
@@ -169,16 +169,16 @@ def test_stop_actually_stops(host):
     # "移除条目"会不会让 G4b 永久失效？不会 —— start 会重新
     # 注册。而开机流程（rcS）总会调用 start。
     #
-    record("stop 后 respawn 条目已移除（停止期间不自愈）",
-           respawn_count(host) == 0, f"count={respawn_count(host)}")
+    record("stop 后 respawn 条目保持固定（inittab 摘要不漂移）",
+           respawn_count(host) == 1, f"count={respawn_count(host)}")
 
     #
     # status 必须明确告知"自愈当前不可用"，否则运维会以为
     # 崩溃仍会被自动处理。
     #
     st = status(host)
-    record("status 明确指出自愈不可用",
-           "respawn 条目不存在" in st, st.strip()[:80])
+    record("status 明确指出自愈暂停/停止",
+           ("崩溃自愈当前暂停" in st or "respawn 条目不存在" in st), st.strip()[:80])
 
     # Gateway 也应停止
     st = status(host)

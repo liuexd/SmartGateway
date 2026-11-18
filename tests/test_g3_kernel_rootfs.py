@@ -130,6 +130,12 @@ class TestG3KernelAndRootfs(unittest.TestCase):
             for root_owned in ("bin/busybox", "sbin/init", "var/empty", "usr/bin/sgw_bootctl"):
                 m = members[root_owned]
                 self.assertEqual((m.uid, m.gid), (0, 0), f"{root_owned} must be root:root")
+            s99_txt = tf.extractfile(members["etc/init.d/S99smartgateway"]).read().decode()
+            self.assertIn("STOP_FLAG", s99_txt)
+            self.assertNotIn("remove_respawn_entry", s99_txt)
+            self.assertNotIn("ensure_respawn_entry", s99_txt)
+            sup_run_txt = tf.extractfile(members["opt/smartgateway/bin/service_supervisor_run"]).read().decode()
+            self.assertIn("STOP_FLAG", sup_run_txt)
             inittab_txt = tf.extractfile(members["etc/inittab"]).read().decode()
             self.assertRegex(inittab_txt, r"(?m)^sgw0::respawn:.*service_supervisor")
             self.assertIn("SMARTGATEWAY_RESPAWN=1", inittab_txt)

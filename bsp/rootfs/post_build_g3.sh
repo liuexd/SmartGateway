@@ -172,7 +172,7 @@ fi
 # Pre-populate SysV/BusyBox inittab respawn entry once so signed /etc/inittab hash never mutates
 # Keep process field <= 127 chars for SysV init while preserving SMARTGATEWAY_RESPAWN=1 and service_supervisor match.
 if [ -f "$TARGET_DIR/etc/inittab" ] && ! grep -q '^sgw0::respawn:.*service_supervisor' "$TARGET_DIR/etc/inittab"; then
-    sed -i '/^::respawn:.*service_supervisor/d' "$TARGET_DIR/etc/inittab"
+    sed -i '/^# G4b:/d; /^::respawn:.*service_supervisor/d' "$TARGET_DIR/etc/inittab"
     cat >> "$TARGET_DIR/etc/inittab" <<'INEOF'
 
 # G4b: sysvinit respawns service_supervisor automatically (unique id + <= 127-char process field).
@@ -211,7 +211,20 @@ if [ -x "$REPO_DIR/build/arm-s5/service_supervisor" ]; then
 fi
 cat > "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run" <<'SREOF'
 #!/bin/sh
-exec /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway >> /opt/smartgateway/logs/supervisor.log 2>&1
+trap 'exit 0' TERM INT
+ROOT="${SMARTGATEWAY_ROOT:-/opt/smartgateway}"
+RUN_DIR="$ROOT/run"
+if [ -n "${SMARTGATEWAY_STOP_FLAG:-}" ]; then
+    STOP_FLAG="$SMARTGATEWAY_STOP_FLAG"
+elif [ "$ROOT" = "/opt/smartgateway" ] && [ -d /run ] && [ -w /run ]; then
+    STOP_FLAG="/run/smartgateway.disabled"
+else
+    STOP_FLAG="$RUN_DIR/supervisor.disabled"
+fi
+while [ -f "$STOP_FLAG" ]; do
+    sleep 1
+done
+exec "$ROOT/bin/service_supervisor" run --root "$ROOT" >> "$ROOT/logs/supervisor.log" 2>&1
 SREOF
 chmod 0700 "$TARGET_DIR/opt/smartgateway/bin/service_supervisor_run"
 if [ -x "$REPO_DIR/build/arm-d25/ota_agent" ]; then

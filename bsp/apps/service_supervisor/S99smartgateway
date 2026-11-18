@@ -1,62 +1,27 @@
 #!/bin/sh
 #
-# S99smartgateway - BusyBox init 启动脚本
+# S99smartgateway - init 启动脚本（Pinned /etc/inittab + 运行时启停标记）
 #
 # 部署位置：/etc/init.d/S99smartgateway
 #
 # ============================================================
-# 两层结构
+# 两层结构与签名清单约束
 # ============================================================
 #
-#   BusyBox init
-#       └── supervisor（respawn 条目拉起）
-#               └── Gateway（由 supervisor 启动）
+#   SysV / BusyBox init
+#       └── service_supervisor_run (由 inittab respawn 条目托管)
+#               └── exec service_supervisor -> smart_gateway
 #
-# supervisor 必须常驻并持有 Gateway 的子进程关系，这是 L3/L6
-# 被解决的前提（见 D25-2-S5）。
+# /etc/inittab 属于 G2-R3C / G3 签名清单保护的 15 项只读关键文件之一，
+# 启动/停止期间严禁增删或改写 /etc/inittab，以免破坏摘要导致 14/15 漂移。
 #
-# ============================================================
-# G4a / G4b / 停止语义
-# ============================================================
-#
-#   G4a 开机启动 Gateway     <- start 时显式请求
-#   G4b supervisor 崩溃自愈  <- inittab 的 respawn 条目
-#   停止                     <- 移除 respawn 条目 + 停止进程
-#
-# 【关键设计】respawn 条目由本脚本管理，而非永久存在。
-#
-# 原因（S5-R2 问题一，实测确认过两轮错误方案）：
-#
-#   stop 之后若条目仍在，init 会立刻重新拉起 supervisor，
-#   stop 变成假的：
-#
-#     $ S99smartgateway stop
-#     smartgateway stopped                 <- 报告成功
-#     $ S99smartgateway status
-#     supervisor: running pid=27859        <- 它又回来了
-#
-#   试过但**不可行**的方案：
-#
-#   A. 临时移除条目，结束前恢复 + HUP
-#      HUP 那一刻 init 立刻按条目拉起，又回到原点。
-#
-#   B. 结束前恢复条目但不 HUP
-#      stop 后崩溃时 init 用内存里的旧配置（无条目），
-#      该窗口内自愈失效。
-#
-#   C. 停止标记文件，supervisor 启动时看到标记就退出
-#      能收敛，但删标记后 respawn 仍 armed，init 会继续
-#      拉起 —— 又变成拉锯（实测：stop 报成功，3 秒后又出现）。
-#
-#   D. **移除条目 = 停止**（本实现）
-#      "停止一个被 respawn 的服务"的正确含义就是取消注册。
-#      移除 + HUP 之后 init 的表里没有这条，自然不再拉起。
-#      start 时重新加回 —— 开机流程总会调用 start，所以
-#      关机（rcK 调 stop）之后下次开机也能自动恢复。
-#
-# 语义澄清：
-#   stop  之后服务保持停止，直到 start 或重启（重启时 rcS 会 start）
-#   这是 stop 的应有含义，不是缺陷
+# 启停机制：
+#   - stop：停掉 Gateway，写入运行时停止标记 $STOP_FLAG，随后停止 supervisor；
+#           init 拉起的新一轮 service_supervisor_run 检测到 $STOP_FLAG 后保持休眠，
+#           既不会拉起 supervisor，也不会触发 sysvinit 快速重启节流（MAXSPAWN）。
+#   - start：校验 inittab respawn 条目完整（只读检查，绝不修改），删除 $STOP_FLAG，
+#           等待 init 托管的 service_supervisor_run exec 拉起 supervisor 并启动 Gateway。
+#   - 崩溃自愈：运行态无 $STOP_FLAG，supervisor 意外崩溃退出后 init 立即重新拉起（ppid=1）。
 #
 set -e
 
@@ -66,14 +31,17 @@ BIN="$ROOT/bin/service_supervisor"
 RUN_DIR="$ROOT/run"
 SOCK="$RUN_DIR/supervisor.sock"
 LOG="$ROOT/logs/supervisor.log"
-INITTAB=/etc/inittab
+INITTAB=${SMARTGATEWAY_INITTAB:-/etc/inittab}
+INIT_PID=${SMARTGATEWAY_INIT_PID:-1}
 
-# respawn 条目的识别与内容
-if grep -q ':initdefault:' /etc/inittab 2>/dev/null; then
-    RESPAWN_PREFIX="sgw0::respawn:"
+if [ -n "${SMARTGATEWAY_STOP_FLAG:-}" ]; then
+    STOP_FLAG="$SMARTGATEWAY_STOP_FLAG"
+elif [ "$ROOT" = "/opt/smartgateway" ] && [ -d /run ] && [ -w /run ]; then
+    STOP_FLAG="/run/smartgateway.disabled"
 else
-    RESPAWN_PREFIX="::respawn:"
+    STOP_FLAG="$RUN_DIR/supervisor.disabled"
 fi
+
 RESPAWN_MATCH="^[^#]*:respawn:.*service_supervisor"
 
 say() { printf '%s\n' "$*"; }
@@ -83,21 +51,15 @@ fail() {
     exit 1
 }
 
-mkdir -p "$RUN_DIR" "$ROOT/logs"
+mkdir -p "$RUN_DIR" "$ROOT/logs" "$(dirname "$STOP_FLAG")"
 
 # supervisor 是否在监听 —— 唯一可信的判定。
-#
-# 只看 socket 文件是否存在不够：崩溃残留的文件仍在但无人监听。
-# 必须真的连通一次。
 supervisor_up() {
     [ -S "$SOCK" ] || return 1
     "$BIN" status --root "$ROOT" >/dev/null 2>&1
 }
 
-# 本 ROOT 的 supervisor 进程。
-#
-# 不用 pidof/pgrep：BusyBox 未必有；且必须按 --root 区分，
-# 否则同机多实例会被误伤。
+# 本 ROOT 的 supervisor 进程（忽略 service_supervisor_run 包装进程）。
 supervisor_pids() {
     for p in /proc/[0-9]*; do
         e=$(readlink "$p/exe" 2>/dev/null) || continue
@@ -114,8 +76,6 @@ supervisor_pids() {
 }
 
 # 停止所有本 ROOT 的 supervisor，返回后保证一个都不剩。
-#
-# 有界重试而非单次：init 可能正好在拉起新实例。
 kill_all_supervisors() {
     rounds=0
 
@@ -131,7 +91,6 @@ kill_all_supervisors() {
         rounds=$((rounds + 1))
     done
 
-    # SIGTERM 无效：升级为 SIGKILL
     pids=$(supervisor_pids)
     if [ -n "$pids" ]; then
         say "WARN: SIGTERM 未生效，使用 SIGKILL"
@@ -151,130 +110,45 @@ kill_all_supervisors() {
     return $([ -z "$(supervisor_pids)" ] && echo 0 || echo 1)
 }
 
-# 确保 respawn 条目存在。
-ensure_respawn_entry() {
-    if grep -q "$RESPAWN_MATCH" "$INITTAB" 2>/dev/null; then
-        return 0
-    fi
-
-    #
-    # 条目内容与 install.sh 保持一致。
-    #
-    # 为什么要包一层 sh -c：
-    #   respawn 直接 exec 命令，没有 shell 解析 VAR=1 或 >>。
-    #   不重定向会让 supervisor 的启动输出（含关键诊断）全部
-    #   丢失，排查时看到空日志。
-    # 为什么要 exec：
-    #   让 sh 被 supervisor 取代，init 监督的才是 supervisor 本身，
-    #   而不是中间那层 sh。
-    #
-    cp -a "$INITTAB" "$INITTAB.s99bak.$$" 2>/dev/null || true
-
-    if [ -x "$ROOT/bin/service_supervisor_run" ]; then
-        RESPAWN_CMD="/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $ROOT/bin/service_supervisor_run'"
-    else
-        RESPAWN_CMD="/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $BIN run --root $ROOT >> $LOG 2>&1'"
-    fi
-
-    cat >> "$INITTAB" <<EOF
-
-# G4b：supervisor 崩溃后由 init 自动重新拉起。
-# 由 S99smartgateway start 添加、stop 移除。
-$RESPAWN_PREFIX$RESPAWN_CMD
-EOF
-
-    sync
-    rm -f "$INITTAB.s99bak.$$"
-
-    say "已注册 respawn 条目"
-    return 0
-}
-
-# 移除 respawn 条目（"停止"的核心动作）。
-remove_respawn_entry() {
-    if ! grep -q "$RESPAWN_MATCH" "$INITTAB" 2>/dev/null; then
-        return 0
-    fi
-
-    grep -v "$RESPAWN_MATCH" "$INITTAB" > "$INITTAB.s99tmp.$$" 2>/dev/null || true
-    mv "$INITTAB.s99tmp.$$" "$INITTAB"
-    sync
-
-    say "已移除 respawn 条目（停止期间不再自动拉起）"
-    return 0
-}
-
 case "$1" in
 start)
     say "Starting $NAME"
 
     [ -x "$BIN" ] || fail "$BIN not found or not executable"
     [ -f "$ROOT/service.conf" ] || fail "$ROOT/service.conf not found"
+    grep -q "$RESPAWN_MATCH" "$INITTAB" 2>/dev/null || \
+        fail "respawn entry missing in $INITTAB (refusing to mutate signed $INITTAB)"
 
-    #
-    # 确保条目存在，然后让 init 生效。
-    #
-    # S5-R2 问题二：这里**不做**"自己 fork 一个"的 fallback。
-    #
-    # 若 respawn 起不来就自己 fork：
-    #   1. 该进程不是 init 监督的，崩溃后不会重拉 —— G4b 静默失效
-    #   2. init 稍后重载时会再拉一个，两个实例争同一 socket
-    #
-    # 正确做法：注册条目 + HUP，等 init 拉起。起不来就报错
-    # （真实故障必须暴露，不能被 fallback 掩盖）。
-    #
-    had_entry=0
-    grep -q "$RESPAWN_MATCH" "$INITTAB" 2>/dev/null && had_entry=1
-
-    ensure_respawn_entry
+    # 解除运行时停止门闩，允许 init 托管的 service_supervisor_run 恢复执行 supervisor
+    rm -f "$STOP_FLAG"
 
     if supervisor_up; then
         say "supervisor already running"
     else
-        #
-        # 通知 init 重读 inittab。
-        #
-        # 即使条目本来就在也需要 HUP：init 可能因为上次 stop
-        # 移除后还没重读，内存里的表是旧的。
-        #
-        kill -HUP 1 2>/dev/null || true
-
         i=0
         while [ $i -lt 100 ]; do
             supervisor_up && break
+            if [ $i -eq 20 ]; then
+                # 兜底：若 init 尚未加载或条目尚未启动，仅发送 HUP 触发重读（不改动文件）
+                kill -HUP "$INIT_PID" 2>/dev/null || true
+            fi
             sleep 0.1
             i=$((i + 1))
         done
 
         if ! supervisor_up; then
-            say "FAIL: respawn 条目已注册，但 init 未能在 10s 内拉起 supervisor"
-            say "      检查：1) $BIN 可执行  2) $ROOT/service.conf 存在"
-            say "            3) $LOG 中的错误  4) /etc/inittab 是否可写"
+            say "FAIL: $INITTAB 中 respawn 条目存在，但 init 未能在 10s 内拉起 supervisor"
+            say "      检查：1) $BIN 可执行  2) $ROOT/bin/service_supervisor_run 可执行"
+            say "            3) $ROOT/service.conf 存在  4) $LOG 中的错误"
             fail "$NAME did not become ready via respawn"
         fi
 
-        if [ "$had_entry" = "1" ]; then
-            say "supervisor started (respawn)"
-        else
-            say "supervisor started (respawn, entry registered)"
-        fi
+        say "supervisor started (respawn)"
     fi
 
-    #
-    # G4a：开机启动业务。
-    #
-    # 幂等：已在运行返回 ALREADY，不是错误。
-    #
     if "$BIN" start --root "$ROOT" >>"$LOG" 2>&1; then
         say "gateway started"
     else
-        #
-        # Gateway 起不来不应阻止系统启动。
-        #
-        # 常见原因：串口设备不存在、北向不可达。这些是运行时
-        # 问题，不该让 rcS 失败 —— 否则板子会因为一个业务配置
-        # 错误而无法正常进入多用户状态。
-        #
         say "WARN: gateway did not start; see $LOG"
     fi
 
@@ -284,52 +158,25 @@ start)
 stop)
     say "Stopping $NAME"
 
-    #
-    # 顺序至关重要：
-    #   1. 先停 Gateway（让 supervisor 走正常收尾，日志可查）
-    #   2. 移除 respawn 条目 + HUP（此后 init 不再拉起）
-    #   3. 停 supervisor
-    #
-    # 若先停 supervisor 再移除条目，中间会有一个窗口让 init
-    # 立刻拉起新实例。
-    #
+    # 顺序：
+    #   1. 先停 Gateway（让 supervisor 走正常收尾）
+    #   2. 写入运行时停止标记 $STOP_FLAG（不改动 /etc/inittab）
+    #   3. 停止 supervisor，init 随后拉起的包装脚本见 $STOP_FLAG 会保持暂停
     if supervisor_up; then
         "$BIN" stop --root "$ROOT" >>"$LOG" 2>&1 || true
     fi
 
-    remove_respawn_entry
-    kill -HUP 1 2>/dev/null || true
-
-    #
-    # 等 init 处理完 HUP 再动手。
-    #
-    # 不等的话可能出现：我们刚判定"没有进程"，init 才刚读完
-    # 条目并拉起一个。
-    #
-    sleep 0.5
+    : > "$STOP_FLAG"
 
     kill_all_supervisors || true
 
     rm -f "$SOCK"
 
-    #
-    # 最终确认。
-    #
-    # 判据是"没有 supervisor 进程"，而不是"命令返回 0"。
-    # 前者才是用户真正关心的状态。
-    #
     if [ -n "$(supervisor_pids)" ]; then
-        #
-        # 仍然停不下来：真实故障（例如进程卡在 D 状态）。
-        #
-        # 此时条目已被移除，所以不会再被反复拉起 —— 这是
-        # 移除条目方案的额外好处：失败是可观测且稳定的，
-        # 而不是"看起来在停、其实在跟 init 抢"。
-        #
         fail "$NAME still running after stop"
     fi
 
-    say "$NAME stopped (respawn 条目已移除，重启或 start 后恢复)"
+    say "$NAME stopped (runtime stop flag set; $INITTAB unchanged)"
     ;;
 
 restart)
@@ -339,16 +186,9 @@ restart)
     ;;
 
 status)
-    #
-    # 两层的状态都要报。
-    #
-    # 只报 supervisor 会掩盖"supervisor 活着但 Gateway 死了"
-    # 这种最常见、也最需要被发现的状态。
-    #
     if supervisor_up; then
         say "supervisor: running"
 
-        # 报 ppid 便于确认 G4b 是否真的在生效（应为 1）
         for pid in $(supervisor_pids); do
             ppid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo "?")
             say "supervisor: pid=$pid ppid=$ppid"
@@ -360,9 +200,11 @@ status)
         say "supervisor: stopped"
         say "gateway: unknown (no supervisor)"
 
-        if ! grep -q "$RESPAWN_MATCH" "$INITTAB" 2>/dev/null; then
-            say "NOTICE: respawn 条目不存在，崩溃自愈当前不可用"
+        if [ -f "$STOP_FLAG" ]; then
+            say "NOTICE: 服务已手动停止（$STOP_FLAG），崩溃自愈当前暂停"
             say "        执行 '$0 start' 恢复"
+        elif ! grep -q "$RESPAWN_MATCH" "$INITTAB" 2>/dev/null; then
+            say "NOTICE: $INITTAB 中缺少 respawn 条目，崩溃自愈当前不可用"
         fi
 
         exit 1

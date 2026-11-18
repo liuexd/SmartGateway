@@ -1,0 +1,52 @@
+{
+  "baseline": {
+    "zImage_bytes": 8873360,
+    "dtb_bytes": 38707,
+    "vmlinux_bytes": 23665688,
+    "vmlinux_text": 12835954,
+    "vmlinux_data": 5214108,
+    "vmlinux_bss": 489176,
+    "vmlinux_dec": 18539238,
+    "modules_count": 78,
+    "modules_bytes": 3304232,
+    "bsp_ko_built": [
+      "bsp_hello.ko",
+      "devm_demo.ko",
+      "dt_match_demo.ko",
+      "sgw_ap3216.ko",
+      "sgw_gpio_event.ko"
+    ],
+    "config_y": 1330,
+    "config_m": 76,
+    "cma_bytes": 335544320,
+    "cma_mib": 320,
+    "ap3216_in_dtb": true,
+    "gpio_in_dtb": true,
+    "build_seconds": 144
+  },
+  "trimmed": {
+    "zImage_bytes": 4848520,
+    "dtb_bytes": 38707,
+    "vmlinux_bytes": 12267588,
+    "vmlinux_text": 6769702,
+    "vmlinux_data": 2213636,
+    "vmlinux_bss": 382240,
+    "vmlinux_dec": 9365578,
+    "modules_count": 48,
+    "modules_bytes": 1131700,
+    "bsp_ko_built": [
+      "bsp_hello.ko",
+      "devm_demo.ko",
+      "dt_match_demo.ko",
+      "sgw_ap3216.ko",
+      "sgw_gpio_event.ko"
+    ],
+    "config_y": 900,
+    "config_m": 48,
+    "cma_bytes": 33554432,
+    "cma_mib": 32,
+    "ap3216_in_dtb": true,
+    "gpio_in_dtb": true,
+    "build_seconds": 83
+  }
+}
