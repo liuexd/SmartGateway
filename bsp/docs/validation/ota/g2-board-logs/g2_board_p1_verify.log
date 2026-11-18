@@ -1,0 +1,23 @@
+=== 1. Negative check: sgw_bootctl confirm in CONFIRMED state must reject ===
+CONFIRM REJECTED: no active unconsumed transaction record
+confirm rejected exit=1
+=== 2. Verify boot0 + redundant env + p2 untouched ===
+1
+VALID slot=1 device=/dev/mmcblk1p1 state=confirmed
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=2
+sgw_last_error=none
+update=yes
+recovery_status=
+ls: cannot access '/tmp/ro_p2/etc/smartgateway': No such file or directory
+ls: cannot access '/tmp/ro_p2/etc/init.d/S15sgw_ab_guard': No such file or directory
+ls: cannot access '/tmp/ro_p2/usr/bin/sgw_bootctl': No such file or directory
+/dev/mmcblk1  0xe0000 0x2000

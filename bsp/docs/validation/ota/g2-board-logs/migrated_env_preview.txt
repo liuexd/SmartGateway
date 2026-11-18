@@ -1,0 +1,52 @@
+bootcmd=run ab_select_slot;run findfdt;run findtee;mmc dev ${mmcdev};mmc dev ${mmcdev}; if mmc rescan; then if run loadbootscript; then run bootscript; else if run loadimage; then run mmcboot; fi; run ab_boot_fallback; fi; else run ab_boot_fallback; fi
+bootdelay=3
+ethprime=eth1
+loadaddr=0x80800000
+mfgtool_args=setenv bootargs console=${console},${baudrate} rdinit=/linuxrc g_mass_storage.stall=0 g_mass_storage.removable=1 g_mass_storage.file=/fat g_mass_storage.ro=1 g_mass_storage.idVendor=0x066F g_mass_storage.idProduct=0x37FF g_mass_storage.iSerialNumber="" clk_ignore_unused 
+initrd_addr=0x83800000
+initrd_high=0xffffffff
+bootcmd_mfg=run mfgtool_args; if test ${tee} = yes; then bootm ${tee_addr} ${initrd_addr} ${fdt_addr}; else bootz ${loadaddr} ${initrd_addr} ${fdt_addr}; fi;
+tee=no
+script=boot.scr
+image=zImage
+bootdir=/boot
+fdt_high=0xffffffff
+initrd_high=0xffffffff
+fdt_addr=0x83000000
+tee_addr=0x84000000
+tee_file=uTee-6ullevk
+boot_fdt=try
+ip_dyn=yes
+mmcdev=1
+mmcpart=2
+mmcroot=/dev/mmcblk1p2 rootwait rw
+mmcautodetect=no
+mmcargs=setenv bootargs console=${console},${baudrate} root=${mmcroot} panic=5
+ab_select_slot=if test "${upgrade_available}" = "1"; then if test "${sgw_pending_slot}" = "1" || test "${sgw_pending_slot}" = "2"; then setenv sgw_active_slot ${sgw_pending_slot}; setenv sgw_ab_state trial; fi; fi; if test "${sgw_active_slot}" = "1"; then setenv mmcpart 1; else if test "${sgw_active_slot}" = "2"; then setenv mmcpart 2; else echo [AB-OTA] Invalid sgw_active_slot, defaulting to p2; setenv sgw_active_slot 2; setenv sgw_last_good_slot 2; setenv mmcpart 2; fi; fi; setenv mmcroot /dev/mmcblk${mmcdev}p${mmcpart} rootwait rw; echo [AB-OTA] boot slot=${mmcpart} state=${sgw_ab_state} bootcount=${bootcount}/${bootlimit} upgrade_available=${upgrade_available};
+ab_boot_fallback=if test "${upgrade_available}" = "1"; then echo [AB-OTA] Trial boot failed, resetting to advance bootcount; reset; else run netboot; fi;
+altbootcmd=echo [AB-OTA] Bootlimit exceeded, rolling back to slot ${sgw_last_good_slot}; if test "${sgw_last_good_slot}" = "1" || test "${sgw_last_good_slot}" = "2"; then setenv sgw_active_slot ${sgw_last_good_slot}; else setenv sgw_active_slot 2; setenv sgw_last_good_slot 2; fi; setenv sgw_pending_slot none; setenv sgw_ab_state rolled_back; setenv sgw_last_error bootlimit_exceeded; setexpr sgw_rollback_count ${sgw_rollback_count} + 1; setenv upgrade_available 0; setenv bootcount 0; saveenv; run ab_select_slot; mmc dev ${mmcdev}; if mmc rescan; then if run loadimage; then run mmcboot; fi; fi; run netboot;
+loadbootscript=fatload mmc ${mmcdev}:${mmcpart} ${loadaddr} ${script};
+bootscript=echo Running bootscript from mmc ...; source
+loadimage=ext2load mmc ${mmcdev}:${mmcpart} ${loadaddr} ${bootdir}/${image}
+loadfdt=ext2load mmc ${mmcdev}:${mmcpart} ${fdt_addr} ${bootdir}/${fdt_file}
+loadtee=fatload mmc ${mmcdev}:${mmcpart} ${tee_addr} ${tee_file}
+mmcboot=echo Booting from mmc ...; run mmcargs; if test ${tee} = yes; then run loadfdt; run loadtee; bootm ${tee_addr} - ${fdt_addr}; else if test ${boot_fdt} = yes || test ${boot_fdt} = try; then if run loadfdt; then bootz ${loadaddr} - ${fdt_addr}; else if test ${boot_fdt} = try; then bootz; else echo WARN: Cannot load the DT; fi; fi; else bootz; fi; fi;
+netargs=setenv bootargs console=${console},${baudrate} root=/dev/nfs ip=dhcp nfsroot=${serverip}:${nfsroot},v3,tcp
+netboot=echo Booting from net ...; run netargs; setenv get_cmd tftp; ${get_cmd} ${image}; ${get_cmd} ${fdt_addr} ${fdt_file};  bootz ${loadaddr} - ${fdt_addr};
+findfdt=if test $fdt_file = undefined; then if test $board_name = EVK && test $board_rev = 9X9; then setenv fdt_file imx6ull-9x9-evk.dtb; fi; if test $board_name = EVK && test $board_rev = 14X14; then setenv fdt_file imx6ull-14x14-evk.dtb; fi; if test $fdt_file = undefined; then setenv fdt_file imx6ull-14x14-alpha.dtb; fi; fi;
+ethaddr=[REDACTED]
+eth1addr=[REDACTED]
+panel=TFT7016
+console=ttymxc0
+baudrate=115200
+fdt_file=100ask_imx6ull-14x14.dtb
+update=yes
+sgw_last_good_slot=2
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=0
+sgw_last_error=none
+sgw_active_slot=2
