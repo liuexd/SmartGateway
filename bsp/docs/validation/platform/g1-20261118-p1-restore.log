@@ -1,0 +1,15 @@
+GUARD_P2_DEVICE_REJECTED_OK
+STREAMING 1038090240 bytes sha256=2d24f1dc6811a577a9409e978ed891341d3c90c8a4b6674bf80784be4241c302 to /dev/mmcblk1p1...
+RESTORED <stdin> -> /dev/mmcblk1p1 (1038090240 bytes) sha256=2d24f1dc6811a577a9409e978ed891341d3c90c8a4b6674bf80784be4241c302
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+/dev/mmcblk1p1: 17928/59776 files (0.1% non-contiguous), 180993/253440 blocks
+RO_FLAGS:
+1
+1
+1
+1
+1

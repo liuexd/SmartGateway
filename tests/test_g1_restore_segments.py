@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for fail-closed G1 segmented restore and readback verification."""
 import hashlib
-import os
+import io
 import struct
 import sys
 import tempfile
@@ -93,27 +93,25 @@ class RestoreSegmentsTests(unittest.TestCase):
         self.assertEqual(disk.read_bytes(), expected_user)
         self.assertEqual(boot0.read_bytes(), (self.backup / "emmc-boot0.img").read_bytes())
         self.assertEqual(boot1.read_bytes(), (self.backup / "emmc-boot1.img").read_bytes())
-        header = disk.read_bytes()[:512]
-        restore.verify_seg.verify_mbr(header)
+        restore.verify_seg.verify_mbr(disk.read_bytes()[:512])
 
-    def test_single_segment_refuses_p2_and_symlinks_and_detects_readback_corruption(self):
+    def test_single_segment_and_stdin_stream_guards(self):
         p2_part = self.root / "fake_p2"
         p2_part.write_bytes(b"\x00" * 1024)
         with self.assertRaises(restore.RestoreError):
             restore.restore_single_segment(
-                self.backup, "emmc-p2.img", p2_part, None, None,
-                True, False, self.mountinfo, self.sysroot,
+                self.backup, "emmc-p2.img", p2_part, None, None, None,
+                True, False, False, self.mountinfo, self.sysroot,
             )
 
         link = self.root / "link.img"
         link.symlink_to(p2_part)
         with self.assertRaises(restore.RestoreError):
             restore.restore_single_segment(
-                self.backup, "emmc-p1.img", link, None, None,
-                True, False, self.mountinfo, self.sysroot,
+                self.backup, "emmc-p1.img", link, None, None, None,
+                True, False, False, self.mountinfo, self.sysroot,
             )
 
-        # Simulate protected p2 block device identity rejection
         blocked, reason = restore.is_protected_p2_or_active(
             (179, 2), self.sysroot, *restore.mounted_physical_targets(
                 restore.source.parse_mountinfo(self.mountinfo.read_text().splitlines()), self.sysroot
@@ -122,7 +120,6 @@ class RestoreSegmentsTests(unittest.TestCase):
         self.assertTrue(blocked)
         self.assertIn("mounted", reason)
 
-        # Unmount p2 in mountinfo, verify geometry check still protects mmcblk1p2
         ram_mount = self.root / "ram_mountinfo"
         ram_mount.write_text("1 1 0:2 / / rw - rootfs rootfs rw\n")
         blocked2, reason2 = restore.is_protected_p2_or_active(
@@ -133,14 +130,24 @@ class RestoreSegmentsTests(unittest.TestCase):
         self.assertTrue(blocked2)
         self.assertIn("p2", reason2)
 
-        # Simulate allowed p1 single-segment restore and verify readback
         p1_target = self.root / "p1_target.img"
         p1_target.write_bytes(b"\x00" * 1024)
         restore.restore_single_segment(
-            self.backup, "emmc-p1.img", p1_target, None, None,
-            True, False, ram_mount, self.sysroot,
+            self.backup, "emmc-p1.img", p1_target, None, None, None,
+            True, False, False, ram_mount, self.sysroot,
         )
         self.assertEqual(p1_target.read_bytes(), (self.backup / "emmc-p1.img").read_bytes())
+
+        payload = b"ABCD" * 128
+        sha = hashlib.sha256(payload).hexdigest()
+        stream_target = self.root / "stream_p1.img"
+        stream_target.write_bytes(b"\x00" * 1024)
+        restore.restore_single_segment(
+            None, "emmc-p1.img", stream_target, "-", len(payload), sha,
+            True, False, False, ram_mount, self.sysroot,
+            stdin_stream=io.BytesIO(payload),
+        )
+        self.assertEqual(stream_target.read_bytes()[:len(payload)], payload)
 
     def test_force_ro_guard_toggles_and_restores(self):
         bsys = self.sysroot / "devices/platform/mmc/block/mmcblk1/mmcblk1boot0"

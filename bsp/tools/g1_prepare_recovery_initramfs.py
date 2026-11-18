@@ -40,7 +40,14 @@ export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PYTHONDONTWRITEBYTECODE=1
 python3 -B /usr/bin/g1_check_ram_root.py
 umask 077
-mkdir -p /run/sshd
+mkdir -p /run/sshd /var/empty
+chown root:root /var/empty
+chmod 0755 /var/empty
+if [ -d /root/.ssh ]; then
+  chown -R root:root /root
+  chmod 700 /root /root/.ssh
+  [ -f /root/.ssh/authorized_keys ] && chmod 600 /root/.ssh/authorized_keys
+fi
 if [ ! -f /run/g1-ssh-host-ed25519 ]; then
   /usr/bin/ssh-keygen -q -t ed25519 -N "" -f /run/g1-ssh-host-ed25519
 fi

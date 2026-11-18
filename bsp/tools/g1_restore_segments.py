@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Fail-closed G1 segmented restore and readback verification tool.
 
-Always verifies the backup archive before opening any target for writing,
-blocks writes to mounted targets or protected p2/active-root devices, and
-reads back every written byte range to confirm SHA-256 integrity.
+Always verifies the backup archive (when restoring from a backup directory)
+before opening any target for writing, blocks writes to mounted targets or
+protected p2/active-root devices, and reads back every written byte range to
+confirm SHA-256 integrity.
 """
+from __future__ import annotations
+
 import argparse
 import array
 import fcntl
@@ -17,6 +20,7 @@ from pathlib import Path
 import g1_emmc_backup_verify as source
 import g1_verify_segments as verify_seg
 
+BLKROSET = 0x125D
 BLKGETSIZE64 = 0x80081272
 CHUNK_SIZE = 1024 * 1024
 PROTECTED_P2_GEOM = source.GEOMETRY["mmcblk1p2"]
@@ -70,10 +74,8 @@ def is_protected_p2_or_active(dev, sysroot, mounted_devs, mounted_phys, root_phy
     sys_path = source.sys_block(dev, sysroot)
     phys = source.physical_devices(dev, sysroot)
     if phys & root_phys:
-        # Block writing to any partition or whole-disk holding active /
         if not (sys_path / "partition").exists():
             return True, "target whole disk backs active /"
-    # Check if this partition itself backs active /
     for m_dev in mounted_devs:
         m_sys = sysroot / "dev/block" / f"{m_dev[0]}:{m_dev[1]}"
         if m_sys.exists() and m_sys.resolve() == sys_path:
@@ -112,20 +114,61 @@ class ForceRoGuard:
                 pass
 
 
-def write_and_verify_segment(src_path: Path, dst_path: Path, dst_offset: int,
+class BlkRoGuard:
+    """Temporarily clear kernel BLKROSET on an approved non-p2 target and restore ro=1."""
+
+    def __init__(self, path: Path, expected_dev, enable: bool, dry_run: bool):
+        self.path = path
+        self.expected_dev = expected_dev
+        self.enable = enable
+        self.dry_run = dry_run
+        self.was_ro = False
+
+    def _set_ro(self, val: int):
+        fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
+            st = os.fstat(fd)
+            check(stat.S_ISBLK(st.st_mode) and
+                  (os.major(st.st_rdev), os.minor(st.st_rdev)) == self.expected_dev,
+                  f"device identity changed in BlkRoGuard: {self.path}")
+            fcntl.ioctl(fd, BLKROSET, array.array("i", [val]), True)
+        finally:
+            os.close(fd)
+
+    def __enter__(self):
+        if self.enable and not self.dry_run and self.expected_dev is not None:
+            try:
+                source.assert_readonly(str(self.path), self.expected_dev)
+                self.was_ro = True
+                self._set_ro(0)
+            except source.SafetyError:
+                self.was_ro = False
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.was_ro:
+            try:
+                self._set_ro(1)
+            except (OSError, RestoreError):
+                pass
+
+
+def write_and_verify_segment(src_path: Path | None, dst_path: Path, dst_offset: int,
                              expected_len: int, expected_sha256: str,
                              allow_regular_file: bool, dry_run: bool,
-                             sysroot: Path, expected_dev=None):
+                             sysroot: Path, expected_dev=None,
+                             src_stream=None):
     check(not dst_path.is_symlink(), f"refusing symlink target: {dst_path}")
-    src_dfd = os.open(src_path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        src_fd, src_st = verify_seg.open_regular(src_dfd, src_path.name)
-    finally:
-        os.close(src_dfd)
-    try:
+    if src_path is not None:
+        src_dfd = os.open(src_path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            src_fd, src_st = verify_seg.open_regular(src_dfd, src_path.name)
+            os.close(src_fd)
+        finally:
+            os.close(src_dfd)
         check(src_st.st_size == expected_len, f"source length mismatch for {src_path.name}")
-    finally:
-        os.close(src_fd)
+    else:
+        check(src_stream is not None, "either src_path or src_stream is required")
 
     if dry_run:
         if dst_path.exists():
@@ -157,11 +200,12 @@ def write_and_verify_segment(src_path: Path, dst_path: Path, dst_offset: int,
 
         os.lseek(dfd, dst_offset, os.SEEK_SET)
         digest = hashlib.sha256()
-        with src_path.open("rb") as sf:
+
+        def stream_copy(reader):
             remaining = expected_len
             while remaining:
-                chunk = sf.read(min(CHUNK_SIZE, remaining))
-                check(bool(chunk), f"short read from {src_path}")
+                chunk = reader.read(min(CHUNK_SIZE, remaining))
+                check(bool(chunk), "short read from source")
                 digest.update(chunk)
                 view = memoryview(chunk)
                 while view:
@@ -169,12 +213,21 @@ def write_and_verify_segment(src_path: Path, dst_path: Path, dst_offset: int,
                     check(n > 0, f"short write to {dst_path}")
                     view = view[n:]
                 remaining -= len(chunk)
-        check(digest.hexdigest() == expected_sha256, f"source digest changed while writing {src_path.name}")
+            if src_stream is not None:
+                extra = reader.read(1)
+                check(not extra, "trailing bytes past declared --image-size on stdin")
+
+        if src_path is not None:
+            with src_path.open("rb") as sf:
+                stream_copy(sf)
+        else:
+            stream_copy(src_stream)
+
+        check(digest.hexdigest() == expected_sha256, "source SHA-256 mismatch")
         os.fsync(dfd)
     finally:
         os.close(dfd)
 
-    # Re-open read-only and verify readback digest
     rfd = os.open(dst_path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
     try:
         os.lseek(rfd, dst_offset, os.SEEK_SET)
@@ -260,28 +313,43 @@ def restore_full_disk(backup_dir: Path, target_disk: Path, boot0: Path | None,
         print(f"{'DRY-RUN' if dry_run else 'RESTORED'} {boot_name} -> {boot_target} ({length} bytes)")
 
 
-def restore_single_segment(backup_dir: Path, segment_name: str, target_part: Path,
-                           custom_image: Path | None, custom_sha256: str | None,
-                           allow_regular_file: bool, dry_run: bool,
-                           mountinfo_path: Path, sysroot: Path):
-    verify_seg.verify(backup_dir)
-    sums = parse_sha256sums(backup_dir)
+def restore_single_segment(backup_dir: Path | None, segment_name: str, target_part: Path,
+                           custom_image: str | None, custom_size: int | None,
+                           custom_sha256: str | None, allow_regular_file: bool,
+                           toggle_ro: bool, dry_run: bool,
+                           mountinfo_path: Path, sysroot: Path, stdin_stream=None):
     tasks = dict(verify_seg.layout()[0])
     check(segment_name in tasks, f"unknown segment: {segment_name}")
     check(segment_name != "emmc-p2.img", "single-segment mode refuses overwriting protected emmc-p2.img")
 
-    if custom_image is not None:
-        check(custom_sha256 is not None and len(custom_sha256) == 64,
-              "--image requires 64-hex --sha256")
-        src_path = custom_image
-        length = custom_image.stat().st_size
+    src_path = None
+    src_stream = None
+    if custom_image == "-":
+        check(custom_size is not None and custom_size > 0, "--image - requires positive --image-size")
+        check(custom_sha256 is not None and len(custom_sha256) == 64, "--image - requires 64-hex --sha256")
+        check(custom_size <= tasks[segment_name],
+              f"stream image {custom_size} exceeds segment capacity {tasks[segment_name]}")
+        length = custom_size
+        expected_sha = custom_sha256
+        src_stream = sys.stdin.buffer if stdin_stream is None else stdin_stream
+        label = "<stdin>"
+    elif custom_image is not None:
+        img_path = Path(custom_image)
+        check(custom_sha256 is not None and len(custom_sha256) == 64, "--image requires 64-hex --sha256")
+        src_path = img_path
+        length = img_path.stat().st_size
         check(length <= tasks[segment_name],
               f"custom image {length} exceeds segment capacity {tasks[segment_name]}")
         expected_sha = custom_sha256
+        label = img_path.name
     else:
+        check(backup_dir is not None, "backup_dir is required when --image is not used")
+        verify_seg.verify(backup_dir)
+        sums = parse_sha256sums(backup_dir)
         src_path = backup_dir / segment_name
         length = tasks[segment_name]
         expected_sha = sums[segment_name]
+        label = src_path.name
 
     if not allow_regular_file:
         mounts = source.parse_mountinfo(mountinfo_path.read_text().splitlines())
@@ -289,7 +357,6 @@ def restore_single_segment(backup_dir: Path, segment_name: str, target_part: Pat
     else:
         mounted_devs, mounted_phys, root_phys = set(), set(), set()
 
-    target_dev = None
     if not allow_regular_file:
         check(not target_part.is_symlink(), f"refusing symlink target: {target_part}")
         target_dev = source.device_info(target_part)
@@ -300,21 +367,22 @@ def restore_single_segment(backup_dir: Path, segment_name: str, target_part: Pat
         sys_path = source.sys_block(target_dev, sysroot)
         check((sys_path / "partition").exists(),
               f"single-segment mode requires a partition device, not whole disk: {target_part}")
-        write_and_verify_segment(
-            src_path, target_part, 0, length, expected_sha,
-            False, dry_run, sysroot, expected_dev=target_dev,
-        )
+        with BlkRoGuard(target_part, target_dev, enable=toggle_ro, dry_run=dry_run):
+            write_and_verify_segment(
+                src_path, target_part, 0, length, expected_sha,
+                False, dry_run, sysroot, expected_dev=target_dev, src_stream=src_stream,
+            )
     else:
         write_and_verify_segment(
             src_path, target_part, 0, length, expected_sha,
-            True, dry_run, sysroot,
+            True, dry_run, sysroot, src_stream=src_stream,
         )
-    print(f"{'DRY-RUN' if dry_run else 'RESTORED'} {src_path.name} -> {target_part} ({length} bytes)")
+    print(f"{'DRY-RUN' if dry_run else 'RESTORED'} {label} -> {target_part} ({length} bytes) sha256={expected_sha}")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("backup_dir", type=Path, help="verified G1 backup directory")
+    p.add_argument("backup_dir", nargs="?", type=Path, help="verified G1 backup directory")
     p.add_argument("--mode", choices=("full-disk", "single-segment"), required=True)
     p.add_argument("--target-disk", type=Path, help="whole disk device/file for full-disk mode")
     p.add_argument("--boot0", type=Path, help="boot0 device/file for full-disk mode")
@@ -323,8 +391,11 @@ def main():
                    help="explicit confirmation for full-disk restore")
     p.add_argument("--segment", help="segment name for single-segment mode (e.g. emmc-p1.img)")
     p.add_argument("--target-part", type=Path, help="target partition device/file for single-segment mode")
-    p.add_argument("--image", type=Path, help="optional verified custom image (e.g. resized ext4) <= segment size")
+    p.add_argument("--image", help="optional verified custom image path or '-' for stdin stream")
+    p.add_argument("--image-size", type=int, help="exact byte size when using --image -")
     p.add_argument("--sha256", help="expected SHA-256 for --image")
+    p.add_argument("--toggle-ro", action="store_true",
+                   help="temporarily clear BLKROSET on approved non-p2 target and restore ro=1")
     p.add_argument("--allow-regular-file", action="store_true",
                    help="allow writing to a regular non-symlink image file (for isolated testing)")
     p.add_argument("--dry-run", action="store_true", help="run all verification and safety guards without writing")
@@ -334,7 +405,8 @@ def main():
 
     try:
         if args.mode == "full-disk":
-            check(args.target_disk is not None, "--target-disk is required for full-disk mode")
+            check(args.backup_dir is not None and args.target_disk is not None,
+                  "backup_dir and --target-disk are required for full-disk mode")
             restore_full_disk(
                 args.backup_dir, args.target_disk, args.boot0, args.boot1,
                 args.allow_regular_file, args.dry_run, args.confirm_overwrite_all,
@@ -345,8 +417,9 @@ def main():
                   "--segment and --target-part are required for single-segment mode")
             restore_single_segment(
                 args.backup_dir, args.segment, args.target_part,
-                args.image, args.sha256, args.allow_regular_file,
-                args.dry_run, args.mountinfo, args.sysroot,
+                args.image, args.image_size, args.sha256,
+                args.allow_regular_file, args.toggle_ro, args.dry_run,
+                args.mountinfo, args.sysroot,
             )
     except (RestoreError, verify_seg.VerificationError, source.SafetyError, OSError, ValueError) as exc:
         print("ERROR: " + str(exc), file=sys.stderr)
