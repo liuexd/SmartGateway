@@ -28,6 +28,49 @@
  */
 #define GATEWAY_WIFI_PORT 7000
 
+typedef struct
+{
+    gateway_health_listener_t *listener;
+    message_queue_t *upstream_queue;
+    device_manager_t *device_manager;
+    const volatile int *running;
+    uint16_t wifi_port;
+} gateway_health_thread_ctx_t;
+
+static void *gateway_health_thread_run(void *arg)
+{
+    gateway_health_thread_ctx_t *ctx = (gateway_health_thread_ctx_t *)arg;
+    if (!ctx || !ctx->listener || !ctx->running)
+        return NULL;
+    while (*ctx->running && ctx->listener->fd >= 0)
+    {
+        struct pollfd pfd;
+        int rc;
+        pfd.fd = ctx->listener->fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        rc = poll(&pfd, 1, 100);
+        if (rc < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (rc == 0)
+            continue;
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            break;
+        }
+        if ((pfd.revents & POLLIN) != 0)
+        {
+            gateway_health_listener_service(ctx->listener, ctx->upstream_queue,
+                                            ctx->device_manager, ctx->wifi_port);
+        }
+    }
+    return NULL;
+}
+
 int gateway_loop_run(
     const char *serial_device,
     int baud_rate,
@@ -55,6 +98,9 @@ int gateway_loop_run(
     pthread_t bluetooth_thread;
     bluetooth_worker_context_t bluetooth_context;
     int bluetooth_thread_created = 0;
+    pthread_t health_thread;
+    gateway_health_thread_ctx_t health_ctx;
+    int health_thread_created = 0;
 
     if (context == NULL ||
         parser == NULL ||
@@ -145,7 +191,11 @@ int gateway_loop_run(
                 "[SERVER LINK] pthread_create failed: %s\n",
                 strerror(pthread_result));
 
-                gateway_health_listener_close(&health_listener);
+                if (health_thread_created)
+    {
+        pthread_join(health_thread, NULL);
+    }
+    gateway_health_listener_close(&health_listener);
                 message_queue_destroy(&upstream_queue);
 
                 wifi_worker_group_destroy(&wifi_workers);
@@ -204,6 +254,22 @@ int gateway_loop_run(
             bluetooth_thread_created = 1;
         }
     }
+    if (health_listener.fd >= 0)
+    {
+        health_ctx.listener = &health_listener;
+        health_ctx.upstream_queue = &upstream_queue;
+        health_ctx.device_manager = &device_manager;
+        health_ctx.running = running;
+        health_ctx.wifi_port = GATEWAY_WIFI_PORT;
+        if (pthread_create(&health_thread, NULL, gateway_health_thread_run, &health_ctx) == 0)
+        {
+            health_thread_created = 1;
+        }
+        else
+        {
+            gateway_health_listener_close(&health_listener);
+        }
+    }
     while (*running)
     {
         /*
@@ -214,18 +280,14 @@ int gateway_loop_run(
             *   - 北向 TCP        -> server_link_worker
             *   - WiFi 客户端数据 -> wifi_client_worker
             */
-        struct pollfd pollfds[2];
+        struct pollfd pollfds[1];
         int poll_result;
 
         pollfds[0].fd = wifi_listen_fd;
         pollfds[0].events = POLLIN;
         pollfds[0].revents = 0;
-        pollfds[1].fd = health_listener.fd;
-        pollfds[1].events = POLLIN;
-        pollfds[1].revents = 0;
 
-
-        poll_result = poll(pollfds, 2, 1000);
+        poll_result = poll(pollfds, 1, 1000);
 
         if (poll_result < 0)
         {
@@ -245,16 +307,6 @@ int gateway_loop_run(
                 * 继续检查退出标志。
                 */
             continue;
-        }
-
-        if ((pollfds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-        {
-            gateway_health_listener_close(&health_listener);
-        }
-        else if ((pollfds[1].revents & POLLIN) != 0)
-        {
-            gateway_health_listener_service(&health_listener, &upstream_queue,
-                                            &device_manager);
         }
 
         if ((pollfds[0].revents & POLLIN) != 0)

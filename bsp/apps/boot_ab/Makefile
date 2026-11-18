@@ -29,8 +29,8 @@ all: sgw_bootctl sgw_watchdog_guard sgw_system_health
 sgw_bootctl: sgw_bootctl.c $(COMMON_SRCS) $(COMMON_HDRS) $(R3C_SRCS) $(R3C_HDRS)
 	$(CC) $(CFLAGS) $(R3C_INC) sgw_bootctl.c $(COMMON_SRCS) $(R3C_SRCS) $(R3C_LIBS) -o $@
 
-sgw_watchdog_guard: sgw_watchdog_guard.c $(COMMON_SRCS) $(COMMON_HDRS)
-	$(CC) $(CFLAGS) $(INC_FLAGS) sgw_watchdog_guard.c $(COMMON_SRCS) -o $@
+sgw_watchdog_guard: sgw_watchdog_guard.c $(COMMON_SRCS) $(COMMON_HDRS) $(R3C_SRCS) $(R3C_HDRS)
+	$(CC) $(CFLAGS) $(R3C_INC) sgw_watchdog_guard.c $(COMMON_SRCS) $(R3C_SRCS) $(R3C_LIBS) -o $@
 
 sgw_system_health: sgw_system_health.c health_devices.c health_devices.h health_network.c health_network.h health_gateway.c health_gateway.h health_supervisor.c health_supervisor.h system_health.c system_health.h $(COMMON_SRCS) $(COMMON_HDRS)
 	$(CC) $(CFLAGS) $(INC_FLAGS) sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c $(COMMON_SRCS) -o $@
@@ -46,8 +46,8 @@ arm:
 	$(ARM_CC) $(CFLAGS) \
 		$(ARM_ARCH_FLAGS) \
 		--sysroot=$(ARM_SYSROOT) \
-		$(INC_FLAGS) \
-		sgw_watchdog_guard.c $(COMMON_SRCS) \
+		$(R3C_INC) \
+		sgw_watchdog_guard.c $(COMMON_SRCS) $(R3C_SRCS) $(R3C_LIBS) \
 		-o $(ARM_BUILD_DIR)/sgw_watchdog_guard
 	$(ARM_CC) $(CFLAGS) $(ARM_ARCH_FLAGS) --sysroot=$(ARM_SYSROOT) \
 		$(INC_FLAGS) sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c $(COMMON_SRCS) \

@@ -56,4 +56,15 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
                             char *errbuf,
                             size_t errlen);
 
+int r3c_coordinator_confirm_guarded(const r3c_policy_t *policy,
+                                    const fw_env_backend_cfg_t *fw_cfg,
+                                    const ab_health_cfg_t *hcfg,
+                                    ab_slot_t expected_running_slot,
+                                    const r3c_runtime_ops_t *ops,
+                                    int (*keepalive_fn)(void *ctx),
+                                    void *keepalive_ctx,
+                                    r3c_confirm_result_t *out,
+                                    char *errbuf,
+                                    size_t errlen);
+
 #endif

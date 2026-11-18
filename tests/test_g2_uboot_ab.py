@@ -439,5 +439,34 @@ class TestG2UbootAB(unittest.TestCase):
         self.assertEqual(self.img_path.read_bytes(), bytes(img))
 
 
+    def test_production_watchdog_guard_fails_closed_without_overrides(self):
+        # 1. Production mode without test overrides rejects non-root before opening /dev/watchdog.
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("SGW_FW_")}
+        res_nonroot = subprocess.run(
+            [str(WDT_GUARD_BIN), "--budget-ms", "150", "--poll-ms", "40"],
+            env=clean_env, capture_output=True, text=True,
+        )
+        self.assertNotEqual(res_nonroot.returncode, 0)
+        self.assertIn("requires root privilege", res_nonroot.stderr)
+
+        # 2. Even with LD_PRELOAD geteuid()==0 and --wdt-dev pointing to a file, production mode
+        #    hardcodes /etc/fw_env.config, /usr/sbin/fw_* and /etc/smartgateway/r3c-policy.conf
+        #    so it never confirms on a dev host without a valid real target environment.
+        wdt_file = self.tmpdir / "prod-wdt"
+        wdt_file.touch()
+        c_uid = self.tmpdir / "fake_uid.c"
+        so_uid = self.tmpdir / "fake_uid.so"
+        c_uid.write_text("#include <sys/types.h>\nuid_t geteuid(void){return 0;}\n")
+        subprocess.run(["gcc", "-shared", "-fPIC", str(c_uid), "-o", str(so_uid)], check=True)
+        prod_env = dict(clean_env, LD_PRELOAD=str(so_uid))
+        res_prod = subprocess.run(
+            [str(WDT_GUARD_BIN), "--wdt-dev", str(wdt_file),
+             "--budget-ms", "150", "--poll-ms", "40", "--exit-on-confirm"],
+            env=prod_env, capture_output=True, text=True,
+        )
+        self.assertNotEqual(res_prod.returncode, 0)
+        self.assertNotIn("TRIAL_CONFIRMED", res_prod.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

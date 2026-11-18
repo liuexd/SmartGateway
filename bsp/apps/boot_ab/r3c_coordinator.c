@@ -208,14 +208,16 @@ static sgw_health_state_t check_network_health(const r3c_policy_t *p, const r3c_
     return sgw_health_network_probe(p->net_iface);
 }
 
-int r3c_coordinator_confirm(const r3c_policy_t *policy,
-                            const fw_env_backend_cfg_t *fw_cfg,
-                            const ab_health_cfg_t *hcfg,
-                            ab_slot_t expected_running_slot,
-                            const r3c_runtime_ops_t *ops,
-                            r3c_confirm_result_t *out,
-                            char *errbuf,
-                            size_t errlen)
+int r3c_coordinator_confirm_guarded(const r3c_policy_t *policy,
+                                    const fw_env_backend_cfg_t *fw_cfg,
+                                    const ab_health_cfg_t *hcfg,
+                                    ab_slot_t expected_running_slot,
+                                    const r3c_runtime_ops_t *ops,
+                                    int (*keepalive_fn)(void *ctx),
+                                    void *keepalive_ctx,
+                                    r3c_confirm_result_t *out,
+                                    char *errbuf,
+                                    size_t errlen)
 {
     int app_lockfd = -1, txdir = -1, tx_lockfd = -1, slotfd = -1, rc = -1;
     ab_slot_t running_slot = AB_SLOT_NONE;
@@ -238,10 +240,6 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
         return fail(errbuf, errlen, "null coordinator argument");
     if (!ops && (geteuid() != 0 || policy->trusted_uid != 0))
         return fail(errbuf, errlen, "production confirm requires root privilege");
-    /* The local marker does not yet authenticate the complete ingress-to-
-     * forwarding path. Never enable production confirmation on this basis. */
-    if (!ops)
-        return fail(errbuf, errlen, "trusted end-to-end business health unavailable");
     if (out) memset(out, 0, sizeof(*out));
 
     /* 1. Acquire ordered locks: first app OTA shared lock, then txdir exclusive lock */
@@ -384,6 +382,10 @@ int r3c_coordinator_confirm(const r3c_policy_t *policy,
     memset(&assess, 0, sizeof(assess));
     for (;;) {
         uint64_t now = monotonic_ms(), sample_end;
+        if (keepalive_fn && keepalive_fn(keepalive_ctx) != 0) {
+            fail(errbuf, errlen, "watchdog keepalive failed during confirm");
+            goto out;
+        }
         pid_t gw_pid = 0, gw_pid2 = 0;
         unsigned long long gw_start = 0, gw_start2 = 0;
         sgw_health_sample_t sample;
@@ -554,4 +556,18 @@ out:
     if (txdir >= 0) close(txdir);
     if (app_lockfd >= 0) { (void)flock(app_lockfd, LOCK_UN); close(app_lockfd); }
     return rc;
+}
+
+int r3c_coordinator_confirm(const r3c_policy_t *policy,
+                            const fw_env_backend_cfg_t *fw_cfg,
+                            const ab_health_cfg_t *hcfg,
+                            ab_slot_t expected_running_slot,
+                            const r3c_runtime_ops_t *ops,
+                            r3c_confirm_result_t *out,
+                            char *errbuf,
+                            size_t errlen)
+{
+    return r3c_coordinator_confirm_guarded(
+        policy, fw_cfg, hcfg, expected_running_slot, ops,
+        NULL, NULL, out, errbuf, errlen);
 }

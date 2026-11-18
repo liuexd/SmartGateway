@@ -201,6 +201,7 @@ void *bluetooth_worker(void *arg)
         worker->baud_rate
     );
 
+    memset(&app_context, 0, sizeof(app_context));
     app_context.gateway_context = context;
     app_context.upstream_queue = upstream_queue;
     app_context.device_manager = device_manager;

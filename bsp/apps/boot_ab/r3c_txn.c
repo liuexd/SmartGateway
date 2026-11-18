@@ -590,39 +590,28 @@ static int sysfs_relations_empty(const char *root, unsigned int maj, unsigned in
     return 0;
 }
 
-static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
-                                                    const char *sysfs_root,
-                                                    unsigned int maj, unsigned int min,
-                                                    const char *running_dev,
-                                                    const char *lg_dev,
-                                                    int require_blk_geom,
-                                                    char *err, size_t errlen)
+typedef struct {
+    dev_t dev;
+    ino_t ino;
+} r3c_ns_id_t;
+
+static int scan_mountinfo_file(const char *path,
+                               int ignore_missing,
+                               const char *sysfs,
+                               unsigned int maj, unsigned int min,
+                               const char *t_disk,
+                               uint64_t t_start, uint64_t t_size,
+                               int have_t_geom,
+                               int require_blk_geom,
+                               char *err, size_t errlen)
 {
-    const char *sysfs = (sysfs_root && sysfs_root[0]) ? sysfs_root : "/sys/dev/block";
-    FILE *fp = fopen((mountinfo_path && mountinfo_path[0]) ? mountinfo_path : "/proc/self/mountinfo", "re");
-    char line[4096], t_disk[128] = {0};
-    uint64_t t_start = 0, t_size = 0;
-    int t_is_part = 0, have_t_geom = 0;
+    FILE *fp = fopen(path, "re");
+    char line[4096];
 
-    if (!fp) return fail(err, errlen, "cannot read mountinfo (fail-closed)");
-
-    if (read_blk_geom(sysfs, maj, min, &t_start, &t_size, t_disk, sizeof(t_disk), &t_is_part) == 0) {
-        have_t_geom = 1;
-        if (!t_is_part || t_start == 0) {
-            fclose(fp);
-            return fail(err, errlen, "target must be a non-MBR partition, not whole disk");
-        }
-        if (ranges_overlap_u64(t_start, t_size, 1792ULL, 32ULL)) {
-            fclose(fp);
-            return fail(err, errlen, "target partition overlaps reserved U-Boot env sectors");
-        }
-        if (require_blk_geom && sysfs_relations_empty(sysfs, maj, min) != 0) {
-            fclose(fp);
-            return fail(err, errlen, "target stacked device topology is unverified");
-        }
-    } else if (require_blk_geom) {
-        fclose(fp);
-        return fail(err, errlen, "cannot verify target block topology in sysfs");
+    if (!fp) {
+        if (ignore_missing && (errno == ENOENT || errno == ESRCH))
+            return 0;
+        return fail(err, errlen, "cannot read mountinfo (fail-closed)");
     }
 
     while (fgets(line, sizeof(line), fp)) {
@@ -631,31 +620,192 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
             fclose(fp);
             return fail(err, errlen, "malformed or truncated mountinfo");
         }
-        {
-            if (lma == maj && lmi == min) {
+        if (lma == maj && lmi == min) {
+            fclose(fp);
+            return fail(err, errlen, "refusing write to currently mounted target block device");
+        }
+        if (have_t_geom && lma != 0) {
+            uint64_t m_start = 0, m_size = 0;
+            char m_disk[128] = {0};
+            int m_is_part = 0;
+            int known = read_blk_geom(sysfs, lma, lmi, &m_start, &m_size, m_disk, sizeof(m_disk), &m_is_part) == 0;
+            if (require_blk_geom && (!known || sysfs_relations_empty(sysfs, lma, lmi) != 0)) {
                 fclose(fp);
-                return fail(err, errlen, "refusing write to currently mounted target block device");
+                return fail(err, errlen, "mounted block topology is unverified");
             }
-            if (have_t_geom && lma != 0) {
-                uint64_t m_start = 0, m_size = 0;
-                char m_disk[128] = {0};
-                int m_is_part = 0;
-                int known = read_blk_geom(sysfs, lma, lmi, &m_start, &m_size, m_disk, sizeof(m_disk), &m_is_part) == 0;
-                if (require_blk_geom && (!known || sysfs_relations_empty(sysfs, lma, lmi) != 0)) {
+            if (known && strcmp(t_disk, m_disk) == 0) {
+                if (!m_is_part || ranges_overlap_u64(t_start, t_size, m_start, m_size)) {
                     fclose(fp);
-                    return fail(err, errlen, "mounted block topology is unverified");
-                }
-                if (known && strcmp(t_disk, m_disk) == 0) {
-                    if (!m_is_part || ranges_overlap_u64(t_start, t_size, m_start, m_size)) {
-                        fclose(fp);
-                        return fail(err, errlen, "target partition overlaps mounted block topology");
-                    }
+                    return fail(err, errlen, "target partition overlaps mounted block topology");
                 }
             }
         }
     }
-    if (ferror(fp)) { fclose(fp); return fail(err, errlen, "cannot read complete mountinfo"); }
+    if (ferror(fp)) {
+        int saved = errno;
+        fclose(fp);
+        if (ignore_missing && (saved == ENOENT || saved == ESRCH))
+            return 0;
+        return fail(err, errlen, "cannot read complete mountinfo");
+    }
     fclose(fp);
+    return 0;
+}
+
+static int ns_id_seen(const r3c_ns_id_t *seen, size_t count, dev_t dev, ino_t ino)
+{
+    for (size_t i = 0; i < count; ++i) {
+        if (seen[i].dev == dev && seen[i].ino == ino)
+            return 1;
+    }
+    return 0;
+}
+
+static int ns_id_push(r3c_ns_id_t **seen, size_t *count, size_t *cap, dev_t dev, ino_t ino)
+{
+    if (*count == *cap) {
+        size_t next = (*cap == 0) ? 16 : (*cap * 2);
+        r3c_ns_id_t *grown = realloc(*seen, next * sizeof(*grown));
+        if (!grown)
+            return -1;
+        *seen = grown;
+        *cap = next;
+    }
+    (*seen)[*count].dev = dev;
+    (*seen)[*count].ino = ino;
+    (*count)++;
+    return 0;
+}
+
+static int is_ascii_pid_dir(const char *name)
+{
+    if (!name || !name[0])
+        return 0;
+    for (const char *p = name; *p; ++p) {
+        if (!isdigit((unsigned char)*p))
+            return 0;
+    }
+    return 1;
+}
+
+static int scan_proc_mount_namespaces(const char *proc_root,
+                                      const char *sysfs,
+                                      unsigned int maj, unsigned int min,
+                                      const char *t_disk,
+                                      uint64_t t_start, uint64_t t_size,
+                                      int have_t_geom,
+                                      int require_blk_geom,
+                                      char *err, size_t errlen)
+{
+    char self_mi[PATH_MAX], self_ns[PATH_MAX];
+    struct stat self_st;
+    r3c_ns_id_t *seen = NULL;
+    size_t n_seen = 0, cap_seen = 0;
+    DIR *dp = NULL;
+    struct dirent *ent;
+    int rc = -1;
+
+    if (snprintf(self_mi, sizeof(self_mi), "%s/self/mountinfo", proc_root) >= (int)sizeof(self_mi) ||
+        snprintf(self_ns, sizeof(self_ns), "%s/self/ns/mnt", proc_root) >= (int)sizeof(self_ns))
+        return fail(err, errlen, "proc mountinfo path too long");
+
+    if (scan_mountinfo_file(self_mi, 0, sysfs, maj, min, t_disk, t_start, t_size,
+                            have_t_geom, require_blk_geom, err, errlen) != 0)
+        return -1;
+
+    if (stat(self_ns, &self_st) == 0) {
+        if (ns_id_push(&seen, &n_seen, &cap_seen, self_st.st_dev, self_st.st_ino) != 0) {
+            fail(err, errlen, "out of memory tracking mount namespaces");
+            goto out;
+        }
+    } else if (errno != ENOENT && errno != ENOTDIR) {
+        fail(err, errlen, "cannot inspect self mount namespace (fail-closed)");
+        goto out;
+    }
+
+    dp = opendir(proc_root);
+    if (!dp) {
+        fail(err, errlen, "cannot open proc for mount namespace scan");
+        goto out;
+    }
+    for (;;) {
+        char ns_path[PATH_MAX], mi_path[PATH_MAX];
+        struct stat ns_st;
+        errno = 0;
+        ent = readdir(dp);
+        if (!ent) {
+            if (errno != 0) {
+                fail(err, errlen, "error reading proc directory for mount namespaces");
+                goto out;
+            }
+            break;
+        }
+        if (!is_ascii_pid_dir(ent->d_name))
+            continue;
+        if (snprintf(ns_path, sizeof(ns_path), "%s/%s/ns/mnt", proc_root, ent->d_name) >= (int)sizeof(ns_path) ||
+            snprintf(mi_path, sizeof(mi_path), "%s/%s/mountinfo", proc_root, ent->d_name) >= (int)sizeof(mi_path))
+            continue;
+        if (stat(ns_path, &ns_st) != 0) {
+            if (errno == ENOENT || errno == ESRCH)
+                continue;
+            fail(err, errlen, "cannot inspect foreign process mount namespace (fail-closed)");
+            goto out;
+        }
+        if (ns_id_seen(seen, n_seen, ns_st.st_dev, ns_st.st_ino))
+            continue;
+        if (ns_id_push(&seen, &n_seen, &cap_seen, ns_st.st_dev, ns_st.st_ino) != 0) {
+            fail(err, errlen, "out of memory tracking mount namespaces");
+            goto out;
+        }
+        if (scan_mountinfo_file(mi_path, 1, sysfs, maj, min, t_disk, t_start, t_size,
+                                have_t_geom, require_blk_geom, err, errlen) != 0)
+            goto out;
+    }
+    rc = 0;
+
+out:
+    if (dp)
+        closedir(dp);
+    free(seen);
+    return rc;
+}
+
+static int target_conflicts_with_mountinfo_or_slots_at(const char *mountinfo_path,
+                                                       const char *proc_root,
+                                                       const char *sysfs_root,
+                                                       unsigned int maj, unsigned int min,
+                                                       const char *running_dev,
+                                                       const char *lg_dev,
+                                                       int require_blk_geom,
+                                                       char *err, size_t errlen)
+{
+    const char *sysfs = (sysfs_root && sysfs_root[0]) ? sysfs_root : "/sys/dev/block";
+    const char *proc = (proc_root && proc_root[0]) ? proc_root : "/proc";
+    char t_disk[128] = {0};
+    uint64_t t_start = 0, t_size = 0;
+    int t_is_part = 0, have_t_geom = 0;
+
+    if (read_blk_geom(sysfs, maj, min, &t_start, &t_size, t_disk, sizeof(t_disk), &t_is_part) == 0) {
+        have_t_geom = 1;
+        if (!t_is_part || t_start == 0)
+            return fail(err, errlen, "target must be a non-MBR partition, not whole disk");
+        if (ranges_overlap_u64(t_start, t_size, 1792ULL, 32ULL))
+            return fail(err, errlen, "target partition overlaps reserved U-Boot env sectors");
+        if (require_blk_geom && sysfs_relations_empty(sysfs, maj, min) != 0)
+            return fail(err, errlen, "target stacked device topology is unverified");
+    } else if (require_blk_geom) {
+        return fail(err, errlen, "cannot verify target block topology in sysfs");
+    }
+
+    if (mountinfo_path && mountinfo_path[0]) {
+        if (scan_mountinfo_file(mountinfo_path, 0, sysfs, maj, min, t_disk, t_start, t_size,
+                                have_t_geom, require_blk_geom, err, errlen) != 0)
+            return -1;
+    } else {
+        if (scan_proc_mount_namespaces(proc, sysfs, maj, min, t_disk, t_start, t_size,
+                                       have_t_geom, require_blk_geom, err, errlen) != 0)
+            return -1;
+    }
 
     /* Also check running_dev and last_good_dev sysfs range exclusion if present */
     if (have_t_geom) {
@@ -689,6 +839,19 @@ static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
     return 0;
 }
 
+static int target_conflicts_with_mountinfo_or_slots(const char *mountinfo_path,
+                                                    const char *sysfs_root,
+                                                    unsigned int maj, unsigned int min,
+                                                    const char *running_dev,
+                                                    const char *lg_dev,
+                                                    int require_blk_geom,
+                                                    char *err, size_t errlen)
+{
+    return target_conflicts_with_mountinfo_or_slots_at(
+        mountinfo_path, "/proc", sysfs_root, maj, min,
+        running_dev, lg_dev, require_blk_geom, err, errlen);
+}
+
 int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
                                   int imagefd,
                                   const fw_env_backend_cfg_t *fw_cfg,
@@ -703,7 +866,8 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
     char src_hex[65], rb_hex[65];
     uint64_t src_len = 0, rb_len = 0, off = 0, cap_bytes = 0;
     unsigned char buf[16384];
-    const char *mi_path = (opts && opts->mountinfo_path) ? opts->mountinfo_path : "/proc/self/mountinfo";
+    const char *opt_mi_path = (opts && opts->mountinfo_path && opts->mountinfo_path[0]) ? opts->mountinfo_path : NULL;
+    const char *mi_path = opt_mi_path ? opt_mi_path : "/proc/self/mountinfo";
     const char *sysfs_root = (opts && opts->sysfs_block_root) ? opts->sysfs_block_root : "/sys/dev/block";
     int allow_reg = (opts && opts->allow_regular_file_target) ? 1 : 0;
     int skip_blk = (opts && opts->allow_host_slot_sim) ? 1 : 0;
@@ -790,7 +954,7 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
                 goto out;
             }
             if (target_conflicts_with_mountinfo_or_slots(
-                    mi_path, sysfs_root, major(tst.st_rdev), minor(tst.st_rdev),
+                    opt_mi_path, sysfs_root, major(tst.st_rdev), minor(tst.st_rdev),
                     running_dev, lg_dev, !allow_reg, err, errlen) != 0) {
                 goto out;
             }
@@ -823,7 +987,7 @@ int r3c_txn_write_and_verify_slot(int txdir, const char *id, uid_t owner,
     }
     if (S_ISBLK(opened_st.st_mode)) {
         if (target_conflicts_with_mountinfo_or_slots(
-                mi_path, sysfs_root, major(opened_st.st_rdev), minor(opened_st.st_rdev),
+                opt_mi_path, sysfs_root, major(opened_st.st_rdev), minor(opened_st.st_rdev),
                 running_dev, lg_dev, !allow_reg, err, errlen) != 0) {
             goto out;
         }

@@ -2,10 +2,12 @@
 #include "health_probe.h"
 #include "message_json.h"
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -134,11 +136,13 @@ int gateway_health_listener_open(gateway_health_listener_t *listener)
     mode_t old_mask;
     int fd, n;
 
-    if (!listener || geteuid() != health_uid() ||
-        trusted_directory(dir, health_uid()) != 0) return -1;
+    if (!listener) return -1;
+    gateway_health_listener_init(listener);
+    if (trusted_directory(dir, health_uid()) != 0) return -1;
     n = snprintf(listener->path, sizeof(listener->path), "%s/gateway-health.sock", dir);
-    if (n < 0 || (size_t)n >= sizeof(listener->path)) return -1;
-    if (lstat(listener->path, &st) == 0 || errno != ENOENT) return -1;
+    if (n <= 0 || (size_t)n >= sizeof(listener->path)) return -1;
+    if (unlink(listener->path) != 0 && errno != ENOENT) return -1;
+
     fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0) return -1;
     memset(&addr, 0, sizeof(addr));
@@ -170,6 +174,15 @@ static long long now_ms(void)
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+int gateway_health_device_manager_ok(device_manager_t *devices)
+{
+    int ok;
+    if (!devices || pthread_mutex_trylock(&devices->mutex) != 0) return 0;
+    ok = devices->count <= DEVICE_MANAGER_MAX_DEVICES;
+    pthread_mutex_unlock(&devices->mutex);
+    return ok;
 }
 
 /* Actual DATA parsing/serialization and live business structures, without
@@ -205,12 +218,63 @@ static int business_components_ready(const char *nonce, message_queue_t *queue,
     queue_ok = !queue->shutting_down && queue->count < MESSAGE_QUEUE_CAPACITY &&
                queue->head < MESSAGE_QUEUE_CAPACITY && queue->tail < MESSAGE_QUEUE_CAPACITY;
     pthread_mutex_unlock(&queue->mutex);
-    if (pthread_mutex_trylock(&devices->mutex) != 0) return 0;
-    manager_ok = devices->count <= DEVICE_MANAGER_MAX_DEVICES;
-    pthread_mutex_unlock(&devices->mutex);
+    manager_ok = gateway_health_device_manager_ok(devices);
     return queue_ok && manager_ok;
 }
 
+int gateway_health_check_pending_diag(const frame_data_t *data)
+{
+    const char *n1, *n2;
+    char full_nonce[NONCE_LEN + 1];
+    int match = 0;
+
+    if (!data || strcmp(data->node_id, "_DIAG") != 0)
+        return 0;
+    n1 = frame_data_find_field(data, "N1");
+    n2 = frame_data_find_field(data, "N2");
+    if (!n1 || !n2 || strlen(n1) != 16 || strlen(n2) != 16)
+        return 0;
+    memcpy(full_nonce, n1, 16);
+    memcpy(full_nonce + 16, n2, 16);
+    full_nonce[NONCE_LEN] = '\0';
+
+    pthread_mutex_lock(&local_diag_mutex);
+    if (pending_local_nonce[0] &&
+        memcmp(full_nonce, pending_local_nonce, NONCE_LEN) == 0) {
+        match = 1;
+    }
+    pthread_mutex_unlock(&local_diag_mutex);
+    return match;
+}
+
+int gateway_health_try_enqueue_local_marker(message_queue_t *queue,
+                                            const char *json,
+                                            size_t json_len)
+{
+    gateway_message_t msg;
+    size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
+    int pushed = 0;
+
+    if (!queue || !json || json_len == 0 ||
+        pfx_len + json_len > GATEWAY_MESSAGE_MAX_SIZE)
+        return 0;
+    memcpy(msg.data, LOCAL_MARKER_PREFIX, pfx_len);
+    memcpy(msg.data + pfx_len, json, json_len);
+    msg.length = pfx_len + json_len;
+
+    if (pthread_mutex_trylock(&queue->mutex) != 0)
+        return 0;
+    if (!queue->shutting_down && queue->count < MESSAGE_QUEUE_CAPACITY &&
+        queue->head < MESSAGE_QUEUE_CAPACITY && queue->tail < MESSAGE_QUEUE_CAPACITY) {
+        queue->items[queue->tail] = msg;
+        queue->tail = (queue->tail + 1) % MESSAGE_QUEUE_CAPACITY;
+        queue->count++;
+        pthread_cond_signal(&queue->not_empty);
+        pushed = 1;
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    return pushed;
+}
 
 int gateway_health_consume_local_marker(const unsigned char *data, size_t length)
 {
@@ -283,60 +347,104 @@ int gateway_health_consume_queued_marker(message_queue_t *queue)
     return 0;
 }
 
-static int queue_try_push_local_marker(message_queue_t *queue, const char *nonce)
+/* Exercise real TCP loopback ingress -> gateway_loop accept() -> wifi_client_worker ->
+ * line_parser_feed -> gateway_app_on_wifi_line -> upstream_queue -> server_link_worker. */
+static int ingress_try_roundtrip_local_diag(uint16_t wifi_port, const char *nonce)
 {
-    gateway_message_t msg;
-    size_t pfx_len = sizeof(LOCAL_MARKER_PREFIX) - 1;
-    char json_buf[256];
-    int jlen, pushed = 0;
+    char line[256];
+    int n, fd = -1, ok = 0, err = 0;
+    struct sockaddr_in addr;
+    size_t sent = 0, total;
+    long long deadline;
 
-    if (!queue || !nonce || strlen(nonce) != NONCE_LEN)
+    if (wifi_port == 0 || !nonce || strlen(nonce) != NONCE_LEN)
         return 0;
-    jlen = snprintf(json_buf, sizeof(json_buf),
-                    "{\"node\":\"_DIAG\",\"seq\":1,\"type\":\"DATA\",\"fields\":{\"N1\":\"%.16s\",\"N2\":\"%.16s\"}}",
-                    nonce, nonce + 16);
-    if (jlen <= 0 || pfx_len + (size_t)jlen > GATEWAY_MESSAGE_MAX_SIZE)
+    n = snprintf(line, sizeof(line),
+                 "{\"node\":\"_DIAG\",\"seq\":1,\"type\":\"DATA\","
+                 "\"fields\":{\"N1\":\"%.16s\",\"N2\":\"%.16s\"}}\n",
+                 nonce, nonce + 16);
+    if (n <= 0 || (size_t)n >= sizeof(line))
         return 0;
-    memcpy(msg.data, LOCAL_MARKER_PREFIX, pfx_len);
-    memcpy(msg.data + pfx_len, json_buf, (size_t)jlen);
-    msg.length = pfx_len + (size_t)jlen;
+    total = (size_t)n;
 
     pthread_mutex_lock(&local_diag_mutex);
     memcpy(pending_local_nonce, nonce, NONCE_LEN + 1);
     consumed_local_nonce[0] = '\0';
     pthread_mutex_unlock(&local_diag_mutex);
 
-    if (pthread_mutex_trylock(&queue->mutex) != 0) return 0;
-    if (!queue->shutting_down && queue->count < MESSAGE_QUEUE_CAPACITY) {
-        queue->items[queue->tail] = msg;
-        queue->tail = (queue->tail + 1) % MESSAGE_QUEUE_CAPACITY;
-        queue->count++;
-        pthread_cond_signal(&queue->not_empty);
-        pushed = 1;
-    }
-    pthread_mutex_unlock(&queue->mutex);
-    if (!pushed) return 0;
+    fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (fd < 0) goto out;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(wifi_port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
-    /* Bounded wait up to 250ms for real server_link thread to pop & consume marker. */
+    deadline = now_ms();
+    if (deadline < 0) goto out;
+    deadline += 150;
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        struct pollfd pfd = {fd, POLLOUT, 0};
+        socklen_t elen = sizeof(err);
+        long long now = now_ms();
+        int r;
+        if (errno != EINPROGRESS || now < 0 || now >= deadline) goto out;
+        r = poll(&pfd, 1, (int)(deadline - now));
+        if (r <= 0 || !(pfd.revents & POLLOUT) ||
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen) != 0 || err != 0)
+            goto out;
+    }
+
+    while (sent < total) {
+        struct pollfd pfd = {fd, POLLOUT, 0};
+        long long now = now_ms();
+        ssize_t w;
+        int r;
+        if (now < 0 || now >= deadline) goto out;
+        r = poll(&pfd, 1, (int)(deadline - now));
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0 || !(pfd.revents & POLLOUT)) goto out;
+        w = send(fd, line + sent, total - sent, MSG_NOSIGNAL);
+        if (w < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+        if (w <= 0) goto out;
+        sent += (size_t)w;
+    }
+    close(fd);
+    fd = -1;
+
+    /* Bounded wait up to 450ms for full ingress -> gateway_app -> server_link consumption. */
     {
-        long long end = now_ms() + 250;
-        for (;;) {
-            int done = 0;
-            pthread_mutex_lock(&local_diag_mutex);
-            done = (memcmp(consumed_local_nonce, nonce, NONCE_LEN) == 0);
-            pthread_mutex_unlock(&local_diag_mutex);
-            if (done) return 1;
-            if (now_ms() >= end) break;
-            struct timespec ts = {0, 5000000L}; /* 5 ms */
-            nanosleep(&ts, NULL);
+        long long end = now_ms();
+        if (end >= 0) {
+            end += 450;
+            for (;;) {
+                int done = 0;
+                pthread_mutex_lock(&local_diag_mutex);
+                done = (memcmp(consumed_local_nonce, nonce, NONCE_LEN) == 0);
+                pthread_mutex_unlock(&local_diag_mutex);
+                if (done) { ok = 1; break; }
+                if (now_ms() >= end) break;
+                {
+                    struct timespec ts = {0, 5000000L}; /* 5 ms */
+                    nanosleep(&ts, NULL);
+                }
+            }
         }
     }
-    return 0;
+
+out:
+    if (fd >= 0) close(fd);
+    pthread_mutex_lock(&local_diag_mutex);
+    pending_local_nonce[0] = '\0';
+    consumed_local_nonce[0] = '\0';
+    pthread_mutex_unlock(&local_diag_mutex);
+    return ok;
 }
 
 void gateway_health_listener_service(gateway_health_listener_t *listener,
                                      message_queue_t *queue,
-                                     device_manager_t *devices)
+                                     device_manager_t *devices,
+                                     uint16_t wifi_port)
 {
     int client;
     struct ucred peer;
@@ -391,7 +499,7 @@ void gateway_health_listener_service(gateway_health_listener_t *listener,
         } else if (local) {
             verdict = (business_components_ready(nonce, queue, devices) &&
                        recent_worker_tick() &&
-                       queue_try_push_local_marker(queue, nonce)) ? "LOCAL_OK" : "STALLED";
+                       ingress_try_roundtrip_local_diag(wifi_port, nonce)) ? "LOCAL_OK" : "STALLED";
         } else {
             verdict = business_components_ready(nonce, queue, devices) ? "READY" : "NOT_READY";
         }

@@ -183,6 +183,45 @@ class GatewayProbeTests(unittest.TestCase):
         with self.assertRaises(socket.timeout):
             self.upstream.recv(4096)
 
+    def test_unsolicited_or_mismatched_diag_is_rejected_without_upstream_pollution(self):
+        # 1. Unsolicited _DIAG frame when no SGW-LOCAL/1 probe is active must be rejected.
+        unsolicited = (
+            b'{"node":"_DIAG","seq":1,"type":"DATA",'
+            b'"fields":{"N1":"0123456789abcdef","N2":"fedcba9876543210"}}\n'
+        )
+        # 2. Wrong/short nonce format or mismatched nonce must also be rejected.
+        bad_nonce = (
+            b'{"node":"_DIAG","seq":2,"type":"DATA",'
+            b'"fields":{"N1":"bad","N2":"nonce"}}\n'
+        )
+        with socket.create_connection(("127.0.0.1", 7000), timeout=2) as node:
+            node.sendall(unsolicited)
+            node.sendall(bad_nonce)
+        time.sleep(0.25)
+        self.upstream.settimeout(0.3)
+        with self.assertRaises(socket.timeout):
+            self.upstream.recv(4096)
+
+        # Real local probe and normal DATA traffic must still succeed afterward.
+        local_res = self.probe(local=True, timeout=1500)
+        self.assertEqual(local_res.returncode, 0, local_res.stdout + local_res.stderr)
+        self.assertIn("local-observed", local_res.stdout)
+        with self.assertRaises(socket.timeout):
+            self.upstream.recv(4096)
+
+        payload = b'{"node":"NODE01","seq":18,"type":"DATA","fields":{"T":"240"}}\n'
+        with socket.create_connection(("127.0.0.1", 7000), timeout=2) as node:
+            node.sendall(payload)
+        self.upstream.settimeout(3)
+        received = b""
+        while b"\n" not in received:
+            chunk = self.upstream.recv(1024)
+            self.assertTrue(chunk)
+            received += chunk
+        data = json.loads(received.split(b"\n", 1)[0])
+        self.assertEqual(data["node"], "NODE01")
+        self.assertEqual(data["seq"], 18)
+
     def test_live_pid_but_unresponsive_gateway_is_rejected(self):
         os.kill(self.gateway_pid, signal.SIGSTOP)
         self.stopped = True

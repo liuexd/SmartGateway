@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <poll.h>
@@ -352,6 +353,14 @@ void *wifi_client_worker(void *arg)
     app_context.transport = DEVICE_TRANSPORT_WIFI;
     app_context.device_fd = client_fd;
     app_context.bound_node_id[0] = '\0';
+    {
+        struct sockaddr_in peer_addr;
+        socklen_t peer_len = sizeof(peer_addr);
+        app_context.is_loopback = (getpeername(client_fd, (struct sockaddr *)&peer_addr, &peer_len) == 0 &&
+                                   peer_len >= sizeof(peer_addr) &&
+                                   peer_addr.sin_family == AF_INET &&
+                                   peer_addr.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) ? 1 : 0;
+    }
 
     /*
      * 必须是非阻塞的：

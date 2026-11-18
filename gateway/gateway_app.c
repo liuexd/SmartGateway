@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway_app.h"
+#include "health_probe.h"
 #include "message_json.h"
 
 #include <errno.h>
@@ -1329,6 +1330,28 @@ void gateway_app_on_wifi_line(
             line
             );
 
+            return;
+        }
+
+        if (strcmp(data.node_id, "_DIAG") == 0)
+        {
+            char diag_json[256];
+            int diag_len;
+
+            if (!upstream_context->is_loopback ||
+                !gateway_health_check_pending_diag(&data) ||
+                !gateway_health_device_manager_ok(upstream_context->device_manager))
+            {
+                context->decode_errors++;
+                return;
+            }
+            diag_len = message_json_build_data(diag_json, sizeof(diag_json), &data);
+            if (diag_len <= 0)
+            {
+                return;
+            }
+            (void)gateway_health_try_enqueue_local_marker(
+                upstream_queue, diag_json, (size_t)diag_len);
             return;
         }
 

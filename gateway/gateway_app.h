@@ -30,6 +30,8 @@ typedef struct
 
     char bound_node_id[DEVICE_NODE_ID_SIZE];
 
+    int is_loopback;
+
 }gateway_app_upstream_context_t;
 
 /*

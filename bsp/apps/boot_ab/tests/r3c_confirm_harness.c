@@ -299,10 +299,15 @@ int main(int argc, char **argv)
 
     if (argc < 2) return 2;
     if (strcmp(argv[1], "confirm-null-gate") == 0) {
-        r3c_policy_t policy = {0};
-        fw_env_backend_cfg_t fw = {0};
-        ab_health_cfg_t health = {0};
+        r3c_policy_t policy;
+        fw_env_backend_cfg_t fw;
+        ab_health_cfg_t health;
         char err[256] = {0};
+        r3c_policy_init_default(&policy, 0);
+        ab_health_cfg_init(&health);
+        fw.fw_printenv_bin = "/usr/sbin/fw_printenv";
+        fw.fw_setenv_bin = "/usr/sbin/fw_setenv";
+        fw.config_path = "/etc/fw_env.config";
         int rc = r3c_coordinator_confirm(&policy, &fw, &health, AB_SLOT_NONE, NULL, NULL, err, sizeof(err));
         fprintf(stderr, "%s\n", err);
         return rc == 0 ? 0 : 1;
