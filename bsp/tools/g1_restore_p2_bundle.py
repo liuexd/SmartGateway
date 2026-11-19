@@ -14,7 +14,6 @@ import argparse
 import gzip
 import hashlib
 import json
-import lzma
 import os
 import shutil
 import stat
@@ -59,13 +58,23 @@ def sha256_file(path: Path) -> tuple[str, int]:
     return h.hexdigest(), total
 
 
+
+def _import_lzma():
+    try:
+        import lzma
+        return lzma
+    except ImportError as exc:
+        raise P2BundleError(
+            "xz compression requires liblzma; use uncompressed or gzip (.gz) bundle in this environment"
+        ) from exc
+
 def open_decompressed_stream(img_path: Path, compression: str):
     if compression == "none":
         return img_path.open("rb")
     if compression == "gzip":
         return gzip.open(img_path, "rb")
     if compression == "xz":
-        return lzma.open(img_path, "rb")
+        return _import_lzma().open(img_path, "rb")
     raise P2BundleError(f"unsupported compression format: {compression!r}")
 
 
@@ -211,7 +220,7 @@ def cmd_pack(args):
             shutil.copyfileobj(fin, fout, length=CHUNK_SIZE)
     else:
         img_name = "emmc-p2.img.xz"
-        with src_img.open("rb") as fin, lzma.open(out_dir / img_name, "wb") as fout:
+        with src_img.open("rb") as fin, _import_lzma().open(out_dir / img_name, "wb") as fout:
             shutil.copyfileobj(fin, fout, length=CHUNK_SIZE)
     (out_dir / img_name).chmod(0o600)
 
