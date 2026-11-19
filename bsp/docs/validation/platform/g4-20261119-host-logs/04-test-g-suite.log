@@ -1,0 +1,163 @@
+=== [4] discover test_g*.py ===
+test_audit_reports_expected_layout_and_redacts_mac_value (test_g1_audit_offline_backup.OfflineAuditTests.test_audit_reports_expected_layout_and_redacts_mac_value) ... ok
+test_corrupted_env_crc_reported_false (test_g1_audit_offline_backup.OfflineAuditTests.test_corrupted_env_crc_reported_false) ... ok
+test_block_readonly_flag_is_required (test_g1_backup_guard.TopologyTests.test_block_readonly_flag_is_required) ... ok
+test_copy_checks_full_length_and_readback (test_g1_backup_guard.TopologyTests.test_copy_checks_full_length_and_readback) ... ok
+test_destination_on_emmc_rejected_before_directory_creation (test_g1_backup_guard.TopologyTests.test_destination_on_emmc_rejected_before_directory_creation) ... ok
+test_device_mapper_to_emmc_is_rejected (test_g1_backup_guard.TopologyTests.test_device_mapper_to_emmc_is_rejected) ... ok
+test_direct_and_uuid_alias_have_same_underlying_identity (test_g1_backup_guard.TopologyTests.test_direct_and_uuid_alias_have_same_underlying_identity) ... ok
+test_malformed_mountinfo_rejected (test_g1_backup_guard.TopologyTests.test_malformed_mountinfo_rejected) ... ok
+test_missing_p3_aborts_validation (test_g1_backup_guard.TopologyTests.test_missing_p3_aborts_validation) ... ok
+test_p2_rw_at_nonroot_mount_fails (test_g1_backup_guard.TopologyTests.test_p2_rw_at_nonroot_mount_fails) ... ok
+test_ram_root_is_allowed_without_hiding_block_mounts (test_g1_backup_guard.TopologyTests.test_ram_root_is_allowed_without_hiding_block_mounts) ... ok
+test_read_only_emmc_and_external_sd_allowed (test_g1_backup_guard.TopologyTests.test_read_only_emmc_and_external_sd_allowed) ... ok
+test_rejects_existing_target_and_missing_parent (test_g1_backup_guard.TopologyTests.test_rejects_existing_target_and_missing_parent) ... ok
+test_unknown_and_overlay_fail_closed (test_g1_backup_guard.TopologyTests.test_unknown_and_overlay_fail_closed) ... ok
+test_usb_functionfs_does_not_hide_block_device_writes (test_g1_backup_guard.TopologyTests.test_usb_functionfs_does_not_hide_block_device_writes) ... ok
+test_complete_ssh_stream_hash_and_readback (test_g1_network_transport.TransportTests.test_complete_ssh_stream_hash_and_readback) ... ok
+test_existing_output_and_symlink_rejected (test_g1_network_transport.TransportTests.test_existing_output_and_symlink_rejected) ... ok
+test_incomplete_transfer_never_creates_manifest (test_g1_network_transport.TransportTests.test_incomplete_transfer_never_creates_manifest) ... OK emmc-reserved-pre-p1.bin (2098176 bytes)
+OK emmc-p1.img (65536 bytes)
+OK emmc-p2.img (32768 bytes)
+OK emmc-p3.img (16384 bytes)
+OK emmc-tail.img (16384 bytes)
+OK emmc-boot0.img (8192 bytes)
+OK emmc-boot1.img (8192 bytes)
+User area SHA256 (ordered segments): 2b445069e3d6d9aada7f92927cb2a139175424d69cf07cbaa70aed9fd8b635dc
+Archive consistency only: boot and restoration remain unverified.
+OK emmc-reserved-pre-p1.bin (2098176 bytes)
+OK emmc-p1.img (65536 bytes)
+OK emmc-p2.img (32768 bytes)
+OK emmc-p3.img (16384 bytes)
+OK emmc-tail.img (16384 bytes)
+OK emmc-boot0.img (8192 bytes)
+OK emmc-boot1.img (8192 bytes)
+User area SHA256 (ordered segments): f63db96e6f09e780d059e1b8b728627b6a305821d084e4978d98554495340cf3
+Archive consistency only: boot and restoration remain unverified.
+Receiving emmc-p1.img (4 bytes)
+ERROR: incomplete backup remains; do not use for recovery.
+ok
+test_nonzero_and_timeout_rejected (test_g1_network_transport.TransportTests.test_nonzero_and_timeout_rejected) ... ok
+test_rejects_untrusted_key_and_existing_destination (test_g1_network_transport.TransportTests.test_rejects_untrusted_key_and_existing_destination) ... ok
+test_sender_aborts_before_open_on_writable_source (test_g1_network_transport.TransportTests.test_sender_aborts_before_open_on_writable_source) ... ok
+test_sender_streams_exact_range_after_all_guards (test_g1_network_transport.TransportTests.test_sender_streams_exact_range_after_all_guards) ... ok
+test_short_excess_and_wrong_digest_rejected (test_g1_network_transport.TransportTests.test_short_excess_and_wrong_digest_rejected) ... ok
+test_prepares_fixed_init_sshd_and_cpio (test_g1_recovery_initramfs.RecoveryInitramfsTests.test_prepares_fixed_init_sshd_and_cpio) ... ok
+test_force_ro_guard_toggles_and_restores (test_g1_restore_segments.RestoreSegmentsTests.test_force_ro_guard_toggles_and_restores) ... ok
+test_full_disk_restore_onto_regular_files_matches_segments_byte_for_byte (test_g1_restore_segments.RestoreSegmentsTests.test_full_disk_restore_onto_regular_files_matches_segments_byte_for_byte) ... ok
+test_single_segment_and_stdin_stream_guards (test_g1_restore_segments.RestoreSegmentsTests.test_single_segment_and_stdin_stream_guards) ... ok
+test_pinned_ssh_stream_and_wrong_host_key (test_g1_ssh_loopback.SshLoopbackTests.test_pinned_ssh_stream_and_wrong_host_key) ... ok
+test_complete_archive_and_ordered_digest (test_g1_verify_segments.BackupSegmentsTests.test_complete_archive_and_ordered_digest) ... ok
+test_duplicate_manifest_and_symlink_rejected (test_g1_verify_segments.BackupSegmentsTests.test_duplicate_manifest_and_symlink_rejected) ... ok
+test_tamper_and_missing_segments_rejected (test_g1_verify_segments.BackupSegmentsTests.test_tamper_and_missing_segments_rejected) ... ok
+test_wrong_partition_table_rejected_even_if_hash_updated (test_g1_verify_segments.BackupSegmentsTests.test_wrong_partition_table_rejected_even_if_hash_updated) ... ok
+test_both_redundant_copies_corrupt_fails_closed (test_g2_uboot_ab.TestG2UbootAB.test_both_redundant_copies_corrupt_fails_closed) ... ok
+test_fail_closed_confirm_and_trusted_health_checks (test_g2_uboot_ab.TestG2UbootAB.test_fail_closed_confirm_and_trusted_health_checks) ... ok
+test_production_watchdog_guard_fails_closed_without_overrides (test_g2_uboot_ab.TestG2UbootAB.test_production_watchdog_guard_fails_closed_without_overrides) ... ok
+test_redundant_env_powerloss_corruption_recovery (test_g2_uboot_ab.TestG2UbootAB.test_redundant_env_powerloss_corruption_recovery) ... ok
+test_single_to_redundant_env_migration (test_g2_uboot_ab.TestG2UbootAB.test_single_to_redundant_env_migration) ... ok
+test_trial_bootlimit_rollback_and_swupdate_isolation (test_g2_uboot_ab.TestG2UbootAB.test_trial_bootlimit_rollback_and_swupdate_isolation) ... ok
+test_uboot_2017_03_backends_and_compiled_scripts (test_g2_uboot_ab.TestG2UbootAB.test_uboot_2017_03_backends_and_compiled_scripts) ... ok
+test_watchdog_guard_takeover_confirm_and_timeout_reset_path (test_g2_uboot_ab.TestG2UbootAB.test_watchdog_guard_takeover_confirm_and_timeout_reset_path) ... ok
+test_actual_supervisor_socket_and_child_identity (test_g2r3_health.G2R3Tests.test_actual_supervisor_socket_and_child_identity) ... ok
+test_diagnostic_never_confirms_or_trusts_cli_health_flags (test_g2r3_health.G2R3Tests.test_diagnostic_never_confirms_or_trusts_cli_health_flags) ... ok
+test_gateway_not_owned_by_supervisor_rejected (test_g2r3_health.G2R3Tests.test_gateway_not_owned_by_supervisor_rejected) ... ok
+test_stale_pid_stopped_and_timeout_rejected (test_g2r3_health.G2R3Tests.test_stale_pid_stopped_and_timeout_rejected) ... ok
+test_symlink_in_untrusted_parent_is_rejected (test_g2r3_health.G2R3Tests.test_symlink_in_untrusted_parent_is_rejected) ... ok
+test_writable_socket_directory_is_rejected (test_g2r3_health.G2R3Tests.test_writable_socket_directory_is_rejected) ... ok
+test_wrong_peer_uid_and_wrong_gateway_executable_rejected (test_g2r3_health.G2R3Tests.test_wrong_peer_uid_and_wrong_gateway_executable_rejected) ... ok
+test_actual_gateway_components_and_no_upstream_pollution (test_g2r3b_gateway_probe.GatewayProbeTests.test_actual_gateway_components_and_no_upstream_pollution) ... ok
+test_live_pid_but_unresponsive_gateway_is_rejected (test_g2r3b_gateway_probe.GatewayProbeTests.test_live_pid_but_unresponsive_gateway_is_rejected) ... ok
+test_local_probe_with_disconnected_upstream_preserves_pending_data (test_g2r3b_gateway_probe.GatewayProbeTests.test_local_probe_with_disconnected_upstream_preserves_pending_data) ... ok
+test_unsolicited_or_mismatched_diag_is_rejected_without_upstream_pollution (test_g2r3b_gateway_probe.GatewayProbeTests.test_unsolicited_or_mismatched_diag_is_rejected_without_upstream_pollution) ... ok
+test_incomplete_corrupt_or_untrusted_app_state (test_g2r3c_data.DataTests.test_incomplete_corrupt_or_untrusted_app_state) ... ok
+test_lock_is_required_and_busy_fails_without_creating_it (test_g2r3c_data.DataTests.test_lock_is_required_and_busy_fails_without_creating_it) ... ok
+test_missing_release_and_symlink_state_rejected (test_g2r3c_data.DataTests.test_missing_release_and_symlink_state_rejected) ... ok
+test_mountinfo_identity_and_mode (test_g2r3c_data.DataTests.test_mountinfo_identity_and_mode) ... ok
+test_real_root_directory_or_character_device_is_not_data (test_g2r3c_data.DataTests.test_real_root_directory_or_character_device_is_not_data) ... ok
+test_settled_confirmed_and_rolled_back (test_g2r3c_data.DataTests.test_settled_confirmed_and_rolled_back) ... ok
+test_snapshot_lock_can_be_held_through_decision (test_g2r3c_data.DataTests.test_snapshot_lock_can_be_held_through_decision) ... ok
+test_shared_image_persists_across_simulated_slot_views (test_g2r3c_fuse_image.ImageTests.test_shared_image_persists_across_simulated_slot_views) ... ok
+test_debugfs_subprocess_timeout_rejects_bundle (test_g2r3c_n09_n10.TestG2R3CN09N10.test_debugfs_subprocess_timeout_rejects_bundle) ... ok
+test_n09_controlled_local_policy_decoupling_without_upstream_traffic (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_controlled_local_policy_decoupling_without_upstream_traffic) ... ok
+test_n09_local_pipeline_stalled_gateway_worker_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_local_pipeline_stalled_gateway_worker_rejected) ... ok
+test_n09_rw_ext4_mutated_after_boot_confirms_via_signed_rootfs_manifest_and_tamper_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_rw_ext4_mutated_after_boot_confirms_via_signed_rootfs_manifest_and_tamper_rejected) ... ok
+test_n09_strict_forward_end_to_end_confirm_and_n10_replay_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n09_strict_forward_end_to_end_confirm_and_n10_replay_rejected) ... ok
+test_n10_caller_running_mismatch_rejects_before_any_mutation (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_caller_running_mismatch_rejects_before_any_mutation) ... ok
+test_n10_incomplete_duplicate_or_image_mismatched_manifest_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_incomplete_duplicate_or_image_mismatched_manifest_rejected) ... ok
+test_n10_legacy_sgw_system_1_without_manifest_rejected_on_rw_root (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_legacy_sgw_system_1_without_manifest_rejected_on_rw_root) ... ok
+test_n10_persistence_fsync_failure_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_persistence_fsync_failure_rejected) ... ok
+test_n10_split_state_env_confirmed_txn_confirming_recovery_and_idempotency (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_split_state_env_confirmed_txn_confirming_recovery_and_idempotency) ... ok
+test_n10_tamper_lock_contention_device_and_policy_faults_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_tamper_lock_contention_device_and_policy_faults_rejected) ... ok
+test_n10_unprivileged_production_sgw_bootctl_and_override_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_unprivileged_production_sgw_bootctl_and_override_rejected) ... ok
+test_n10_write_slot_mounted_blk_topology_overlap_and_toctou_swap (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_write_slot_mounted_blk_topology_overlap_and_toctou_swap) ... ok
+test_n10_write_slot_rejects_running_mounted_and_small_with_zero_bytes_written (test_g2r3c_n09_n10.TestG2R3CN09N10.test_n10_write_slot_rejects_running_mounted_and_small_with_zero_bytes_written) ... ok
+test_runtime_libc_symlink_escape_and_chain_rejected (test_g2r3c_n09_n10.TestG2R3CN09N10.test_runtime_libc_symlink_escape_and_chain_rejected) ... ok
+test_signature_rejected_before_debugfs_is_executed (test_g2r3c_n09_n10.TestG2R3CN09N10.test_signature_rejected_before_debugfs_is_executed) ... ok
+test_lock_contention_and_readonly_destination_rejected (test_g2r3c_signed_bundle.SignedBundleTests.test_lock_contention_and_readonly_destination_rejected) ... ok
+test_persistence_failure_never_reports_success (test_g2r3c_signed_bundle.SignedBundleTests.test_persistence_failure_never_reports_success) ... ok
+test_signed_package_records_two_distinct_random_ids (test_g2r3c_signed_bundle.SignedBundleTests.test_signed_package_records_two_distinct_random_ids) ... ok
+test_tamper_image_manifest_and_signature_rejected (test_g2r3c_signed_bundle.SignedBundleTests.test_tamper_image_manifest_and_signature_rejected) ... ok
+test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
+test_install_on_pre_pinned_inittab_preserves_signed_digest (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_install_on_pre_pinned_inittab_preserves_signed_digest) ... ok
+test_install_rejects_mismatched_s99_on_signed_image_without_mutating_files (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_install_rejects_mismatched_s99_on_signed_image_without_mutating_files) ... ok
+test_standalone_install_uses_unified_wrapper_and_stop_start_preserves_inittab (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_standalone_install_uses_unified_wrapper_and_stop_start_preserves_inittab) ... ok
+test_start_refuses_mutating_inittab_when_entry_missing (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_start_refuses_mutating_inittab_when_entry_missing) ... ok
+test_stop_start_crash_recovery_preserve_inittab_digest (test_g3_inittab_digest_stability.TestG3InittabDigestStability.test_stop_start_crash_recovery_preserve_inittab_digest) ... ok
+test_kernel_baseline_vs_trimmed_metrics_and_constraints (test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_kernel_baseline_vs_trimmed_metrics_and_constraints) ... ok
+test_rootfs_trimmed_image_contents_and_bounds (test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_rootfs_trimmed_image_contents_and_bounds) ... ok
+test_fsync_failure_during_slot_write_never_stages_pending (test_g4_swu_isolated.TestG4SwuIsolated.test_fsync_failure_during_slot_write_never_stages_pending) ... ok
+test_negative_bootctl_rejections_zero_mutation (test_g4_swu_isolated.TestG4SwuIsolated.test_negative_bootctl_rejections_zero_mutation) ... ok
+test_negative_swupdate_rejections_zero_mutation (test_g4_swu_isolated.TestG4SwuIsolated.test_negative_swupdate_rejections_zero_mutation) ... ok
+test_p1_to_p2_real_swupdate_apply_and_pending_stage (test_g4_swu_isolated.TestG4SwuIsolated.test_p1_to_p2_real_swupdate_apply_and_pending_stage) ... ok
+test_p2_to_p1_real_swupdate_apply_and_pending_stage (test_g4_swu_isolated.TestG4SwuIsolated.test_p2_to_p1_real_swupdate_apply_and_pending_stage) ... ok
+test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides (test_g4_swu_isolated.TestG4SwuIsolated.test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides) ... ok
+test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate (test_g4_swu_isolated.TestG4SwuIsolated.test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate) ... ok
+
+----------------------------------------------------------------------
+Ran 94 tests in 82.082s
+
+OK
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (1024 bytes)
+OK emmc-p2.img (1536 bytes)
+OK emmc-p3.img (512 bytes)
+OK emmc-tail.img (512 bytes)
+OK emmc-boot0.img (1024 bytes)
+OK emmc-boot1.img (1024 bytes)
+User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
+Archive consistency only: boot and restoration remain unverified.
+RESTORED emmc-reserved-pre-p1.bin -> /tmp/g1-restore-6p0k0n4h/restored.img @ 0 (512 bytes)
+RESTORED emmc-p1.img -> /tmp/g1-restore-6p0k0n4h/restored.img @ 512 (1024 bytes)
+RESTORED emmc-p2.img -> /tmp/g1-restore-6p0k0n4h/restored.img @ 1536 (1536 bytes)
+RESTORED emmc-p3.img -> /tmp/g1-restore-6p0k0n4h/restored.img @ 3072 (512 bytes)
+RESTORED emmc-tail.img -> /tmp/g1-restore-6p0k0n4h/restored.img @ 3584 (512 bytes)
+RESTORED emmc-boot0.img -> /tmp/g1-restore-6p0k0n4h/boot0.img (1024 bytes)
+RESTORED emmc-boot1.img -> /tmp/g1-restore-6p0k0n4h/boot1.img (1024 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (1024 bytes)
+OK emmc-p2.img (1536 bytes)
+OK emmc-p3.img (512 bytes)
+OK emmc-tail.img (512 bytes)
+OK emmc-boot0.img (1024 bytes)
+OK emmc-boot1.img (1024 bytes)
+User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
+Archive consistency only: boot and restoration remain unverified.
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (1024 bytes)
+OK emmc-p2.img (1536 bytes)
+OK emmc-p3.img (512 bytes)
+OK emmc-tail.img (512 bytes)
+OK emmc-boot0.img (1024 bytes)
+OK emmc-boot1.img (1024 bytes)
+User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
+Archive consistency only: boot and restoration remain unverified.
+RESTORED emmc-p1.img -> /tmp/g1-restore-d01cotbg/p1_target.img (1024 bytes) sha256=431379dc3272b4227e74eadca33b071254ff006d74110b0de8d7ff9f2ac91de0
+RESTORED <stdin> -> /tmp/g1-restore-d01cotbg/stream_p1.img (512 bytes) sha256=9b998801996b57ff99e05c9d0b0168605c10ad169e217ced8ea35485688155f1
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+OK emmc-p2.img (1024 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)
+OK emmc-reserved-pre-p1.bin (512 bytes)
+OK emmc-p1.img (512 bytes)

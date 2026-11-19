@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
-"""G4 isolated virtual-disk SWUpdate (.swu) end-to-end verification.
+"""G4 isolated virtual-disk production SWUpdate (.swu) end-to-end acceptance tests.
 
-Covers on virtual slot1/slot2/data/emmc_env images (never touching /dev/mmcblk1):
-1. Positive p1 -> p2: RSA-2048 .swu verify -> target guard -> write + fsync + readback -> PENDING TXN & redundant U-Boot env.
-2. Positive p2 -> p1: reverse direction from p2 -> p1, keeping p2 untouched.
-3. Negative rejections (fail-closed with ZERO mutation to slot images and U-Boot env):
-   - bad / untrusted signature
-   - corrupted rootfs.img payload
-   - corrupted zImage payload
-   - wrong board identifier
-   - wrong target slot (target == running == last_good)
-   - slot capacity smaller than rootfs.img
-   - path traversal / unsafe archive entry in .swu
+Exercises the real SWUpdate 2019.11 binary (CONFIG_SIGNED_IMAGES + CONFIG_SIGALG_RAWRSA
++ CONFIG_BOOTLOADER_NONE) invoking production bsp/ota/sgw-swu-apply.sh ->
+sgw_bootctl_isolated (exact sgw_bootctl.c r3c_coordinator_apply_bundle code path)
+against isolated virtual slot1/slot2/data/emmc_env images (never touching /dev/mmcblk1).
 """
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -23,10 +17,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bsp/ota/g4_swu_tool.py"
-HARNESS = ROOT / "bsp/apps/boot_ab/r3c_confirm_harness"
+SWUPDATE_BIN = ROOT / "build/swupdate-host/swupdate"
+BOOTCTL_ISOLATED = ROOT / "bsp/apps/boot_ab/sgw_bootctl_isolated"
+BOOTCTL_PROD = ROOT / "bsp/apps/boot_ab/sgw_bootctl"
+SWUPDATE_CFG = ROOT / "bsp/ota/swupdate.cfg"
 UBOOT_BUILD = Path(os.environ.get("UBOOT_AB_BUILD_DIR", str(ROOT / "build/uboot-ab")))
-FW_PRINTENV = UBOOT_BUILD / "host/fw_printenv"
-FW_SETENV = UBOOT_BUILD / "host/fw_setenv"
+FW_PRINTENV = Path(os.path.abspath(UBOOT_BUILD / "host/fw_printenv"))
+FW_SETENV = Path(os.path.abspath(UBOOT_BUILD / "host/fw_setenv"))
 ENV_OFFSET_0 = 0xE0000
 ENV_OFFSET_1 = 0xE2000
 ENV_SIZE = 0x2000
@@ -75,18 +72,17 @@ def sha256_path(p: Path) -> str:
 class TestG4SwuIsolated(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for p in (TOOL, HARNESS, FW_PRINTENV, FW_SETENV):
+        for p in (TOOL, SWUPDATE_BIN, BOOTCTL_ISOLATED, BOOTCTL_PROD, SWUPDATE_CFG, FW_PRINTENV, FW_SETENV):
             if not p.exists():
                 raise RuntimeError(f"missing required artifact: {p}")
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix=".sgw-g4-swu-", dir=Path.home())
+        self.tmp = tempfile.TemporaryDirectory(prefix=".sgw-g4-", dir=Path.home())
         self.addCleanup(self.tmp.cleanup)
         self.addCleanup(self._unmount)
         self.base = Path(self.tmp.name)
         self.base.chmod(0o700)
 
-        # Redundant U-Boot env (4 MiB sparse image with 0xE0000 & 0xE2000)
         self.emmc_img = self.base / "emmc_env.img"
         with self.emmc_img.open("wb") as f:
             f.truncate(4 * 1024 * 1024)
@@ -108,7 +104,6 @@ class TestG4SwuIsolated(unittest.TestCase):
             "sgw_last_error": "none",
         })
 
-        # Virtual slot1 (8 MiB), slot2 (16 MiB), and DATA (32 MiB via fuse2fs)
         self.slot1_img = self.base / "slot1.ext4"
         self.slot2_img = self.base / "slot2.ext4"
         with self.slot1_img.open("wb") as f:
@@ -137,7 +132,21 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.txdir = self.data_mnt / ".sgw-tx"
         self.txdir.mkdir(mode=0o700)
 
-        # Fake OS proc/sysroot context (default running slot = 1)
+        self.app_ota_dir = self.base / "app"
+        self.app_ota_dir.mkdir(mode=0o700)
+        (self.app_ota_dir / "state").mkdir(mode=0o700)
+        (self.app_ota_dir / "releases/0.6.0").mkdir(parents=True, mode=0o700)
+        self.ota_lock = self.app_ota_dir / ".ota.lock"
+        self.ota_lock.write_bytes(b"")
+        self.ota_lock.chmod(0o600)
+        ota_state = self.app_ota_dir / "state/ota_state.json"
+        ota_state.write_text(
+            '{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}\n',
+            encoding="utf-8",
+        )
+        ota_state.chmod(0o600)
+        (self.app_ota_dir / "current").symlink_to("releases/0.6.0")
+
         self.sysroot = self.base / "sysroot"
         self.sysroot.mkdir(mode=0o755)
         self.cmdline = self.base / "cmdline"
@@ -145,7 +154,6 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.mountinfo = self.base / "mountinfo"
         self._set_running_slot(1)
 
-        # RSA-2048 keypair + payload ext4 image
         self.privkey = self.base / "ota-private.pem"
         self.pubkey = self.base / "ota-public.pem"
         subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
@@ -198,7 +206,8 @@ class TestG4SwuIsolated(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _pack_swu(self, out_name: str, target_slot: int, board: str = "imx6ull-100ask", privkey: Path = None) -> Path:
+    def _pack_swu(self, out_name: str, target_slot: int, board: str = "imx6ull-100ask",
+                  hw_rev: str = "revA", privkey: Path = None) -> Path:
         swu = self.base / out_name
         subprocess.run(
             [
@@ -210,13 +219,25 @@ class TestG4SwuIsolated(unittest.TestCase):
                 "--privkey", str(privkey or self.privkey),
                 "--target-slot", str(target_slot),
                 "--board", board,
+                "--hw-rev", hw_rev,
                 "--out", str(swu),
             ],
             check=True, capture_output=True, text=True,
         )
         return swu
 
-    def _apply_swu(self, swu: Path, slot_img: Path, expected_target=None):
+    def _pack_cpio_from_dir(self, src_dir: Path, entries: list, out_swu: Path):
+        with out_swu.open("wb") as out_f:
+            subprocess.run(
+                ["cpio", "-o", "-H", "crc", "--quiet"],
+                cwd=str(src_dir),
+                input=("\n".join(entries) + "\n").encode("utf-8"),
+                stdout=out_f,
+                check=True,
+            )
+
+    def _apply_swu(self, swu: Path, slot_img: Path, expected_target=None,
+                   hw_rev: str = "revA", swupdate_cfg: Path = None, extra_env: dict = None):
         cmd = [
             "python3", str(TOOL), "apply",
             "--swu", str(swu),
@@ -230,26 +251,52 @@ class TestG4SwuIsolated(unittest.TestCase):
             "--mounts", str(self.mounts),
             "--mountinfo", str(self.mountinfo),
             "--sysroot", str(self.sysroot),
+            "--app-ota-dir", str(self.app_ota_dir),
+            "--data-mnt", str(self.data_mnt),
+            "--hw-rev", hw_rev,
         ]
         if expected_target is not None:
             cmd.extend(["--expected-target", str(expected_target)])
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if swupdate_cfg is not None:
+            cmd.extend(["--swupdate-cfg", str(swupdate_cfg)])
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=240)
 
-    def test_p1_to_p2_signed_swu_verify_write_readback_and_pending_stage(self):
+    def _parse_txn(self, txid: str) -> dict:
+        txn_file = self.txdir / f"txn-{txid}"
+        manifest_file = self.txdir / f"txn-{txid}.manifest"
+        self.assertTrue(txn_file.is_file(), f"missing {txn_file}")
+        self.assertTrue(manifest_file.is_file(), f"missing {manifest_file}")
+        self.assertEqual(manifest_file.stat().st_mode & 0o777, 0o600)
+        lines = txn_file.read_text(encoding="utf-8").splitlines()
+        self.assertGreaterEqual(len(lines), 1)
+        self.assertEqual(lines[0], "SGW-TXN-1")
+        parsed = {}
+        for line in lines[1:]:
+            if "=" in line:
+                k, v = line.split("=", 1)
+                parsed[k] = v
+        return parsed
+
+    def test_p1_to_p2_real_swupdate_apply_and_pending_stage(self):
         slot1_before = sha256_path(self.slot1_img)
         payload_sha = sha256_path(self.payload_ext4)
+        cfg_copy = self.base / "swupdate.cfg"
+        cfg_copy.write_text(SWUPDATE_CFG.read_text(encoding="utf-8"), encoding="utf-8")
+
         swu = self._pack_swu("g4-to-p2.swu", target_slot=2)
-        res = self._apply_swu(swu, self.slot2_img, expected_target=2)
+        res = self._apply_swu(swu, self.slot2_img, expected_target=2, swupdate_cfg=cfg_copy)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         self.assertIn("STAGED tx=", res.stdout)
+        self.assertIn("Software updated successfully", res.stdout)
         txid = res.stdout.split("tx=")[1].split()[0]
 
-        # Readback written virtual slot2 matches payload byte-for-byte; running slot1 is untouched
         written_prefix = self.slot2_img.read_bytes()[: self.payload_ext4.stat().st_size]
         self.assertEqual(hashlib.sha256(written_prefix).hexdigest(), payload_sha)
         self.assertEqual(sha256_path(self.slot1_img), slot1_before)
 
-        # Redundant U-Boot env staged for trial boot on slot 2 while last_good stays 1
         env = self._get_env()
         self.assertEqual(env["sgw_pending_slot"], "2")
         self.assertEqual(env["sgw_last_good_slot"], "1")
@@ -257,15 +304,13 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.assertEqual(env["upgrade_available"], "1")
         self.assertEqual(env["bootcount"], "0")
 
-        # Inspect persisted PENDING transaction
-        ins = subprocess.run([str(HARNESS), "inspect-txn", "--txdir", str(self.txdir), "--id", txid],
-                             check=True, capture_output=True, text=True)
-        self.assertIn("state=PENDING", ins.stdout)
-        self.assertIn("target=2", ins.stdout)
-        self.assertIn("last_good=1", ins.stdout)
-        self.assertIn("consumed=0", ins.stdout)
+        txn = self._parse_txn(txid)
+        self.assertEqual(txn["state"], "PENDING")
+        self.assertEqual(txn["target"], "2")
+        self.assertEqual(txn["last_good"], "1")
+        self.assertEqual(txn.get("consumed", "0"), "0")
 
-    def test_p2_to_p1_signed_swu_reverse_direction(self):
+    def test_p2_to_p1_real_swupdate_apply_and_pending_stage(self):
         self._set_running_slot(2)
         self._set_env({
             "sgw_active_slot": "2",
@@ -286,96 +331,10 @@ class TestG4SwuIsolated(unittest.TestCase):
         env = self._get_env()
         self.assertEqual(env["sgw_pending_slot"], "1")
         self.assertEqual(env["sgw_last_good_slot"], "2")
+        self.assertEqual(env["sgw_ab_state"], "trial")
+        self.assertEqual(env["upgrade_available"], "1")
 
-    def test_reject_bad_signature_corrupt_payload_wrong_board_wrong_slot_and_capacity(self):
-        s1_before = sha256_path(self.slot1_img)
-        s2_before = sha256_path(self.slot2_img)
-        env_before = sha256_path(self.emmc_img)
-
-        # 1. Untrusted signing key -> rejected before touching virtual disk
-        bad_priv = self.base / "untrusted.pem"
-        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
-                        "-out", str(bad_priv)], check=True, capture_output=True)
-        bad_sig_swu = self._pack_swu("bad-key.swu", target_slot=2, privkey=bad_priv)
-        r = self._apply_swu(bad_sig_swu, self.slot2_img, expected_target=2)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("signature verification failed", r.stderr)
-
-        # 2. Corrupt rootfs.img inside signed .swu -> rejected by payload digest check
-        good_swu = self._pack_swu("good-for-tamper.swu", target_slot=2)
-        tamper_dir = self.base / "tamper"
-        tamper_dir.mkdir()
-        subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(tamper_dir), input=good_swu.read_bytes(), check=True)
-        with (tamper_dir / "rootfs.img").open("r+b") as f:
-            f.seek(4096)
-            b = f.read(1)
-            f.seek(4096)
-            f.write(bytes([b[0] ^ 0xFF]))
-        tamper_swu = self.base / "tamper-rootfs.swu"
-        entries = ["sw-description", "sw-description.sig", "manifest", "manifest.sig",
-                   "rootfs.manifest", "zImage", "100ask_imx6ull-14x14.dtb", "rootfs.img"]
-        with tamper_swu.open("wb") as out_f:
-            subprocess.run(["cpio", "-o", "-H", "newc", "--quiet"], cwd=str(tamper_dir),
-                           input=("\n".join(entries) + "\n").encode(), stdout=out_f, check=True)
-        r2 = self._apply_swu(tamper_swu, self.slot2_img, expected_target=2)
-        self.assertNotEqual(r2.returncode, 0)
-        self.assertIn("digest/size mismatch", r2.stderr)
-
-        # 3. Corrupt zImage inside signed .swu -> rejected
-        tamper_z_dir = self.base / "tamper_z"
-        tamper_z_dir.mkdir()
-        subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(tamper_z_dir), input=good_swu.read_bytes(), check=True)
-        (tamper_z_dir / "zImage").write_bytes(b"corrupted-zimage\n")
-        tamper_z_swu = self.base / "tamper-zimage.swu"
-        with tamper_z_swu.open("wb") as out_f:
-            subprocess.run(["cpio", "-o", "-H", "newc", "--quiet"], cwd=str(tamper_z_dir),
-                           input=("\n".join(entries) + "\n").encode(), stdout=out_f, check=True)
-        r3 = self._apply_swu(tamper_z_swu, self.slot2_img, expected_target=2)
-        self.assertNotEqual(r3.returncode, 0)
-        self.assertIn("digest/size mismatch for zImage", r3.stderr)
-
-        # 4. Wrong board -> rejected
-        wrong_board_swu = self._pack_swu("wrong-board.swu", target_slot=2, board="other-board")
-        r4 = self._apply_swu(wrong_board_swu, self.slot2_img, expected_target=2)
-        self.assertNotEqual(r4.returncode, 0)
-        self.assertIn("board mismatch", r4.stderr)
-
-        # 5. Wrong target slot (targeting currently running & last_good slot 1!) -> refused
-        wrong_slot_swu = self._pack_swu("wrong-slot.swu", target_slot=1)
-        r5 = self._apply_swu(wrong_slot_swu, self.slot1_img)
-        self.assertNotEqual(r5.returncode, 0)
-        self.assertIn("REFUSED: target_slot 1", r5.stderr)
-
-        # 6. Slot capacity too small -> refused
-        small_slot = self.base / "small_slot.ext4"
-        with small_slot.open("wb") as f:
-            f.truncate(2 * 1024 * 1024)
-        small_sha = sha256_path(small_slot)
-        r6 = self._apply_swu(good_swu, small_slot, expected_target=2)
-        self.assertNotEqual(r6.returncode, 0)
-        self.assertIn("capacity", r6.stderr)
-        self.assertEqual(sha256_path(small_slot), small_sha)
-
-        # Verify ZERO mutation across all negative tests
-        self.assertEqual(sha256_path(self.slot1_img), s1_before)
-        self.assertEqual(sha256_path(self.slot2_img), s2_before)
-        self.assertEqual(sha256_path(self.emmc_img), env_before)
-        self.assertEqual(list(self.txdir.glob("txn-*")), [])
-
-    def test_reject_unsafe_cpio_path_traversal(self):
-        trav_dir = self.base / "trav"
-        (trav_dir / "sub").mkdir(parents=True)
-        (trav_dir / "sub/evil").write_text("x\n", encoding="utf-8")
-        trav_swu = self.base / "trav.swu"
-        with trav_swu.open("wb") as out_f:
-            subprocess.run(["cpio", "-o", "-H", "newc", "--quiet"], cwd=str(trav_dir),
-                           input=b"sub/evil\n", stdout=out_f, check=True)
-        r = self._apply_swu(trav_swu, self.slot2_img)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("unsafe archive member path", r.stderr)
-
-
-    def test_real_g3_artifacts_swu_p1_to_p2_and_pending_stage(self):
+    def test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate(self):
         real_img = ROOT / "build/buildroot-g3/images/rootfs.ext4"
         real_zimg = ROOT / "build/kernel-g3/trimmed/out/zImage"
         real_dtb = ROOT / "build/kernel-g3/trimmed/out/100ask_imx6ull-14x14.dtb"
@@ -423,6 +382,328 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.assertEqual(env["sgw_pending_slot"], "2")
         self.assertEqual(env["sgw_ab_state"], "trial")
         self.assertEqual(env["upgrade_available"], "1")
+
+    def test_negative_swupdate_rejections_zero_mutation(self):
+        s1_before = sha256_path(self.slot1_img)
+        s2_before = sha256_path(self.slot2_img)
+        env_before = sha256_path(self.emmc_img)
+
+        good_swu = self._pack_swu("base-good.swu", target_slot=2)
+        base_entries = [
+            "sw-description",
+            "sw-description.sig",
+            "sgw-swu-apply.sh",
+            "manifest",
+            "manifest.sig",
+            "rootfs.manifest",
+            "zImage",
+            "100ask_imx6ull-14x14.dtb",
+            "rootfs.img",
+        ]
+
+        # (a) Unsigned .swu (missing sw-description.sig)
+        udir = self.base / "neg_unsigned"
+        udir.mkdir()
+        subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(udir), input=good_swu.read_bytes(), check=True)
+        unsigned_swu = self.base / "unsigned.swu"
+        self._pack_cpio_from_dir(udir, [e for e in base_entries if e != "sw-description.sig"], unsigned_swu)
+        r = self._apply_swu(unsigned_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+
+        # (b) Wrong / untrusted RSA signing key
+        bad_priv = self.base / "untrusted.pem"
+        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+                        "-out", str(bad_priv)], check=True, capture_output=True)
+        bad_key_swu = self._pack_swu("bad-key.swu", target_slot=2, privkey=bad_priv)
+        r = self._apply_swu(bad_key_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+
+        # (c) Tampered sw-description.sig
+        tsig_dir = self.base / "neg_sig"
+        tsig_dir.mkdir()
+        subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(tsig_dir), input=good_swu.read_bytes(), check=True)
+        sig_bytes = bytearray((tsig_dir / "sw-description.sig").read_bytes())
+        sig_bytes[0] ^= 0xFF
+        (tsig_dir / "sw-description.sig").write_bytes(bytes(sig_bytes))
+        tamper_sig_swu = self.base / "tamper-sig.swu"
+        self._pack_cpio_from_dir(tsig_dir, base_entries, tamper_sig_swu)
+        r = self._apply_swu(tamper_sig_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+
+        # (d)-(g) Tampered payloads caught by SWUpdate HASH mismatch
+        for fname in ("rootfs.img", "zImage", "100ask_imx6ull-14x14.dtb", "sgw-swu-apply.sh"):
+            tdir = self.base / f"neg_tamper_{fname.replace('.', '_')}"
+            tdir.mkdir()
+            subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(tdir), input=good_swu.read_bytes(), check=True)
+            data = bytearray((tdir / fname).read_bytes())
+            off = min(4096, len(data) - 1) if len(data) > 0 else 0
+            data[off] ^= 0xFF
+            (tdir / fname).write_bytes(bytes(data))
+            out = self.base / f"tamper-{fname}.swu"
+            self._pack_cpio_from_dir(tdir, base_entries, out)
+            r = self._apply_swu(out, self.slot2_img, expected_target=2)
+            self.assertNotEqual(r.returncode, 0, fname)
+            self.assertIn("HASH mismatch", r.stderr)
+
+        # (h) Wrong board & wrong hw revision
+        wrong_board_swu = self._pack_swu("wrong-board.swu", target_slot=2, board="other-board")
+        r = self._apply_swu(wrong_board_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+
+        r = self._apply_swu(good_swu, self.slot2_img, expected_target=2, hw_rev="revB")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not compatible with hardware", r.stderr)
+
+        # (i) Signed .swu attempting bootenv U-Boot env bypass (must be rejected)
+        bdir = self.base / "neg_bootenv"
+        bdir.mkdir()
+        (bdir / "sw-description").write_text(
+            "software =\n"
+            "{\n"
+            "\timx6ull-100ask = {\n"
+            '\t\tversion = "g4-bootenv";\n'
+            '\t\thardware-compatibility = [ "revA" ];\n'
+            "\t\tbootenv: (\n"
+            '\t\t\t{ name = "sgw_active_slot"; value = "2"; }\n'
+            "\t\t);\n"
+            "\t};\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(self.privkey),
+             "-out", str(bdir / "sw-description.sig"), str(bdir / "sw-description")],
+            check=True, capture_output=True,
+        )
+        bootenv_swu = self.base / "bootenv-bypass.swu"
+        self._pack_cpio_from_dir(bdir, ["sw-description", "sw-description.sig"], bootenv_swu)
+        r = self._apply_swu(bootenv_swu, self.slot2_img)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("bootloader support absent", r.stderr)
+
+        self.assertEqual(sha256_path(self.slot1_img), s1_before)
+        self.assertEqual(sha256_path(self.slot2_img), s2_before)
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+        self.assertEqual(list(self.txdir.glob("txn-*")), [])
+
+    def test_negative_bootctl_rejections_zero_mutation(self):
+        s1_before = sha256_path(self.slot1_img)
+        s2_before = sha256_path(self.slot2_img)
+        env_before = sha256_path(self.emmc_img)
+        good_swu = self._pack_swu("base-good-ctl.swu", target_slot=2)
+        base_entries = [
+            "sw-description",
+            "sw-description.sig",
+            "sgw-swu-apply.sh",
+            "manifest",
+            "manifest.sig",
+            "rootfs.manifest",
+            "zImage",
+            "100ask_imx6ull-14x14.dtb",
+            "rootfs.img",
+        ]
+
+        # (a) Wrong target slot (targeting currently running & last_good slot 1)
+        wrong_slot_swu = self._pack_swu("wrong-slot.swu", target_slot=1)
+        r = self._apply_swu(wrong_slot_swu, self.slot1_img)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("APPLY REJECTED", r.stderr)
+
+        # (b) Slot capacity smaller than rootfs.img -> rejected with ZERO bytes written
+        small_slot = self.base / "small_slot.ext4"
+        with small_slot.open("wb") as f:
+            f.write(b"SMALL_SLOT_KEEP" * 1024)
+            f.truncate(2 * 1024 * 1024)
+        small_sha = sha256_path(small_slot)
+        r = self._apply_swu(good_swu, small_slot, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("capacity", r.stderr)
+        self.assertEqual(sha256_path(small_slot), small_sha)
+
+        # (c) Concurrent .ota.lock contention -> rejected before writing
+        with self.ota_lock.open("r+b") as lockf:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                r = self._apply_swu(good_swu, self.slot2_img, expected_target=2)
+            finally:
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("is busy", r.stderr)
+
+        # (d) Active trial state in U-Boot env -> rejected before writing
+        self._set_env({
+            "sgw_active_slot": "1",
+            "sgw_last_good_slot": "1",
+            "sgw_pending_slot": "2",
+            "sgw_ab_state": "trial",
+            "bootlimit": "3",
+            "bootcount": "0",
+            "upgrade_available": "1",
+        })
+        r = self._apply_swu(good_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("trial", r.stderr)
+        self._set_env({
+            "sgw_active_slot": "1",
+            "sgw_last_good_slot": "1",
+            "sgw_pending_slot": "none",
+            "sgw_ab_state": "confirmed",
+            "bootlimit": "3",
+            "bootcount": "0",
+            "upgrade_available": "0",
+        })
+        env_before = sha256_path(self.emmc_img)
+
+        # (e) Validly signed outer .swu with tampered inner manifest.sig
+        mdir = self.base / "neg_inner_msig"
+        mdir.mkdir()
+        subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(mdir), input=good_swu.read_bytes(), check=True)
+        old_msig_sha = sha256_path(mdir / "manifest.sig")
+        msig_bytes = bytearray((mdir / "manifest.sig").read_bytes())
+        msig_bytes[0] ^= 0xFF
+        (mdir / "manifest.sig").write_bytes(bytes(msig_bytes))
+        new_msig_sha = sha256_path(mdir / "manifest.sig")
+        desc = (mdir / "sw-description").read_text(encoding="utf-8")
+        self.assertIn(old_msig_sha, desc)
+        (mdir / "sw-description").write_text(desc.replace(old_msig_sha, new_msig_sha), encoding="utf-8")
+        subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(self.privkey),
+             "-out", str(mdir / "sw-description.sig"), str(mdir / "sw-description")],
+            check=True, capture_output=True,
+        )
+        inner_msig_swu = self.base / "inner-tamper-msig.swu"
+        self._pack_cpio_from_dir(mdir, base_entries, inner_msig_swu)
+        r = self._apply_swu(inner_msig_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("signed bundle verification failed", r.stderr)
+
+        # (f) Validly signed outer .swu whose top-level zImage differs from /boot/zImage inside rootfs.img
+        zdir = self.base / "neg_zimage_diverge"
+        zdir.mkdir()
+        subprocess.run(["cpio", "-iu", "--quiet"], cwd=str(zdir), input=good_swu.read_bytes(), check=True)
+        old_z_sha = sha256_path(zdir / "zImage")
+        (zdir / "zImage").write_bytes(b"different-unmatched-zImage\n")
+        new_z_sha = sha256_path(zdir / "zImage")
+        zdesc = (zdir / "sw-description").read_text(encoding="utf-8")
+        self.assertIn(old_z_sha, zdesc)
+        (zdir / "sw-description").write_text(zdesc.replace(old_z_sha, new_z_sha), encoding="utf-8")
+        subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(self.privkey),
+             "-out", str(zdir / "sw-description.sig"), str(zdir / "sw-description")],
+            check=True, capture_output=True,
+        )
+        z_div_swu = self.base / "zimage-diverge.swu"
+        self._pack_cpio_from_dir(zdir, base_entries, z_div_swu)
+        r = self._apply_swu(z_div_swu, self.slot2_img, expected_target=2)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("kernel/dtb digest diverges", r.stderr)
+
+        self.assertEqual(sha256_path(self.slot1_img), s1_before)
+        self.assertEqual(sha256_path(self.slot2_img), s2_before)
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+        self.assertEqual(list(self.txdir.glob("txn-*")), [])
+
+    def test_fsync_failure_during_slot_write_never_stages_pending(self):
+        s1_before = sha256_path(self.slot1_img)
+        env_before = sha256_path(self.emmc_img)
+        payload_sha = sha256_path(self.payload_ext4)
+
+        fsync_c = self.base / "fsync_slot_fail.c"
+        fsync_so = self.base / "libfsync_slot_fail.so"
+        fsync_c.write_text(
+            '#define _GNU_SOURCE\n'
+            '#include <dlfcn.h>\n'
+            '#include <errno.h>\n'
+            '#include <stdio.h>\n'
+            '#include <string.h>\n'
+            '#include <unistd.h>\n'
+            'int fsync(int fd) {\n'
+            '    int (*real_fsync)(int) = dlsym(RTLD_NEXT, "fsync");\n'
+            '    char lnk[64], target[1024];\n'
+            '    ssize_t n;\n'
+            '    snprintf(lnk, sizeof(lnk), "/proc/self/fd/%d", fd);\n'
+            '    n = readlink(lnk, target, sizeof(target) - 1);\n'
+            '    if (n > 0) {\n'
+            '        target[n] = 0;\n'
+            '        const char *suffix = "/slot2.ext4";\n'
+            '        size_t slen = strlen(suffix);\n'
+            '        if ((size_t)n >= slen && strcmp(target + n - slen, suffix) == 0) {\n'
+            '            errno = EIO;\n'
+            '            return -1;\n'
+            '        }\n'
+            '    }\n'
+            '    return real_fsync(fd);\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["gcc", "-shared", "-fPIC", str(fsync_c), "-ldl", "-o", str(fsync_so)], check=True)
+
+        good_swu = self._pack_swu("fsync-fail.swu", target_slot=2)
+        r_fail = self._apply_swu(
+            good_swu,
+            self.slot2_img,
+            expected_target=2,
+            extra_env={"LD_PRELOAD": str(fsync_so)},
+        )
+        self.assertNotEqual(r_fail.returncode, 0)
+        self.assertIn("slot fsync failed", r_fail.stderr)
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+        self.assertEqual(sha256_path(self.slot1_img), s1_before)
+        env = self._get_env()
+        self.assertEqual(env["sgw_ab_state"], "confirmed")
+        self.assertEqual(env["upgrade_available"], "0")
+        self.assertEqual(env["sgw_pending_slot"], "none")
+        self.assertEqual(list(self.txdir.glob("txn-*")), [])
+
+        # Retry without fsync fault injection: proves cleanup did not wedge txdir
+        r_ok = self._apply_swu(good_swu, self.slot2_img, expected_target=2)
+        self.assertEqual(r_ok.returncode, 0, r_ok.stdout + r_ok.stderr)
+        self.assertIn("STAGED tx=", r_ok.stdout)
+        written_prefix = self.slot2_img.read_bytes()[: self.payload_ext4.stat().st_size]
+        self.assertEqual(hashlib.sha256(written_prefix).hexdigest(), payload_sha)
+        env = self._get_env()
+        self.assertEqual(env["sgw_ab_state"], "trial")
+        self.assertEqual(env["upgrade_available"], "1")
+        self.assertEqual(env["sgw_pending_slot"], "2")
+
+    def test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides(self):
+        if os.geteuid() == 0:
+            self.skipTest("Must run as unprivileged user")
+        s2_before = sha256_path(self.slot2_img)
+        env_before = sha256_path(self.emmc_img)
+
+        bdir = self.base / "dummy_bundle"
+        bdir.mkdir(mode=0o700)
+        pol = self.base / "dummy_pol.conf"
+        pol.write_text(f"tx_dir={self.txdir}\n", encoding="utf-8")
+        pol.chmod(0o600)
+
+        for cmd in (
+            [str(BOOTCTL_PROD), "apply-bundle", "--bundle", str(bdir), "--target", "2"],
+            [str(BOOTCTL_PROD), "-c", str(self.fw_cfg), "apply-bundle", "--bundle", str(bdir), "--target", "2"],
+            [str(BOOTCTL_PROD), "apply-bundle", "--bundle", str(bdir), "--target", "2",
+             "--policy", str(pol), "--slot-img", str(self.slot2_img)],
+        ):
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("APPLY REJECTED", r.stderr)
+
+        uid_c = self.base / "uid0.c"
+        uid_so = self.base / "uid0.so"
+        uid_c.write_text("#include <sys/types.h>\nuid_t geteuid(void) { return 0; }\n", encoding="utf-8")
+        subprocess.run(["gcc", "-shared", "-fPIC", str(uid_c), "-o", str(uid_so)], check=True)
+        r_fake_root = subprocess.run(
+            [str(BOOTCTL_PROD), "apply-bundle", "--bundle", str(bdir), "--target", "2",
+             "--policy", str(pol), "--slot-img", str(self.slot2_img)],
+            env=dict(os.environ, LD_PRELOAD=str(uid_so)),
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(r_fake_root.returncode, 0)
+        self.assertIn("APPLY REJECTED: production apply-bundle forbids path overrides", r_fake_root.stderr)
+
+        self.assertEqual(sha256_path(self.slot2_img), s2_before)
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+
 
 if __name__ == "__main__":
     unittest.main()

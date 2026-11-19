@@ -1,0 +1,76 @@
+=== [1] build_swupdate_host.sh ===
+=== Building static libconfig for host SWUpdate ===
+=== Extracting and building host swupdate 2019.11 ===
+In file included from scripts/kconfig/zconf.tab.c:2578:
+In function ‘dep_stack_insert’,
+    inlined from ‘sym_check_print_recursive’ at scripts/kconfig/symbol.c:1090:3,
+    inlined from ‘sym_check_deps’ at scripts/kconfig/symbol.c:1265:3:
+scripts/kconfig/symbol.c:1066:19: warning: storing the address of local variable ‘cv_stack’ in ‘check_top’ [-Wdangling-pointer=]
+ 1066 |         check_top = stack;
+      |         ~~~~~~~~~~^~~~~~~
+scripts/kconfig/symbol.c: In function ‘sym_check_deps’:
+scripts/kconfig/symbol.c:1087:26: note: ‘cv_stack’ declared here
+ 1087 |         struct dep_stack cv_stack;
+      |                          ^~~~~~~~
+scripts/kconfig/symbol.c:1057:4: note: ‘check_top’ declared here
+ 1057 | } *check_top;
+      |    ^~~~~~~~~
+scripts/kconfig/conf -s --olddefconfig Kconfig
+scripts/kconfig/conf -s --silentoldconfig Kconfig
+In file included from core/swupdate.c:43:
+include/sslapi.h:42:9: warning: ‘X509_PURPOSE_CODE_SIGN’ redefined
+   42 | #define X509_PURPOSE_CODE_SIGN (X509_PURPOSE_MAX + 1)
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from include/sslapi.h:26:
+/usr/include/openssl/x509v3.h:775:9: note: this is the location of the previous definition
+  775 | #define X509_PURPOSE_CODE_SIGN 10
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+core/swupdate.c: In function ‘parse_image_selector’:
+core/swupdate.c:411:13: warning: assignment discards ‘const’ qualifier from pointer target type [-Wdiscarded-qualifiers]
+  411 |         pos = strchr(selector, ',');
+      |             ^
+In file included from core/cpio_utils.c:23:
+include/sslapi.h:42:9: warning: ‘X509_PURPOSE_CODE_SIGN’ redefined
+   42 | #define X509_PURPOSE_CODE_SIGN (X509_PURPOSE_MAX + 1)
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from include/sslapi.h:26:
+/usr/include/openssl/x509v3.h:775:9: note: this is the location of the previous definition
+  775 | #define X509_PURPOSE_CODE_SIGN 10
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from core/parser.c:16:
+include/sslapi.h:42:9: warning: ‘X509_PURPOSE_CODE_SIGN’ redefined
+   42 | #define X509_PURPOSE_CODE_SIGN (X509_PURPOSE_MAX + 1)
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from include/sslapi.h:26:
+/usr/include/openssl/x509v3.h:775:9: note: this is the location of the previous definition
+  775 | #define X509_PURPOSE_CODE_SIGN 10
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+tools/swupdate-sysrestart.c:255:2: warning: #warning "swupdate-sysrestart needs libcurl, replaced with dummy" [-Wcpp]
+  255 | #warning "swupdate-sysrestart needs libcurl, replaced with dummy"
+      |  ^~~~~~~
+tools/swupdate-sysrestart.c: In function ‘main’:
+tools/swupdate-sysrestart.c:257:14: warning: unused parameter ‘argc’ [-Wunused-parameter]
+  257 | int main(int argc, char **argv)
+      |          ~~~~^~~~
+tools/swupdate-sysrestart.c:257:27: warning: unused parameter ‘argv’ [-Wunused-parameter]
+  257 | int main(int argc, char **argv)
+      |                    ~~~~~~~^~~~
+In file included from corelib/swupdate_rsa_verify.c:15:
+include/sslapi.h:42:9: warning: ‘X509_PURPOSE_CODE_SIGN’ redefined
+   42 | #define X509_PURPOSE_CODE_SIGN (X509_PURPOSE_MAX + 1)
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from include/sslapi.h:26:
+/usr/include/openssl/x509v3.h:775:9: note: this is the location of the previous definition
+  775 | #define X509_PURPOSE_CODE_SIGN 10
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from corelib/verify_signature.c:15:
+include/sslapi.h:42:9: warning: ‘X509_PURPOSE_CODE_SIGN’ redefined
+   42 | #define X509_PURPOSE_CODE_SIGN (X509_PURPOSE_MAX + 1)
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+In file included from include/sslapi.h:26:
+/usr/include/openssl/x509v3.h:775:9: note: this is the location of the previous definition
+  775 | #define X509_PURPOSE_CODE_SIGN 10
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+=== Verifying built host swupdate signature enforcement ===
+Swupdate v2019.11.0
+OK: /home/ubuntu/Desktop/project/SmartGateway-BSP/build/swupdate-host/swupdate built with CONFIG_SIGNED_IMAGES + CONFIG_SIGALG_RAWRSA

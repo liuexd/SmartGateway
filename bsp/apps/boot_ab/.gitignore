@@ -1,4 +1,5 @@
 sgw_bootctl
+sgw_bootctl_isolated
 sgw_watchdog_guard
 ab_state_test
 fw_env_backend_test

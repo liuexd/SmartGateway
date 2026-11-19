@@ -1,0 +1,13 @@
+=== [3] test_g4_swu_isolated.py ===
+test_fsync_failure_during_slot_write_never_stages_pending (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_fsync_failure_during_slot_write_never_stages_pending) ... ok
+test_negative_bootctl_rejections_zero_mutation (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_negative_bootctl_rejections_zero_mutation) ... ok
+test_negative_swupdate_rejections_zero_mutation (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_negative_swupdate_rejections_zero_mutation) ... ok
+test_p1_to_p2_real_swupdate_apply_and_pending_stage (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_p1_to_p2_real_swupdate_apply_and_pending_stage) ... ok
+test_p2_to_p1_real_swupdate_apply_and_pending_stage (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_p2_to_p1_real_swupdate_apply_and_pending_stage) ... ok
+test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides) ... ok
+test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 7.302s
+
+OK

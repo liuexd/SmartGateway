@@ -8,8 +8,8 @@ INC_FLAGS := -I. -I$(COMMON_DIR)
 COMMON_SRCS := ab_state.c ab_health.c fw_env_backend.c $(COMMON_DIR)/service_ipc.c
 COMMON_HDRS := ab_state.h ab_health.h fw_env_backend.h $(COMMON_DIR)/service_ipc.h
 OTA_COMMON_SRCS := $(OTA_DIR)/ota_state_io.c $(OTA_DIR)/ota_state.c $(OTA_DIR)/ota_oplog.c
-R3C_SRCS := r3c_data.c r3c_policy.c r3c_binding.c r3c_bundle.c r3c_txn.c r3c_coordinator.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c $(OTA_COMMON_SRCS)
-R3C_HDRS := r3c_data.h r3c_policy.h r3c_binding.h r3c_bundle.h r3c_txn.h r3c_coordinator.h health_devices.h health_network.h health_gateway.h health_supervisor.h system_health.h
+R3C_SRCS := r3c_data.c r3c_policy.c r3c_binding.c r3c_bundle.c r3c_txn.c r3c_coordinator.c r3c_apply.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c $(OTA_COMMON_SRCS)
+R3C_HDRS := r3c_data.h r3c_policy.h r3c_binding.h r3c_bundle.h r3c_txn.h r3c_coordinator.h r3c_apply.h health_devices.h health_network.h health_gateway.h health_supervisor.h system_health.h
 R3C_INC := $(INC_FLAGS) -I$(OTA_DIR)
 R3C_LIBS := -ljson-c -lcrypto
 
@@ -28,6 +28,9 @@ all: sgw_bootctl sgw_watchdog_guard sgw_system_health
 
 sgw_bootctl: sgw_bootctl.c $(COMMON_SRCS) $(COMMON_HDRS) $(R3C_SRCS) $(R3C_HDRS)
 	$(CC) $(CFLAGS) $(R3C_INC) sgw_bootctl.c $(COMMON_SRCS) $(R3C_SRCS) $(R3C_LIBS) -o $@
+
+sgw_bootctl_isolated: sgw_bootctl.c $(COMMON_SRCS) $(COMMON_HDRS) $(R3C_SRCS) $(R3C_HDRS)
+	$(CC) $(CFLAGS) -DSGW_BOOTCTL_ISOLATED_SIM $(R3C_INC) sgw_bootctl.c $(COMMON_SRCS) $(R3C_SRCS) $(R3C_LIBS) -o $@
 
 sgw_watchdog_guard: sgw_watchdog_guard.c $(COMMON_SRCS) $(COMMON_HDRS) $(R3C_SRCS) $(R3C_HDRS)
 	$(CC) $(CFLAGS) $(R3C_INC) sgw_watchdog_guard.c $(COMMON_SRCS) $(R3C_SRCS) $(R3C_LIBS) -o $@
@@ -130,7 +133,7 @@ arm-r3c-check:
 	done
 
 clean:
-	rm -f sgw_bootctl sgw_watchdog_guard sgw_system_health supervisor_probe_cli gateway_probe_cli ab_state_test fw_env_backend_test ab_health_test system_health_test health_devices_test health_network_test r3c_binding_test r3c_data_exclusion_test r3c_confirm_harness r3c_probe_cli r3c_bundle_cli
+	rm -f sgw_bootctl sgw_bootctl_isolated sgw_watchdog_guard sgw_system_health supervisor_probe_cli gateway_probe_cli ab_state_test fw_env_backend_test ab_health_test system_health_test health_devices_test health_network_test r3c_binding_test r3c_data_exclusion_test r3c_confirm_harness r3c_probe_cli r3c_bundle_cli
 
 clean-arm:
 	rm -rf $(ARM_BUILD_DIR)

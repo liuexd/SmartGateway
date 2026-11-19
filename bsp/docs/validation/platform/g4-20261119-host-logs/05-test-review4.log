@@ -1,0 +1,10 @@
+=== [5] test_review4_g3_bundle.py & test_review4_topology.py ===
+test_signed_manifest_matches_real_g3_image (tests.test_review4_g3_bundle.G3BundleTest.test_signed_manifest_matches_real_g3_image) ... ok
+test_foreign_mount_namespace_conflict_rejected_and_vanished_pid_tolerated (tests.test_review4_topology.TopologyTests.test_foreign_mount_namespace_conflict_rejected_and_vanished_pid_tolerated) ... ok
+test_production_confirm_fails_closed_even_with_root_identity (tests.test_review4_topology.TopologyTests.test_production_confirm_fails_closed_even_with_root_identity) ... ok
+test_whole_disk_and_partition_reject_mapped_or_unknown_relations (tests.test_review4_topology.TopologyTests.test_whole_disk_and_partition_reject_mapped_or_unknown_relations) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.812s
+
+OK

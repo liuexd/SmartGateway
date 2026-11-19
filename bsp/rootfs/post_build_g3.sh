@@ -25,12 +25,19 @@ if [ -d "$BR_OVERLAY" ]; then
     cp -f "$BR_OVERLAY/usr/bin/usb_config" "$TARGET_DIR/usr/bin/usb_config"
     cp -f "$BR_OVERLAY/etc/udev/rules.d/61-usb-adbd.rules" "$TARGET_DIR/etc/udev/rules.d/61-usb-adbd.rules"
     cp -f "$BR_OVERLAY/etc/network/interfaces" "$TARGET_DIR/etc/network/interfaces"
-    cp -f "$BR_OVERLAY/etc/hwrevision" "$TARGET_DIR/etc/hwrevision"
     cp -f "$BR_OVERLAY/etc/sw-versions" "$TARGET_DIR/etc/sw-versions"
-    cp -f "$BR_OVERLAY/etc/swupdate/swupdate.cfg" "$TARGET_DIR/etc/swupdate/swupdate.cfg"
-    cp -f "$BR_OVERLAY/etc/swupdate/swupdate-public.pem" "$TARGET_DIR/etc/swupdate/swupdate-public.pem"
+
     chmod 755 "$TARGET_DIR/etc/init.d/S99adbd" "$TARGET_DIR/etc/init.d/S50sshd" "$TARGET_DIR/usr/bin/usb_config"
 fi
+
+# Install SmartGateway G4 SWUpdate board identity, config, and CLI launcher
+printf "imx6ull-100ask revA\n" > "$TARGET_DIR/etc/hwrevision"
+chmod 644 "$TARGET_DIR/etc/hwrevision"
+rm -f "$TARGET_DIR/etc/swupdate/postupdate.sh" "$TARGET_DIR/etc/swupdate/swupdate-public.pem"
+cp -f "$REPO_DIR/bsp/ota/swupdate.cfg" "$TARGET_DIR/etc/swupdate/swupdate.cfg"
+chmod 644 "$TARGET_DIR/etc/swupdate/swupdate.cfg"
+cp -f "$REPO_DIR/bsp/ota/sgw-swu-install.sh" "$TARGET_DIR/usr/bin/sgw-swu-install"
+chmod 755 "$TARGET_DIR/usr/bin/sgw-swu-install"
 
 # 3. Corrected /etc/fstab (ext4 root + persistent /opt/smartgateway/data partition mmcblk1p3)
 cat > "$TARGET_DIR/etc/fstab" <<'FSEOF'

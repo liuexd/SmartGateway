@@ -42,6 +42,7 @@ BR2_GLOBAL_PATCH_DIR="$SCRIPT_DIR/br_patches"
 BR2_PACKAGE_E2FSPROGS_DEBUGFS=y
 # External SDK sysroot contains libbsd.so.0, which iproute2 dynamically links against.
 BR2_PACKAGE_LIBBSD=y
+BR2_PACKAGE_SWUPDATE_CONFIG="$REPO_DIR/bsp/ota/swupdate.config"
 EOF
 
 export BR2_DL_DIR="$BR_SRC/dl"

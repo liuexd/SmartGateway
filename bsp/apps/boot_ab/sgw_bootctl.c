@@ -1,6 +1,7 @@
 #include "ab_state.h"
 #include "ab_health.h"
 #include "fw_env_backend.h"
+#include "r3c_apply.h"
 #include "r3c_coordinator.h"
 #include "r3c_policy.h"
 
@@ -19,6 +20,7 @@ static void print_usage(const char *prog)
             "  validate\n"
             "  running-slot\n"
             "  health-check\n"
+            "  apply-bundle --bundle <dir> --target <1|2> [--expected-target <1|2>]\n"
             "  stage --target <1|2> [--running <1|2>]\n"
             "  confirm [--running <1|2>]\n"
             "  rollback [--reason <text>]\n"
@@ -249,6 +251,116 @@ int main(int argc, char **argv)
                    sgw_health_state_name(res.overall_state),
                    res.local_pipeline_only);
         }
+        return 0;
+    }
+
+    if (strcmp(cmd, "apply-bundle") == 0) {
+        ab_slot_t target = AB_SLOT_NONE;
+        ab_slot_t expected_target = AB_SLOT_NONE;
+        ab_slot_t last_good = AB_SLOT_NONE;
+        int has_expected_target = 0;
+        const char *bundle_dir = NULL;
+        const char *policy_path = NULL;
+        const char *slot_img_path = NULL;
+        const char *mountinfo_path = NULL;
+        r3c_policy_t r3c_pol;
+        r3c_apply_opts_t aopts;
+        char txid[65] = {0};
+
+#ifndef SGW_BOOTCTL_ISOLATED_SIM
+        if (geteuid() != 0) {
+            fprintf(stderr, "APPLY REJECTED: root privilege required\n");
+            return 1;
+        }
+        if (has_cli_override) {
+            fprintf(stderr, "APPLY REJECTED: production apply-bundle forbids path overrides\n");
+            return 1;
+        }
+#endif
+        while (idx < argc) {
+            if (strcmp(argv[idx], "--bundle") == 0 && idx + 1 < argc) {
+                bundle_dir = argv[idx + 1];
+                idx += 2;
+            } else if (strcmp(argv[idx], "--target") == 0 && idx + 1 < argc) {
+                if (ab_slot_parse(argv[idx + 1], &target) != 0)
+                    return 2;
+                idx += 2;
+            } else if (strcmp(argv[idx], "--expected-target") == 0 && idx + 1 < argc) {
+                if (ab_slot_parse(argv[idx + 1], &expected_target) != 0)
+                    return 2;
+                has_expected_target = 1;
+                idx += 2;
+            } else if (strcmp(argv[idx], "--policy") == 0 ||
+                       strcmp(argv[idx], "--slot-img") == 0 ||
+                       strcmp(argv[idx], "--mountinfo") == 0) {
+#ifdef SGW_BOOTCTL_ISOLATED_SIM
+                if (idx + 1 >= argc) {
+                    print_usage(argv[0]);
+                    return 2;
+                }
+                if (strcmp(argv[idx], "--policy") == 0)
+                    policy_path = argv[idx + 1];
+                else if (strcmp(argv[idx], "--slot-img") == 0)
+                    slot_img_path = argv[idx + 1];
+                else
+                    mountinfo_path = argv[idx + 1];
+                idx += 2;
+#else
+                fprintf(stderr, "APPLY REJECTED: production apply-bundle forbids path overrides\n");
+                return 1;
+#endif
+            } else {
+                print_usage(argv[0]);
+                return 2;
+            }
+        }
+        if (!bundle_dir || target == AB_SLOT_NONE) {
+            print_usage(argv[0]);
+            return 2;
+        }
+
+        memset(&aopts, 0, sizeof(aopts));
+        aopts.target_slot = (unsigned int)target;
+        aopts.expected_target = (unsigned int)expected_target;
+        aopts.has_expected_target = has_expected_target;
+        aopts.bundle_dir = bundle_dir;
+
+#ifdef SGW_BOOTCTL_ISOLATED_SIM
+        (void)slot_img_path;
+        (void)mountinfo_path;
+        aopts.mountinfo_path = mountinfo_path;
+        aopts.target_dev_override = slot_img_path;
+        aopts.allow_regular_file_target = 1;
+        aopts.allow_host_slot_sim = 1;
+        if (r3c_policy_load(policy_path ? policy_path : R3C_DEFAULT_POLICY_PATH,
+                            geteuid(), &r3c_pol, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "APPLY REJECTED: %s\n", errbuf);
+            return 1;
+        }
+#else
+        (void)policy_path;
+        (void)slot_img_path;
+        (void)mountinfo_path;
+        /* Hardcode production backend & sys paths; ignore SGW_* env vars completely. */
+        cfg.fw_printenv_bin = "/usr/sbin/fw_printenv";
+        cfg.fw_setenv_bin = "/usr/sbin/fw_setenv";
+        cfg.config_path = "/etc/fw_env.config";
+        hcfg.proc_cmdline_path = "/proc/cmdline";
+        hcfg.proc_mounts_path = "/proc/mounts";
+        hcfg.supervisor_run_dir = "/opt/smartgateway/run";
+        hcfg.sysroot_prefix = "";
+        if (r3c_policy_load(R3C_DEFAULT_POLICY_PATH, 0, &r3c_pol, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "APPLY REJECTED: %s\n", errbuf);
+            return 1;
+        }
+#endif
+        if (r3c_coordinator_apply_bundle(&r3c_pol, &cfg, &hcfg, &aopts,
+                                         txid, &last_good, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "APPLY REJECTED: %s\n", errbuf);
+            return 1;
+        }
+        printf("STAGED tx=%s target=%u last_good=%s\n",
+               txid, aopts.target_slot, ab_slot_str(last_good));
         return 0;
     }
 
