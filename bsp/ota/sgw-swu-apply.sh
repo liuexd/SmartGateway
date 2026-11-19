@@ -44,8 +44,13 @@ case "$PHASE" in
         chmod 0700 "$PWD/bundle"
         chmod 0600 "$PWD/bundle/"*
 
-        # Strict root boundary: production root execution ignores all env-var overrides.
+        # Strict root boundary: production root execution ignores all env-var overrides
+        # and explicitly protects factory slot 2.
         if [ "$(id -u)" -eq 0 ]; then
+            if [ "$TARGET_SLOT" = "2" ]; then
+                echo "APPLY REJECTED: target slot 2 is write-protected factory baseline" >&2
+                exit 1
+            fi
             exec /usr/bin/sgw_bootctl apply-bundle \
                 --bundle "$PWD/bundle" \
                 --target "$TARGET_SLOT"
@@ -66,21 +71,7 @@ case "$PHASE" in
             exit 1
         fi
 
-        if [ -n "${SGW_SWU_EXPECTED_TARGET:-}" ]; then
-            exec "$SGW_SWU_ISOLATED_BOOTCTL" \
-                -c "$SGW_SWU_FW_CFG" \
-                --cmdline "$SGW_SWU_CMDLINE" \
-                --mounts "$SGW_SWU_MOUNTS" \
-                --sysroot "$SGW_SWU_SYSROOT" \
-                apply-bundle \
-                --bundle "$PWD/bundle" \
-                --target "$TARGET_SLOT" \
-                --policy "$SGW_SWU_POLICY" \
-                --slot-img "$SGW_SWU_SLOT_IMG" \
-                --mountinfo "$SGW_SWU_MOUNTINFO" \
-                --expected-target "$SGW_SWU_EXPECTED_TARGET"
-        fi
-        exec "$SGW_SWU_ISOLATED_BOOTCTL" \
+        set -- \
             -c "$SGW_SWU_FW_CFG" \
             --cmdline "$SGW_SWU_CMDLINE" \
             --mounts "$SGW_SWU_MOUNTS" \
@@ -91,6 +82,13 @@ case "$PHASE" in
             --policy "$SGW_SWU_POLICY" \
             --slot-img "$SGW_SWU_SLOT_IMG" \
             --mountinfo "$SGW_SWU_MOUNTINFO"
+        if [ "${SGW_SWU_FUSE_DATA:-0}" = "1" ]; then
+            set -- "$@" --fuse-data
+        fi
+        if [ -n "${SGW_SWU_EXPECTED_TARGET:-}" ]; then
+            set -- "$@" --expected-target "$SGW_SWU_EXPECTED_TARGET"
+        fi
+        exec "$SGW_SWU_ISOLATED_BOOTCTL" "$@"
         ;;
     *)
         echo "APPLY HOOK ERROR: unsupported script phase '$PHASE'" >&2

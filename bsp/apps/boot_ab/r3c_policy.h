@@ -31,6 +31,7 @@ typedef struct {
     r3c_gw_flow_mode_t gateway_flow_mode;
     int allow_external_degraded;
     int require_sensor_heartbeat;
+    int protect_slot2;
     uint64_t stable_ms;
     uint64_t max_gap_ms;
     uint64_t deadline_ms;

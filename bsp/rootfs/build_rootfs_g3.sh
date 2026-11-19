@@ -148,13 +148,16 @@ required = [
     "usr/bin/gdbserver",
     "usr/lib/libbsd.so.0",
     "opt/smartgateway/bin/service_supervisor_run",
+    "etc/hwrevision",
+    "etc/swupdate/swupdate.cfg",
+    "usr/bin/sgw-swu-install",
 ]
 missing = [r for r in required if r not in names]
 if missing:
     raise RuntimeError(f"Missing required files in rootfs.tar: {missing}")
 
 with tarfile.open(tar_path, "r") as tf:
-    for root_owned in ("bin/busybox", "sbin/init", "var/empty", "usr/bin/sgw_bootctl"):
+    for root_owned in ("bin/busybox", "sbin/init", "var/empty", "usr/bin/sgw_bootctl", "usr/bin/swupdate", "usr/bin/sgw-swu-install"):
         m = _members.get(root_owned)
         if m is None or m.uid != 0 or m.gid != 0:
             raise RuntimeError(f"Expected root ownership (0:0) for {root_owned}, got {m.uid if m else None}:{m.gid if m else None}")
@@ -168,6 +171,49 @@ with tarfile.open(tar_path, "r") as tf:
                 raise RuntimeError(f"/etc/inittab line {lineno} id field invalid for sysvinit: {parts[0]!r}")
             if len(parts[3]) > 127:
                 raise RuntimeError(f"/etc/inittab line {lineno} process field exceeds sysvinit 127-char limit ({len(parts[3])} chars)")
+
+    import hashlib
+    repo_root = out_dir.parent.parent
+    br_cfg_lines = (out_dir / ".config").read_text(encoding="utf-8").splitlines()
+    expected_cfg_line = f'BR2_PACKAGE_SWUPDATE_CONFIG="{repo_root / "bsp/ota/swupdate.config"}"'
+    if expected_cfg_line not in br_cfg_lines:
+        raise RuntimeError(f"Expected {expected_cfg_line} in {out_dir / '.config'}")
+
+    swu_cfg_path = out_dir / "build/swupdate-2019.11/.config"
+    if not swu_cfg_path.is_file():
+        raise RuntimeError(f"Missing SWUpdate .config: {swu_cfg_path}")
+    swu_cfg_lines = set(swu_cfg_path.read_text(encoding="utf-8").splitlines())
+    for must_have in (
+        "CONFIG_SIGNED_IMAGES=y",
+        "CONFIG_SIGALG_RAWRSA=y",
+        "CONFIG_HASH_VERIFY=y",
+        "CONFIG_HW_COMPATIBILITY=y",
+        "CONFIG_BOOTLOADER_NONE=y",
+        "# CONFIG_UBOOT is not set",
+        "# CONFIG_BOOTLOADERHANDLER is not set",
+    ):
+        if must_have not in swu_cfg_lines:
+            raise RuntimeError(f"SWUpdate .config missing {must_have!r}")
+
+    swu_bin_bytes = tf.extractfile(_members["usr/bin/swupdate"]).read()
+    if b"swupdate built for signed image, provide a public key file" not in swu_bin_bytes:
+        raise RuntimeError("Target usr/bin/swupdate missing mandatory signed-image public key check")
+    if b"public key / cert %s ignored" in swu_bin_bytes:
+        raise RuntimeError("Target usr/bin/swupdate built without SIGALG (fallback ignored-key string present)")
+
+    bootctl_bin_bytes = tf.extractfile(_members["usr/bin/sgw_bootctl"]).read()
+    arm_bootctl_bytes = (repo_root / "build/arm-ab/sgw_bootctl").read_bytes()
+    if hashlib.sha256(bootctl_bin_bytes).hexdigest() != hashlib.sha256(arm_bootctl_bytes).hexdigest():
+        raise RuntimeError("Target usr/bin/sgw_bootctl SHA-256 differs from build/arm-ab/sgw_bootctl")
+    if b"target slot 2 is write-protected factory baseline" not in bootctl_bin_bytes:
+        raise RuntimeError("Target usr/bin/sgw_bootctl missing factory slot 2 write-protection guard")
+
+    hwrev_bytes = tf.extractfile(_members["etc/hwrevision"]).read()
+    if hwrev_bytes != b"imx6ull-100ask revA\n":
+        raise RuntimeError(f"Unexpected /etc/hwrevision contents: {hwrev_bytes!r}")
+    for forbidden in ("etc/swupdate/postupdate.sh", "etc/swupdate/swupdate-public.pem"):
+        if forbidden in names:
+            raise RuntimeError(f"Vendor file must not exist in target rootfs: {forbidden}")
 
 import tempfile
 import shutil

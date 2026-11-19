@@ -259,10 +259,13 @@ int main(int argc, char **argv)
         ab_slot_t expected_target = AB_SLOT_NONE;
         ab_slot_t last_good = AB_SLOT_NONE;
         int has_expected_target = 0;
+        int fuse_data = 0;
         const char *bundle_dir = NULL;
         const char *policy_path = NULL;
         const char *slot_img_path = NULL;
         const char *mountinfo_path = NULL;
+        const char *data_fstype = NULL;
+        const char *sysfs_block_root = NULL;
         r3c_policy_t r3c_pol;
         r3c_apply_opts_t aopts;
         char txid[65] = {0};
@@ -290,9 +293,19 @@ int main(int argc, char **argv)
                     return 2;
                 has_expected_target = 1;
                 idx += 2;
+            } else if (strcmp(argv[idx], "--fuse-data") == 0) {
+#ifdef SGW_BOOTCTL_ISOLATED_SIM
+                fuse_data = 1;
+                idx += 1;
+#else
+                fprintf(stderr, "APPLY REJECTED: production apply-bundle forbids path overrides\n");
+                return 1;
+#endif
             } else if (strcmp(argv[idx], "--policy") == 0 ||
                        strcmp(argv[idx], "--slot-img") == 0 ||
-                       strcmp(argv[idx], "--mountinfo") == 0) {
+                       strcmp(argv[idx], "--mountinfo") == 0 ||
+                       strcmp(argv[idx], "--data-fstype") == 0 ||
+                       strcmp(argv[idx], "--sysfs-block-root") == 0) {
 #ifdef SGW_BOOTCTL_ISOLATED_SIM
                 if (idx + 1 >= argc) {
                     print_usage(argv[0]);
@@ -302,8 +315,12 @@ int main(int argc, char **argv)
                     policy_path = argv[idx + 1];
                 else if (strcmp(argv[idx], "--slot-img") == 0)
                     slot_img_path = argv[idx + 1];
-                else
+                else if (strcmp(argv[idx], "--mountinfo") == 0)
                     mountinfo_path = argv[idx + 1];
+                else if (strcmp(argv[idx], "--data-fstype") == 0)
+                    data_fstype = argv[idx + 1];
+                else
+                    sysfs_block_root = argv[idx + 1];
                 idx += 2;
 #else
                 fprintf(stderr, "APPLY REJECTED: production apply-bundle forbids path overrides\n");
@@ -319,6 +336,13 @@ int main(int argc, char **argv)
             return 2;
         }
 
+#ifndef SGW_BOOTCTL_ISOLATED_SIM
+        if (target == AB_SLOT_2) {
+            fprintf(stderr, "APPLY REJECTED: target slot 2 is write-protected factory baseline\n");
+            return 1;
+        }
+#endif
+
         memset(&aopts, 0, sizeof(aopts));
         aopts.target_slot = (unsigned int)target;
         aopts.expected_target = (unsigned int)expected_target;
@@ -326,21 +350,25 @@ int main(int argc, char **argv)
         aopts.bundle_dir = bundle_dir;
 
 #ifdef SGW_BOOTCTL_ISOLATED_SIM
-        (void)slot_img_path;
-        (void)mountinfo_path;
         aopts.mountinfo_path = mountinfo_path;
+        aopts.sysfs_block_root = sysfs_block_root;
+        aopts.expected_data_fstype = data_fstype;
         aopts.target_dev_override = slot_img_path;
         aopts.allow_regular_file_target = 1;
         aopts.allow_host_slot_sim = 1;
+        aopts.allow_fuse_data_bypass_blk = fuse_data;
         if (r3c_policy_load(policy_path ? policy_path : R3C_DEFAULT_POLICY_PATH,
                             geteuid(), &r3c_pol, errbuf, sizeof(errbuf)) != 0) {
             fprintf(stderr, "APPLY REJECTED: %s\n", errbuf);
             return 1;
         }
 #else
+        (void)fuse_data;
         (void)policy_path;
         (void)slot_img_path;
         (void)mountinfo_path;
+        (void)data_fstype;
+        (void)sysfs_block_root;
         /* Hardcode production backend & sys paths; ignore SGW_* env vars completely. */
         cfg.fw_printenv_bin = "/usr/sbin/fw_printenv";
         cfg.fw_setenv_bin = "/usr/sbin/fw_setenv";
@@ -353,6 +381,9 @@ int main(int argc, char **argv)
             fprintf(stderr, "APPLY REJECTED: %s\n", errbuf);
             return 1;
         }
+        /* Defense-in-depth: production builds lock slot 2 write-protection on. */
+        r3c_pol.protect_slot2 = 1;
+        aopts.allow_fuse_data_bypass_blk = 0;
 #endif
         if (r3c_coordinator_apply_bundle(&r3c_pol, &cfg, &hcfg, &aopts,
                                          txid, &last_good, errbuf, sizeof(errbuf)) != 0) {

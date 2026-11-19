@@ -149,6 +149,45 @@ class TestG3KernelAndRootfs(unittest.TestCase):
             self.assertIn("0xe0000", fw_cfg_txt)
             self.assertIn("0xe2000", fw_cfg_txt)
 
+            import hashlib
+            br_cfg_txt = (ROOTFS_BUILD / ".config").read_text(encoding="utf-8")
+            self.assertIn(f'BR2_PACKAGE_SWUPDATE_CONFIG="{REPO_ROOT / "bsp/ota/swupdate.config"}"', br_cfg_txt.splitlines())
+
+            swu_cfg_lines = set((ROOTFS_BUILD / "build/swupdate-2019.11/.config").read_text(encoding="utf-8").splitlines())
+            for opt in (
+                "CONFIG_SIGNED_IMAGES=y",
+                "CONFIG_SIGALG_RAWRSA=y",
+                "CONFIG_HASH_VERIFY=y",
+                "CONFIG_HW_COMPATIBILITY=y",
+                "CONFIG_BOOTLOADER_NONE=y",
+                "# CONFIG_UBOOT is not set",
+                "# CONFIG_BOOTLOADERHANDLER is not set",
+            ):
+                self.assertIn(opt, swu_cfg_lines)
+
+            self.assertIn("etc/hwrevision", names)
+            self.assertIn("etc/swupdate/swupdate.cfg", names)
+            self.assertIn("usr/bin/sgw-swu-install", names)
+            self.assertNotIn("etc/swupdate/postupdate.sh", names)
+            self.assertNotIn("etc/swupdate/swupdate-public.pem", names)
+            self.assertEqual((members["usr/bin/sgw-swu-install"].uid, members["usr/bin/sgw-swu-install"].gid), (0, 0))
+            self.assertEqual((members["usr/bin/swupdate"].uid, members["usr/bin/swupdate"].gid), (0, 0))
+
+            hwrev_txt = tf.extractfile(members["etc/hwrevision"]).read().decode()
+            self.assertEqual(hwrev_txt, "imx6ull-100ask revA\n")
+            swu_cfg_txt = tf.extractfile(members["etc/swupdate/swupdate.cfg"]).read().decode()
+            self.assertNotIn("222.186.41.113", swu_cfg_txt)
+            self.assertNotIn("postupdate.sh", swu_cfg_txt)
+
+            swu_bin = tf.extractfile(members["usr/bin/swupdate"]).read()
+            self.assertIn(b"swupdate built for signed image, provide a public key file", swu_bin)
+            self.assertNotIn(b"public key / cert %s ignored", swu_bin)
+
+            bootctl_bin = tf.extractfile(members["usr/bin/sgw_bootctl"]).read()
+            arm_bootctl = (REPO_ROOT / "build/arm-ab/sgw_bootctl").read_bytes()
+            self.assertEqual(hashlib.sha256(bootctl_bin).hexdigest(), hashlib.sha256(arm_bootctl).hexdigest())
+            self.assertIn(b"target slot 2 is write-protected factory baseline", bootctl_bin)
+
         # Verify ext4 image filesystem lacks metadata_csum (U-Boot 2017.03 compatibility)
         tune = subprocess.run(["/sbin/tune2fs", "-l", str(ext4_path)], capture_output=True, text=True)
         if tune.returncode == 0:

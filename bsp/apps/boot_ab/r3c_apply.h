@@ -18,9 +18,12 @@ typedef struct {
     int has_expected_target;
     const char *bundle_dir;
     const char *mountinfo_path;      /* NULL in production -> /proc/self/mountinfo */
+    const char *sysfs_block_root;    /* NULL in production -> /sys/dev/block */
+    const char *expected_data_fstype;/* NULL -> "ext4" in prod, "fuse.ext4" in FUSE sim */
     const char *target_dev_override; /* NULL in production -> /dev/mmcblk1p{1,2} */
     int allow_regular_file_target;   /* 0 in production */
     int allow_host_slot_sim;         /* 0 in production */
+    int allow_fuse_data_bypass_blk;  /* 0 in production */
 } r3c_apply_opts_t;
 
 int r3c_coordinator_apply_bundle(const r3c_policy_t *policy,

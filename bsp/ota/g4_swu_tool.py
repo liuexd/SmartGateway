@@ -236,6 +236,7 @@ def cmd_apply(args):
                 "gateway_flow_mode=controlled_local\n"
                 "allow_external_degraded=1\n"
                 "require_sensor_heartbeat=0\n"
+                f"protect_slot2={'0' if args.allow_virtual_slot2 else '1'}\n"
                 "stable_ms=150\n"
                 "max_gap_ms=400\n"
                 "deadline_ms=2000\n"
@@ -256,6 +257,7 @@ def cmd_apply(args):
         child_env["SGW_SWU_MOUNTS"] = str(mounts_path)
         child_env["SGW_SWU_MOUNTINFO"] = str(mountinfo_path)
         child_env["SGW_SWU_SYSROOT"] = str(sysroot_path)
+        child_env["SGW_SWU_FUSE_DATA"] = "0" if args.no_fuse_data else "1"
         if args.expected_target is not None:
             child_env["SGW_SWU_EXPECTED_TARGET"] = str(int(args.expected_target))
         else:
@@ -327,6 +329,8 @@ def main():
     ap.add_argument("--swupdate-cfg", default=None)
     ap.add_argument("--swupdate-bin", default=str(DEFAULT_SWUPDATE))
     ap.add_argument("--bootctl-bin", default=str(DEFAULT_BOOTCTL_ISOLATED))
+    ap.add_argument("--allow-virtual-slot2", action="store_true")
+    ap.add_argument("--no-fuse-data", action="store_true")
 
     args = p.parse_args()
     try:

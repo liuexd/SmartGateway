@@ -74,6 +74,7 @@ void r3c_policy_init_default(r3c_policy_t *p, uid_t owner)
     p->gateway_flow_mode = R3C_GW_STRICT_FORWARD;
     p->allow_external_degraded = 0;
     p->require_sensor_heartbeat = 1;
+    p->protect_slot2 = 1;
     p->stable_ms = 5000;
     p->max_gap_ms = 2000;
     p->deadline_ms = 30000;
@@ -223,6 +224,12 @@ int r3c_policy_load(const char *path, uid_t expected_owner,
             if ((seen_mask & (1u << 20)) || parse_u64(v, &out->max_evidence_age_ms) != 0 || out->max_evidence_age_ms == 0)
                 return fail(err, errlen, "invalid max_evidence_age_ms");
             seen_mask |= (1u << 20);
+        } else if (strcmp(k, "protect_slot2") == 0) {
+            if (seen_mask & (1u << 21)) return fail(err, errlen, "duplicate protect_slot2");
+            seen_mask |= (1u << 21);
+            if (strcmp(v, "0") == 0) out->protect_slot2 = 0;
+            else if (strcmp(v, "1") == 0) out->protect_slot2 = 1;
+            else return fail(err, errlen, "invalid protect_slot2");
         } else {
             return fail(err, errlen, "unknown policy key");
         }

@@ -2,6 +2,7 @@
 #define _FILE_OFFSET_BITS 64
 #include "r3c_apply.h"
 #include "r3c_bundle.h"
+#include "r3c_data.h"
 #include "r3c_txn.h"
 #include "ota_state_io.h"
 
@@ -15,12 +16,14 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 
 #define MAX_IMAGE_BYTES    (2ULL * 1024 * 1024 * 1024)
 #define MAX_KERNEL_BYTES   (64ULL * 1024 * 1024)
 #define MAX_DTB_BYTES      (16ULL * 1024 * 1024)
 #define MAX_MANIFEST_BYTES (64U * 1024U)
+#define MAX_MOUNTINFO_BYTES (1024U * 1024U)
 
 static int fail(char *err, size_t len, const char *msg)
 {
@@ -182,6 +185,155 @@ static int read_exact_small(int fd, char *buf, size_t cap, size_t *out_len)
         return -1;
     buf[used] = '\0';
     *out_len = used;
+    return 0;
+}
+
+static int read_mountinfo_bounded(const char *path, char **out_buf)
+{
+    FILE *fp;
+    char *line = NULL, *buf = NULL;
+    size_t cap = 0, used = 0;
+    ssize_t n;
+
+    *out_buf = NULL;
+    fp = fopen((path && path[0]) ? path : "/proc/self/mountinfo", "re");
+    if (!fp)
+        return -1;
+    while ((n = getline(&line, &cap, fp)) > 0) {
+        char *nx;
+        if ((size_t)n > MAX_MOUNTINFO_BYTES - used) {
+            free(buf);
+            buf = NULL;
+            break;
+        }
+        nx = realloc(buf, used + (size_t)n + 1);
+        if (!nx) {
+            free(buf);
+            buf = NULL;
+            break;
+        }
+        buf = nx;
+        memcpy(buf + used, line, (size_t)n);
+        used += (size_t)n;
+        buf[used] = '\0';
+    }
+    if (ferror(fp)) {
+        free(buf);
+        buf = NULL;
+    }
+    free(line);
+    fclose(fp);
+    if (!buf || used == 0) {
+        free(buf);
+        return -1;
+    }
+    *out_buf = buf;
+    return 0;
+}
+
+static int verify_data_and_open_txdir(const r3c_policy_t *policy,
+                                      const r3c_apply_opts_t *opts,
+                                      int *out_txdir_fd,
+                                      char *err,
+                                      size_t errlen)
+{
+    size_t mlen;
+    int data_dir = -1, txdir_fd = -1;
+    struct stat dst, txst, rst;
+    const char *mi_path = (opts->mountinfo_path && opts->mountinfo_path[0])
+                              ? opts->mountinfo_path
+                              : "/proc/self/mountinfo";
+    const char *fstype;
+
+    *out_txdir_fd = -1;
+    if (!safe_abs(policy->data_mountpoint) || !safe_abs(policy->tx_dir))
+        return fail(err, errlen, "invalid DATA or transaction directory path");
+
+    mlen = strlen(policy->data_mountpoint);
+    if (strncmp(policy->tx_dir, policy->data_mountpoint, mlen) != 0 ||
+        policy->tx_dir[mlen] != '/')
+        return fail(err, errlen, "transaction directory is outside DATA mountpoint");
+
+    if (stat("/", &rst) != 0)
+        return fail(err, errlen, "cannot stat root '/'");
+
+    if (opts->allow_fuse_data_bypass_blk) {
+        char *mbuf = NULL;
+        int matched;
+
+        if (trusted_dirs(policy->data_mountpoint, policy->trusted_uid) != 0)
+            return fail(err, errlen, "untrusted DATA mountpoint");
+        data_dir = open(policy->data_mountpoint, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (data_dir < 0 || fstat(data_dir, &dst) != 0 || !S_ISDIR(dst.st_mode) ||
+            dst.st_dev == rst.st_dev) {
+            if (data_dir >= 0) close(data_dir);
+            return fail(err, errlen, "DATA mountpoint is not an isolated mount");
+        }
+        fstype = (opts->expected_data_fstype && opts->expected_data_fstype[0])
+                     ? opts->expected_data_fstype
+                     : "fuse.ext4";
+        if (read_mountinfo_bounded(mi_path, &mbuf) != 0) {
+            close(data_dir);
+            return fail(err, errlen, "DATA mountinfo identity or mode invalid");
+        }
+        matched = r3c_data_mountinfo_matches_fstype(
+            mbuf, policy->data_mountpoint, major(dst.st_dev), minor(dst.st_dev), fstype);
+        free(mbuf);
+        if (matched != 0) {
+            close(data_dir);
+            return fail(err, errlen, "DATA mountinfo identity or mode invalid");
+        }
+        if (r3c_data_inspect_contents(data_dir, policy->trusted_uid,
+                                      policy->data_min_bytes, err, errlen) != 0 ||
+            r3c_data_verify_persistence(data_dir, policy->trusted_uid, err, errlen) != 0) {
+            close(data_dir);
+            return -1;
+        }
+    } else {
+        const char *excl[2] = { policy->slot1_device, policy->slot2_device };
+        const r3c_sector_range_t reserved[1] = { { 1792ULL, 32ULL } };
+        r3c_data_full_policy_t fp;
+
+        memset(&fp, 0, sizeof(fp));
+        fp.mountpoint = policy->data_mountpoint;
+        fp.device = policy->data_device;
+        fp.whole_disk_device = policy->whole_disk_device;
+        fp.mountinfo_path = mi_path;
+        fp.sysfs_block_root = (opts->sysfs_block_root && opts->sysfs_block_root[0])
+                                  ? opts->sysfs_block_root
+                                  : "/sys/dev/block";
+        fp.expected_fstype = (opts->expected_data_fstype && opts->expected_data_fstype[0])
+                                 ? opts->expected_data_fstype
+                                 : "ext4";
+        fp.excluded_devices = excl;
+        fp.excluded_count = 2;
+        fp.reserved_sectors = reserved;
+        fp.reserved_count = 1;
+        fp.minimum_available_bytes = policy->data_min_bytes;
+        fp.owner = policy->trusted_uid;
+        fp.verify_write_persistence = 1;
+
+        if (r3c_data_inspect_full(&fp, err, errlen) != 0)
+            return -1;
+        data_dir = open(policy->data_mountpoint, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (data_dir < 0 || fstat(data_dir, &dst) != 0 || !S_ISDIR(dst.st_mode)) {
+            if (data_dir >= 0) close(data_dir);
+            return fail(err, errlen, "DATA mountpoint inaccessible");
+        }
+    }
+
+    if (open_verified_dir(policy->tx_dir, policy->trusted_uid, 1, &txdir_fd,
+                          err, errlen, "untrusted transaction directory") != 0) {
+        close(data_dir);
+        return -1;
+    }
+    if (fstat(txdir_fd, &txst) != 0 || txst.st_dev != dst.st_dev || txst.st_dev == rst.st_dev) {
+        close(txdir_fd);
+        close(data_dir);
+        return fail(err, errlen, "transaction directory is not on verified DATA mount");
+    }
+    close(data_dir);
+    *out_txdir_fd = txdir_fd;
     return 0;
 }
 
@@ -372,6 +524,11 @@ int r3c_coordinator_apply_bundle(const r3c_policy_t *policy,
         return fail(errbuf, errlen, "invalid target slot");
     if (opts->has_expected_target && opts->expected_target != opts->target_slot)
         return fail(errbuf, errlen, "target slot disagrees with expected_target");
+
+    /* Gate 1: explicit factory p2 write protection before touching txdir, slot, or env */
+    if (policy->protect_slot2 && opts->target_slot == 2)
+        return fail(errbuf, errlen, "target slot 2 is write-protected factory baseline");
+
     if (out_txid)
         out_txid[0] = '\0';
     if (out_last_good)
@@ -406,8 +563,8 @@ int r3c_coordinator_apply_bundle(const r3c_policy_t *policy,
         goto out;
     }
 
-    if (open_verified_dir(policy->tx_dir, policy->trusted_uid, 1, &txdir_fd,
-                          errbuf, errlen, "untrusted transaction directory") != 0)
+    /* Gate 2: verify shared DATA (p3) identity, schema=1, persistence, and tx_dir containment */
+    if (verify_data_and_open_txdir(policy, opts, &txdir_fd, errbuf, errlen) != 0)
         goto out;
 
     if (trusted_parent_dirs(policy->pubkey_path, policy->trusted_uid) != 0) {
@@ -475,6 +632,7 @@ int r3c_coordinator_apply_bundle(const r3c_policy_t *policy,
         memset(&wopts, 0, sizeof(wopts));
         wopts.target_dev_override = opts->target_dev_override;
         wopts.mountinfo_path = opts->mountinfo_path;
+        wopts.sysfs_block_root = opts->sysfs_block_root;
         wopts.allow_regular_file_target = opts->allow_regular_file_target ? 1 : 0;
         wopts.allow_host_slot_sim = opts->allow_host_slot_sim ? 1 : 0;
         wopts_ptr = &wopts;
