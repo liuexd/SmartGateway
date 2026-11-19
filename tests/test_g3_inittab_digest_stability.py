@@ -144,6 +144,7 @@ class TestG3InittabDigestStability(unittest.TestCase):
         self.inittab = self.tmp / "etc_inittab"
         self.initd = self.tmp / "S99smartgateway"
         self.stop_flag = self.tmp / "runtime.disabled"
+        self.policy_dir = self.tmp / "policy"
 
     def tearDown(self):
         for pid in supervisor_run_pids(self.sup, self.app_root):
@@ -160,6 +161,7 @@ class TestG3InittabDigestStability(unittest.TestCase):
         env["SMARTGATEWAY_INITD"] = str(self.initd)
         env["SMARTGATEWAY_STOP_FLAG"] = str(self.stop_flag)
         env["SMARTGATEWAY_INIT_PID"] = str(init_pid)
+        env["SMARTGATEWAY_POLICY_DIR"] = str(self.policy_dir)
         return env
 
     def _run_s99(self, s99_path: Path, action: str, init_pid: int, expect_rc: int = 0):
@@ -270,6 +272,9 @@ class TestG3InittabDigestStability(unittest.TestCase):
         finally:
             fake_init.stop()
 
+    def _file_sig(self, path: Path):
+        return hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_ino
+
     def test_install_on_pre_pinned_inittab_preserves_signed_digest(self):
         if not SUP_BIN.exists():
             self.skipTest(f"host supervisor binary not built: {SUP_BIN}")
@@ -277,6 +282,10 @@ class TestG3InittabDigestStability(unittest.TestCase):
         wrapper = self.app_root / "bin/service_supervisor_run"
         shutil.copy2(RUN_WRAPPER_SRC, wrapper)
         wrapper.chmod(0o700)
+        shutil.copy2(S99_SCRIPT, self.initd)
+        self.initd.chmod(0o755)
+        self.policy_dir.mkdir(parents=True, exist_ok=True)
+        (self.policy_dir / "r3c-policy.conf").write_text("gateway_flow_mode=controlled_local\n", encoding="utf-8")
         (self.app_root / "service.conf").write_text(
             f"executable={self.app_root}/current/smart_gateway\nserial=\nbaud=115200\nserver=127.0.0.1\nport=9000\n",
             encoding="utf-8",
@@ -285,7 +294,10 @@ class TestG3InittabDigestStability(unittest.TestCase):
             f"id:3:initdefault:\nsgw0::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec {wrapper}'\n",
             encoding="utf-8",
         )
-        pinned_sha = hashlib.sha256(self.inittab.read_bytes()).hexdigest()
+        inittab_before = self._file_sig(self.inittab)
+        initd_before = self._file_sig(self.initd)
+        wrapper_before = self._file_sig(wrapper)
+
         fake_init = FakeSysVInit(self.inittab, self._base_env(0))
         fake_init.start_loop()
         try:
@@ -295,11 +307,103 @@ class TestG3InittabDigestStability(unittest.TestCase):
                 capture_output=True, text=True, timeout=30,
             )
             self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
-            self.assertIn("保持只读不修改", res.stdout)
-            self.assertEqual(hashlib.sha256(self.inittab.read_bytes()).hexdigest(), pinned_sha)
+            self.assertIn("跳过文件安装", res.stdout)
+            self.assertEqual(self._file_sig(self.inittab), inittab_before)
+            self.assertEqual(self._file_sig(self.initd), initd_before)
+            self.assertEqual(self._file_sig(wrapper), wrapper_before)
             self.assertEqual(list(self.tmp.glob("etc_inittab.bak.*")), [])
         finally:
             fake_init.stop()
+
+    def test_install_rejects_mismatched_s99_on_signed_image_without_mutating_files(self):
+        if not SUP_BIN.exists():
+            self.skipTest(f"host supervisor binary not built: {SUP_BIN}")
+
+        wrapper = self.app_root / "bin/service_supervisor_run"
+        conf_txt = (
+            f"executable={self.app_root}/current/smart_gateway\n"
+            "serial=\nbaud=115200\nserver=127.0.0.1\nport=9000\n"
+        )
+        (self.app_root / "service.conf").write_text(conf_txt, encoding="utf-8")
+        pinned_inittab = (
+            f"id:3:initdefault:\n"
+            f"sgw0::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec {wrapper}'\n"
+        )
+
+        # (a) Pre-pinned inittab + mismatched S99smartgateway (with and without policy_dir)
+        for with_policy in (True, False):
+            shutil.rmtree(self.policy_dir, ignore_errors=True)
+            if with_policy:
+                self.policy_dir.mkdir(parents=True, exist_ok=True)
+                (self.policy_dir / "r3c-policy.conf").write_text("gateway_flow_mode=controlled_local\n", encoding="utf-8")
+            shutil.copy2(RUN_WRAPPER_SRC, wrapper)
+            wrapper.chmod(0o700)
+            self.initd.write_text("#!/bin/sh\necho legacy S99smartgateway\n", encoding="utf-8")
+            self.initd.chmod(0o755)
+            self.inittab.write_text(pinned_inittab, encoding="utf-8")
+
+            inittab_sha = hashlib.sha256(self.inittab.read_bytes()).hexdigest()
+            initd_sha = hashlib.sha256(self.initd.read_bytes()).hexdigest()
+            wrapper_sha = hashlib.sha256(wrapper.read_bytes()).hexdigest()
+
+            res = subprocess.run(
+                [str(INSTALL_SCRIPT), str(self.app_root)],
+                env=self._base_env(999999),
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertNotEqual(res.returncode, 0, f"expected failure for with_policy={with_policy}")
+            self.assertIn("版本不一致", res.stderr)
+            self.assertEqual(hashlib.sha256(self.inittab.read_bytes()).hexdigest(), inittab_sha)
+            self.assertEqual(hashlib.sha256(self.initd.read_bytes()).hexdigest(), initd_sha)
+            self.assertEqual(hashlib.sha256(wrapper.read_bytes()).hexdigest(), wrapper_sha)
+            self.assertEqual(list(self.tmp.glob("etc_inittab.bak.*")), [])
+
+        # (b) Signed policy_dir + matching S99/wrapper + legacy/mismatched inittab
+        self.policy_dir.mkdir(parents=True, exist_ok=True)
+        (self.policy_dir / "r3c-policy.conf").write_text("gateway_flow_mode=controlled_local\n", encoding="utf-8")
+        shutil.copy2(RUN_WRAPPER_SRC, wrapper)
+        wrapper.chmod(0o700)
+        shutil.copy2(S99_SCRIPT, self.initd)
+        self.initd.chmod(0o755)
+        self.inittab.write_text(
+            f"id:3:initdefault:\n::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec {self.sup} run --root {self.app_root}'\n",
+            encoding="utf-8",
+        )
+        inittab_sha = hashlib.sha256(self.inittab.read_bytes()).hexdigest()
+        initd_sha = hashlib.sha256(self.initd.read_bytes()).hexdigest()
+        wrapper_sha = hashlib.sha256(wrapper.read_bytes()).hexdigest()
+
+        res_b = subprocess.run(
+            [str(INSTALL_SCRIPT), str(self.app_root)],
+            env=self._base_env(999999),
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertNotEqual(res_b.returncode, 0)
+        self.assertIn("不一致", res_b.stderr)
+        self.assertEqual(hashlib.sha256(self.inittab.read_bytes()).hexdigest(), inittab_sha)
+        self.assertEqual(hashlib.sha256(self.initd.read_bytes()).hexdigest(), initd_sha)
+        self.assertEqual(hashlib.sha256(wrapper.read_bytes()).hexdigest(), wrapper_sha)
+        self.assertEqual(list(self.tmp.glob("etc_inittab.bak.*")), [])
+
+        # (c) Pre-pinned inittab + matching S99 + mismatched service_supervisor_run
+        self.inittab.write_text(pinned_inittab, encoding="utf-8")
+        wrapper.write_text("#!/bin/sh\n# old wrapper\n", encoding="utf-8")
+        wrapper.chmod(0o700)
+        inittab_sha = hashlib.sha256(self.inittab.read_bytes()).hexdigest()
+        initd_sha = hashlib.sha256(self.initd.read_bytes()).hexdigest()
+        wrapper_sha = hashlib.sha256(wrapper.read_bytes()).hexdigest()
+
+        res_c = subprocess.run(
+            [str(INSTALL_SCRIPT), str(self.app_root)],
+            env=self._base_env(999999),
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertNotEqual(res_c.returncode, 0)
+        self.assertIn("版本不一致", res_c.stderr)
+        self.assertEqual(hashlib.sha256(self.inittab.read_bytes()).hexdigest(), inittab_sha)
+        self.assertEqual(hashlib.sha256(self.initd.read_bytes()).hexdigest(), initd_sha)
+        self.assertEqual(hashlib.sha256(wrapper.read_bytes()).hexdigest(), wrapper_sha)
+        self.assertEqual(list(self.tmp.glob("etc_inittab.bak.*")), [])
 
     def test_start_refuses_mutating_inittab_when_entry_missing(self):
         (self.app_root / "service.conf").write_text(

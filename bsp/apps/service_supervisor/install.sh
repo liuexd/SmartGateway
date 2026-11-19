@@ -6,12 +6,12 @@
 #   sh install.sh [/opt/smartgateway]
 #
 # 设计约定：
-#   1. 安装 $ROOT/bin/service_supervisor_run 与 /etc/init.d/S99smartgateway。
-#   2. 若 $INITTAB 已包含统一的 service_supervisor_run respawn 条目（如 G3 签名镜像），
-#      则保持 $INITTAB 只读不改动（绝不生成备份或破坏签名清单摘要）。
-#   3. 仅当 $INITTAB 尚未注册统一 respawn 条目时（如独立/全新环境），才写入统一样式的
-#      sgw0::respawn:...service_supervisor_run（SysV init）或 ::respawn:...（BusyBox init），
-#      且后续 S99smartgateway start/stop 仅通过运行时 $STOP_FLAG 控制，不再修改 $INITTAB。
+#   1. 在任何写盘前检测是否处于已固定/签名镜像环境（inittab 含 service_supervisor_run，或
+#      策略目录存在 r3c-policy.conf / ota-public.pem）。
+#   2. 若处于已固定/签名镜像环境，先严格核对 inittab、S99smartgateway 与 service_supervisor_run
+#      是否与期望/安装包完全一致：全部一致则跳过文件写入以保护签名清单摘要；任一不一致
+#      则立即失败退出，且不修改 inittab、S99smartgateway 或 service_supervisor_run。
+#   3. 仅在全新/非固定独立环境执行常规安装并写入统一样式的 respawn 条目。
 #
 set -e
 
@@ -25,6 +25,13 @@ CONF="$ROOT/service.conf"
 INITTAB=${SMARTGATEWAY_INITTAB:-/etc/inittab}
 INITD=${SMARTGATEWAY_INITD:-/etc/init.d/S99smartgateway}
 INIT_PID=${SMARTGATEWAY_INIT_PID:-1}
+if [ "${SMARTGATEWAY_POLICY_DIR+set}" = "set" ]; then
+    POLICY_DIR="$SMARTGATEWAY_POLICY_DIR"
+elif [ "$INITTAB" = "/etc/inittab" ]; then
+    POLICY_DIR="/etc/smartgateway"
+else
+    POLICY_DIR=""
+fi
 RELEASES="$ROOT/releases"
 
 MARKER="# smartgateway-supervisor-respawn"
@@ -36,48 +43,23 @@ fail() {
     exit 1
 }
 
+files_identical() {
+    [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2"
+}
+
 if [ "$INITTAB" = "/etc/inittab" ] || [ "$INITD" = "/etc/init.d/S99smartgateway" ]; then
     [ "$(id -u)" = "0" ] || fail "must run as root"
 fi
 
-say "== 安装 Service Supervisor 到 $ROOT =="
-
-# 1. 目录结构
-mkdir -p "$ROOT/bin" "$RUN_DIR" "$LOGS" "$RELEASES"
-[ -x "$BIN" ] || fail "$BIN not found; copy the binary first"
-[ -d "$RELEASES" ] || fail "cannot create $RELEASES"
-say "目录就绪"
-
-# 2. 配置（不覆盖已有文件）
-if [ -f "$CONF" ]; then
-    say "配置已存在，保留：$CONF"
-else
-    "$BIN" init-config --root "$ROOT" \
-        --executable "$ROOT/current/smart_gateway" >/dev/null
-    say "已写出默认配置：$CONF"
-fi
-
-# 3. 安装统一的 S99smartgateway 与 service_supervisor_run
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
+# 只读前置校验（发生在任何 mkdir / cp / chmod / mv / init-config 之前）
+[ -x "$BIN" ] || fail "$BIN not found; copy the binary first"
 [ -f "$SCRIPT_DIR/service_supervisor_run" ] || fail "找不到 $SCRIPT_DIR/service_supervisor_run"
-cp "$SCRIPT_DIR/service_supervisor_run" "$RUN_WRAPPER"
-chmod 0700 "$RUN_WRAPPER"
-say "已安装 $RUN_WRAPPER"
-
-if [ -f "$SCRIPT_DIR/S99smartgateway" ]; then
-    mkdir -p "$(dirname "$INITD")"
-    cp "$SCRIPT_DIR/S99smartgateway" "$INITD"
-    chmod 0755 "$INITD"
-    say "已安装 $INITD"
-elif [ -f "$INITD" ]; then
-    say "使用已有 $INITD"
-else
+if [ ! -f "$SCRIPT_DIR/S99smartgateway" ] && [ ! -f "$INITD" ]; then
     fail "找不到 S99smartgateway（与 install.sh 同目录）"
 fi
 
-# 4. 统一 respawn 条目：已固定存在则不改动 $INITTAB（保护签名清单摘要）
-INITTAB_CHANGED=0
 if grep -q ':initdefault:' "$INITTAB" 2>/dev/null; then
     RESPAWN_PREFIX="sgw0::respawn:"
 else
@@ -86,13 +68,80 @@ fi
 PROCESS_FIELD="/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec $RUN_WRAPPER'"
 UNIFIED_ENTRY="${RESPAWN_PREFIX}${PROCESS_FIELD}"
 
-if grep -qF "$RUN_WRAPPER" "$INITTAB" 2>/dev/null && \
-   grep -Eq '^[^#]*:respawn:.*service_supervisor_run' "$INITTAB" 2>/dev/null; then
-    say "检测到 $INITTAB 已存在统一 respawn 条目，保持只读不修改"
+IS_PREPINNED=0
+if grep -Eq '^[^#]*:respawn:.*service_supervisor_run' "$INITTAB" 2>/dev/null; then
+    IS_PREPINNED=1
+fi
+
+HAS_SIGNED_POLICY=0
+if [ -n "$POLICY_DIR" ]; then
+    if [ -f "$POLICY_DIR/r3c-policy.conf" ] || [ -f "$POLICY_DIR/ota-public.pem" ]; then
+        HAS_SIGNED_POLICY=1
+    fi
+fi
+
+SKIP_FILE_INSTALL=0
+INITTAB_CHANGED=0
+
+if [ "$IS_PREPINNED" = "1" ] || [ "$HAS_SIGNED_POLICY" = "1" ]; then
+    if ! grep -qxF "$UNIFIED_ENTRY" "$INITTAB" 2>/dev/null; then
+        fail "$INITTAB 与预期统一 respawn 条目不一致（未改动 $INITTAB 与 $INITD）"
+    fi
+    if [ ! -f "$SCRIPT_DIR/S99smartgateway" ] || ! files_identical "$SCRIPT_DIR/S99smartgateway" "$INITD"; then
+        fail "$INITD 与安装包中的 S99smartgateway 版本不一致（拒绝覆盖 $INITD；未改动 $INITTAB 与 $INITD）"
+    fi
+    if ! files_identical "$SCRIPT_DIR/service_supervisor_run" "$RUN_WRAPPER"; then
+        fail "$RUN_WRAPPER 与安装包中的 service_supervisor_run 版本不一致（拒绝覆盖 $RUN_WRAPPER；未改动 $INITTAB 与 $INITD）"
+    fi
+    SKIP_FILE_INSTALL=1
 else
     if [ "${#PROCESS_FIELD}" -gt 127 ] && [ "$RESPAWN_PREFIX" = "sgw0::respawn:" ]; then
         fail "process field exceeds sysvinit 127-char limit (${#PROCESS_FIELD}): $PROCESS_FIELD"
     fi
+fi
+
+say "== 安装 Service Supervisor 到 $ROOT =="
+
+if [ "$SKIP_FILE_INSTALL" = "1" ]; then
+    say "检测到已固定/签名镜像且 inittab、S99smartgateway 与 service_supervisor_run 内容完全一致，跳过文件安装以保护签名清单摘要"
+    mkdir -p "$RUN_DIR" "$LOGS"
+    if [ -f "$CONF" ]; then
+        say "配置已存在，保留：$CONF"
+    else
+        "$BIN" init-config --root "$ROOT" \
+            --executable "$ROOT/current/smart_gateway" >/dev/null
+        say "已写出默认配置：$CONF"
+    fi
+else
+    # 1. 目录结构
+    mkdir -p "$ROOT/bin" "$RUN_DIR" "$LOGS" "$RELEASES"
+    [ -d "$RELEASES" ] || fail "cannot create $RELEASES"
+    say "目录就绪"
+
+    # 2. 配置（不覆盖已有文件）
+    if [ -f "$CONF" ]; then
+        say "配置已存在，保留：$CONF"
+    else
+        "$BIN" init-config --root "$ROOT" \
+            --executable "$ROOT/current/smart_gateway" >/dev/null
+        say "已写出默认配置：$CONF"
+    fi
+
+    # 3. 安装统一的 service_supervisor_run 与 S99smartgateway
+    cp "$SCRIPT_DIR/service_supervisor_run" "$RUN_WRAPPER"
+    chmod 0700 "$RUN_WRAPPER"
+    say "已安装 $RUN_WRAPPER"
+
+    if [ -f "$SCRIPT_DIR/S99smartgateway" ]; then
+        mkdir -p "$(dirname "$INITD")"
+        cp "$SCRIPT_DIR/S99smartgateway" "$INITD"
+        chmod 0755 "$INITD"
+        say "已安装 $INITD"
+    else
+        say "使用已有 $INITD"
+    fi
+
+    # 4. 写入统一 respawn 条目
     if [ -f "$INITTAB" ]; then
         cp -a "$INITTAB" "$INITTAB.bak.$(date +%s)"
     fi
@@ -115,7 +164,7 @@ EOF
     say "已在 $INITTAB 注册统一 respawn 条目（后续由 S99smartgateway 运行时状态控制）"
 fi
 
-# 5. 让 init 接管（若从旧版直连进程升级则先停旧实例再通过 S99smartgateway start 恢复）
+# 5. 让 init 接管
 export SMARTGATEWAY_ROOT="$ROOT"
 export SMARTGATEWAY_INITTAB="$INITTAB"
 export SMARTGATEWAY_INIT_PID="$INIT_PID"

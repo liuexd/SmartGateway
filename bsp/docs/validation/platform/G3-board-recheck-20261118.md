@@ -8,8 +8,8 @@ Resolve the runtime SHA-256 drift on `/etc/inittab` (previously 14/15 manifest m
 
 - **`bsp/apps/service_supervisor/S99smartgateway`:** Removed `ensure_respawn_entry()` and `remove_respawn_entry()`; `S99smartgateway` no longer modifies `/etc/inittab`. `start` performs a read-only check for `^[^#]*:respawn:.*service_supervisor` (failing closed if missing), clears runtime stop marker `$STOP_FLAG` (`/run/smartgateway.disabled` on board `tmpfs`, or `$RUN_DIR/supervisor.disabled` / `SMARTGATEWAY_STOP_FLAG` in isolated tests), and waits for `service_supervisor` via `init`. `stop` creates `$STOP_FLAG` before stopping `service_supervisor` and `smart_gateway`.
 - **`bsp/apps/service_supervisor/service_supervisor_run` & `bsp/rootfs/post_build_g3.sh`:** Extracted a single shared wrapper `bsp/apps/service_supervisor/service_supervisor_run` (waits on `$STOP_FLAG` with `trap 'exit 0' TERM INT; while [ -f "$STOP_FLAG" ]; do sleep 1; done` before `exec "$ROOT/bin/service_supervisor" run --root "$ROOT"`) installed identically by `post_build_g3.sh` (`0700`) and standalone `install.sh`. Pinned `sgw0::respawn:/bin/sh -c 'SMARTGATEWAY_RESPAWN=1 exec /opt/smartgateway/bin/service_supervisor_run'` in `/etc/inittab`.
-- **`bsp/apps/service_supervisor/install.sh`:** Unified standalone installer with image build: installs `service_supervisor_run` and `S99smartgateway`, leaves pre-pinned signed `/etc/inittab` byte-for-byte untouched (no `.bak.*`, no digest drift), registers the unified `service_supervisor_run` entry on fresh/legacy systems without exceeding SysV `init`'s 127-char limit, and transitions cleanly via `S99smartgateway start`.
-- **`tests/test_g3_inittab_digest_stability.py` & `tests/test_s5r2_stop_respawn.py`:** Added 4 automated tests covering image-mode lifecycle digest stability, standalone `install.sh` followed by `stop -> 2.5s hold -> start -> SIGKILL crash respawn`, pre-pinned signed-image `install.sh` no-op, and missing-entry fail-closed check.
+- **`bsp/apps/service_supervisor/install.sh`:** Unified standalone installer with image build and moved signed/pre-pinned image guard ahead of **all** filesystem writes: on signed (`r3c-policy.conf` / `ota-public.pem` under `POLICY_DIR`) or pre-pinned (`service_supervisor_run` in `inittab`) images, verifies exact byte-for-byte identity of `inittab` entry, `S99smartgateway`, and `service_supervisor_run` before touching disk—skipping file installation (`no .bak.*`, identical inode/digest) when matched and failing closed with zero mutation to `inittab`, `S99smartgateway`, or `service_supervisor_run` on any version mismatch. Fresh standalone installations continue deploying normally without exceeding SysV `init`'s 127-char limit.
+- **`tests/test_g3_inittab_digest_stability.py` & `tests/test_s5r2_stop_respawn.py`:** Added 5 automated tests covering image-mode lifecycle digest stability, standalone `install.sh` followed by `stop -> 2.5s hold -> start -> SIGKILL crash respawn`, pre-pinned signed-image `install.sh` skip (zero mutation on `inittab`, `S99smartgateway`, `service_supervisor_run`), signed/pre-pinned version mismatch rejection (mismatched `S99smartgateway`, `inittab`, and `service_supervisor_run` with zero digest change), and missing-entry fail-closed check.
 
 ## 3. Clean-Directory Rebuild & Host Regression (Post-Final-Edit)
 
@@ -17,9 +17,9 @@ Resolve the runtime SHA-256 drift on `/etc/inittab` (previously 14/15 manifest m
   - Trimmed `zImage`: `4,848,520` B; `100ask_imx6ull-14x14.dtb`: `38,707` B (`32 MiB` CMA, `ap3216_in_dtb=true`, `gpio_in_dtb=true`, `48` modules).
   - Trimmed `rootfs.ext4`: `134,217,728` B (`128 MiB`, `-O ^metadata_csum`); `rootfs.tar`: `34,816,000` B archive / `32,679,384` B payload (`1,303` entries, `154` resolved `BR2_PACKAGE_*` vs `315` baseline).
 - Host regression (`SGW_TEST_FUSE2FS=/usr/bin/fuse2fs`):
-  - `python3 -m unittest discover -s tests -p 'test_g*.py' -v`: **91/91 OK** (`81.490s`, includes 4/4 `test_g3_inittab_digest_stability` and 5/5 `test_g4_swu_isolated`)
-  - `python3 -m unittest tests/test_review4_g3_bundle.py -v`: **1/1 OK** (`0.498s`)
-  - Combined archive: `bsp/docs/validation/platform/g3-20261118-recheck-logs/g3_g4_host_python.log` (**92/92 OK**).
+  - `python3 -m unittest discover -s tests -p 'test_g*.py' -v`: **92/92 OK** (`83.424s`, includes 5/5 `test_g3_inittab_digest_stability` and 5/5 `test_g4_swu_isolated`)
+  - `python3 -m unittest tests/test_review4_g3_bundle.py -v`: **1/1 OK** (`0.527s`)
+  - Combined archive: `bsp/docs/validation/platform/g3-20261118-recheck-logs/g3_g4_host_python.log` (**93/93 OK**).
 
 ## 4. Physical Board `p1` Recheck Evidence (15/15 Manifest Match)
 
