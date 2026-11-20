@@ -35,6 +35,7 @@ const char *r3c_txn_state_str(r3c_txn_state_t s)
     case R3C_TXN_PENDING: return "PENDING";
     case R3C_TXN_CONFIRMING: return "CONFIRMING";
     case R3C_TXN_CONFIRMED: return "CONFIRMED";
+    case R3C_TXN_ROLLED_BACK: return "ROLLED_BACK";
     default: return "INVALID";
     }
 }
@@ -46,6 +47,7 @@ static int parse_state(const char *s, r3c_txn_state_t *out)
     else if (strcmp(s, "PENDING") == 0) *out = R3C_TXN_PENDING;
     else if (strcmp(s, "CONFIRMING") == 0) *out = R3C_TXN_CONFIRMING;
     else if (strcmp(s, "CONFIRMED") == 0) *out = R3C_TXN_CONFIRMED;
+    else if (strcmp(s, "ROLLED_BACK") == 0) *out = R3C_TXN_ROLLED_BACK;
     else return -1;
     return 0;
 }
@@ -223,8 +225,13 @@ static int serialize_and_commit(int txdir, uid_t owner, const r3c_txn_record_t *
         used += n;
     }
     if (rec->boot_id[0]) {
-        n = snprintf(body + used, sizeof(body) - (size_t)used, "boot_id=%s\nbootcount=%lu\n",
-                     rec->boot_id, rec->bootcount);
+        if (rec->bootcount > 0) {
+            n = snprintf(body + used, sizeof(body) - (size_t)used, "boot_id=%s\nbootcount=%lu\n",
+                         rec->boot_id, rec->bootcount);
+        } else {
+            n = snprintf(body + used, sizeof(body) - (size_t)used, "boot_id=%s\n",
+                         rec->boot_id);
+        }
         if (n <= 0 || (size_t)(used + n) >= sizeof(body)) return fail(err, errlen, "body overflow");
         used += n;
     }
@@ -272,6 +279,7 @@ static int read_record_file(int txdir, const char *filename, const char *expecte
     ssize_t n;
     char *line, *save = NULL;
     int line_no = 0;
+    int has_bootcount = 0;
     unsigned req = 0;
 
     if (!out || secure_dir(txdir, owner) != 0)
@@ -346,8 +354,9 @@ static int read_record_file(int txdir, const char *filename, const char *expecte
                 snprintf(out->boot_id, sizeof(out->boot_id), "%s", v);
             } else if (strcmp(k, "bootcount") == 0) {
                 uint64_t val = 0;
-                if (parse_u64(v, &val) != 0 || val == 0)
+                if (parse_u64(v, &val) != 0)
                     return fail(err, errlen, "invalid transaction bootcount");
+                has_bootcount = 1;
                 out->bootcount = (unsigned long)val;
             } else if (strcmp(k, "consumed") == 0) {
                 if (strcmp(v, "1") == 0) out->consumed = 1;
@@ -360,6 +369,8 @@ static int read_record_file(int txdir, const char *filename, const char *expecte
     }
     if (req != 63u || out->target_slot == out->last_good_slot)
         return fail(err, errlen, "incomplete transaction record");
+    if (has_bootcount && out->bootcount == 0 && out->state != R3C_TXN_ROLLED_BACK)
+        return fail(err, errlen, "invalid transaction bootcount");
     if (expected_id && strcmp(out->id, expected_id) != 0)
         return fail(err, errlen, "transaction id mismatch");
     return 0;
@@ -420,7 +431,7 @@ int r3c_txn_load_active(int txdir, uid_t owner, r3c_txn_record_t *out,
             closedir(dir);
             return -1;
         }
-        if (rec.consumed || rec.state == R3C_TXN_CONFIRMED)
+        if (rec.consumed || rec.state == R3C_TXN_CONFIRMED || rec.state == R3C_TXN_ROLLED_BACK)
             continue;
         active_count++;
         if (active_count > 1) {
@@ -1251,4 +1262,63 @@ int r3c_txn_reconcile_confirm(int txdir, const char *id, uid_t owner,
     rec.state = R3C_TXN_CONFIRMED;
     rec.consumed = 1;
     return serialize_and_commit(txdir, owner, &rec, err, errlen);
+}
+
+
+int r3c_txn_reconcile_rollback(int txdir, uid_t owner,
+                               const ab_env_t *env, ab_slot_t running_slot,
+                               const char *boot_id, int *out_reconciled,
+                               char out_txid[65], char *err, size_t errlen)
+{
+    int lockfd = -1, rc = -1;
+    r3c_txn_record_t rec;
+    char load_err[256] = {0};
+
+    if (out_reconciled) *out_reconciled = 0;
+    if (out_txid) out_txid[0] = '\0';
+    if (!env || (running_slot != AB_SLOT_1 && running_slot != AB_SLOT_2))
+        return fail(err, errlen, "invalid rollback reconciliation arguments");
+
+    if (r3c_txn_acquire_lock(txdir, owner, &lockfd, err, errlen) != 0)
+        return -1;
+
+    if (r3c_txn_load_active(txdir, owner, &rec, load_err, sizeof(load_err)) != 0) {
+        if (strcmp(load_err, "no active unconsumed transaction record") == 0) {
+            rc = 0;
+            goto out;
+        }
+        fail(err, errlen, load_err[0] ? load_err : "failed inspecting rollback txdir");
+        goto out;
+    }
+
+    if (env->ab_state != AB_STATE_ROLLED_BACK || env->upgrade_available != 0 ||
+        env->pending_slot != AB_SLOT_NONE || running_slot != env->active_slot ||
+        running_slot != env->last_good_slot) {
+        fail(err, errlen, "cannot reconcile pending transaction without verified U-Boot rollback state");
+        goto out;
+    }
+    if ((rec.state != R3C_TXN_PENDING && rec.state != R3C_TXN_CONFIRMING) || rec.consumed) {
+        fail(err, errlen, "unsettled transaction is not in PENDING/CONFIRMING rollback-settleable state");
+        goto out;
+    }
+    if ((ab_slot_t)rec.last_good_slot != running_slot ||
+        (ab_slot_t)rec.target_slot != ab_slot_other(running_slot)) {
+        fail(err, errlen, "unsettled transaction slots do not match rolled-back running slot");
+        goto out;
+    }
+
+    rec.state = R3C_TXN_ROLLED_BACK;
+    rec.consumed = 1;
+    if (boot_id && valid_boot_id(boot_id))
+        snprintf(rec.boot_id, sizeof(rec.boot_id), "%s", boot_id);
+
+    if (serialize_and_commit(txdir, owner, &rec, err, errlen) != 0)
+        goto out;
+
+    if (out_reconciled) *out_reconciled = 1;
+    if (out_txid) memcpy(out_txid, rec.id, sizeof(rec.id));
+    rc = 0;
+out:
+    if (lockfd >= 0) { (void)flock(lockfd, LOCK_UN); close(lockfd); }
+    return rc;
 }

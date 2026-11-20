@@ -15,7 +15,8 @@ typedef enum {
     R3C_TXN_WRITTEN,
     R3C_TXN_PENDING,
     R3C_TXN_CONFIRMING,
-    R3C_TXN_CONFIRMED
+    R3C_TXN_CONFIRMED,
+    R3C_TXN_ROLLED_BACK
 } r3c_txn_state_t;
 
 typedef struct {
@@ -86,5 +87,10 @@ int r3c_txn_reconcile_confirm(int txdir, const char *id, uid_t owner,
                               char *err, size_t errlen);
 
 int r3c_txn_acquire_lock(int txdir, uid_t owner, int *lockfd, char *err, size_t errlen);
+
+int r3c_txn_reconcile_rollback(int txdir, uid_t owner,
+                               const ab_env_t *env, ab_slot_t running_slot,
+                               const char *boot_id, int *out_reconciled,
+                               char out_txid[65], char *err, size_t errlen);
 
 #endif

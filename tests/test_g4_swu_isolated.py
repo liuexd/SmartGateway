@@ -902,6 +902,178 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.assertEqual(settled_txn.read_text(encoding="utf-8"), settled_text)
         self.assertEqual(settled_mf.read_text(encoding="utf-8"), settled_mf_text)
 
+    def test_readback_digest_mismatch_never_stages_pending(self):
+        env_before = sha256_path(self.emmc_img)
+        corrupt_c = self.base / "readback_corrupt.c"
+        corrupt_so = self.base / "readback_corrupt.so"
+        corrupt_c.write_text(
+            "#define _GNU_SOURCE\n"
+            "#include <dlfcn.h>\n"
+            "#include <stdio.h>\n"
+            "#include <string.h>\n"
+            "#include <sys/types.h>\n"
+            "#include <unistd.h>\n"
+            "static void maybe_corrupt(int fd, void *buf, off_t offset, ssize_t r) {\n"
+            "    char link[64], target[512];\n"
+            "    if (r <= 0 || offset != 0) return;\n"
+            "    snprintf(link, sizeof(link), \"/proc/self/fd/%d\", fd);\n"
+            "    ssize_t n = readlink(link, target, sizeof(target) - 1);\n"
+            "    if (n > 0) {\n"
+            "        target[n] = '\\0';\n"
+            "        const char *sfx = \"/slot2.ext4\";\n"
+            "        size_t tlen = strlen(target), slen = strlen(sfx);\n"
+            "        if (tlen >= slen && strcmp(target + tlen - slen, sfx) == 0) {\n"
+            "            ((unsigned char *)buf)[0] ^= 0x01;\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            "ssize_t pread(int fd, void *buf, size_t count, off_t offset) {\n"
+            "    ssize_t (*real_pread)(int, void *, size_t, off_t) = dlsym(RTLD_NEXT, \"pread\");\n"
+            "    ssize_t r = real_pread(fd, buf, count, offset);\n"
+            "    maybe_corrupt(fd, buf, offset, r);\n"
+            "    return r;\n"
+            "}\n"
+            "ssize_t pread64(int fd, void *buf, size_t count, off64_t offset) {\n"
+            "    ssize_t (*real_pread64)(int, void *, size_t, off64_t) = dlsym(RTLD_NEXT, \"pread64\");\n"
+            "    ssize_t r = real_pread64(fd, buf, count, offset);\n"
+            "    maybe_corrupt(fd, buf, (off_t)offset, r);\n"
+            "    return r;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["gcc", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", str(corrupt_c), "-o", str(corrupt_so), "-ldl"],
+            check=True,
+        )
+        swu = self._pack_swu("readback-corrupt.swu", target_slot=2)
+        res = self._apply_swu(
+            swu,
+            self.slot2_img,
+            expected_target=2,
+            allow_virtual_slot2=True,
+            extra_env={"LD_PRELOAD": str(corrupt_so)},
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("slot readback digest mismatch", res.stderr)
+        env = self._get_env()
+        self.assertEqual(env["sgw_active_slot"], "1")
+        self.assertEqual(env["sgw_last_good_slot"], "1")
+        self.assertEqual(env["sgw_pending_slot"], "none")
+        self.assertEqual(env["sgw_ab_state"], "confirmed")
+        self.assertEqual(env["upgrade_available"], "0")
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+        self.assertEqual(list(self.txdir.glob("txn-*")), [])
+
+    def test_rollback_reconciles_stale_pending_and_accepts_next_valid_swu(self):
+        stale_id = "c" * 64
+        stale_txn = self.txdir / f"txn-{stale_id}"
+        stale_mf = self.txdir / f"txn-{stale_id}.manifest"
+        stale_txn.write_text(
+            f"SGW-TXN-1\n"
+            f"state=PENDING\n"
+            f"id={stale_id}\n"
+            f"package={'d' * 64}\n"
+            f"image={'e' * 64}\n"
+            f"rootfs_manifest={'f' * 64}\n"
+            f"target=2\n"
+            f"last_good=1\n"
+            f"written_size=8388608\n"
+            f"consumed=0\n",
+            encoding="utf-8",
+        )
+        stale_mf.write_text("/sbin/init " + ("a" * 64) + "\n", encoding="utf-8")
+        stale_txn.chmod(0o600)
+        stale_mf.chmod(0o600)
+
+        swu = self._pack_swu("next-valid-slot2.swu", target_slot=2)
+
+        # While U-Boot env is still confirmed (no rollback happened), stale PENDING must block!
+        r_blocked = self._apply_swu(swu, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertNotEqual(r_blocked.returncode, 0)
+        self.assertIn("state=PENDING", stale_txn.read_text(encoding="utf-8"))
+
+        # Now simulate U-Boot altbootcmd rollback back to slot 1
+        self._set_env({
+            "sgw_active_slot": "1",
+            "sgw_last_good_slot": "1",
+            "sgw_pending_slot": "none",
+            "sgw_ab_state": "rolled_back",
+            "sgw_last_error": "bootlimit_exceeded",
+            "sgw_rollback_count": "1",
+            "upgrade_available": "0",
+            "bootcount": "0",
+        })
+        r_ok = self._apply_swu(swu, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertEqual(r_ok.returncode, 0, r_ok.stdout + r_ok.stderr)
+        m = re.search(r"STAGED tx=([0-9a-f]{64}) target=2 last_good=1", r_ok.stdout)
+        self.assertIsNotNone(m, r_ok.stdout + r_ok.stderr)
+        new_id = m.group(1)
+        self.assertNotEqual(new_id, stale_id)
+
+        old_parsed = self._parse_txn(stale_id)
+        self.assertEqual(old_parsed["state"], "ROLLED_BACK")
+        self.assertEqual(old_parsed["consumed"], "1")
+        self.assertNotIn("bootcount", old_parsed)
+        if Path("/proc/sys/kernel/random/boot_id").exists():
+            self.assertIn("boot_id", old_parsed)
+
+        # Also verify a legacy pre-settled ROLLED_BACK record with boot_id + bootcount=0
+        # (such as written by an earlier watchdog_guard before omitting bootcount=0)
+        # does not block subsequent valid SWU installs when the board is on rolled_back p1.
+        for p in self.txdir.glob("txn-*"):
+            p.unlink()
+        legacy_id = "b" * 64
+        legacy_txn = self.txdir / f"txn-{legacy_id}"
+        legacy_mf = self.txdir / f"txn-{legacy_id}.manifest"
+        legacy_txn.write_text(
+            f"SGW-TXN-1\n"
+            f"state=ROLLED_BACK\n"
+            f"id={legacy_id}\n"
+            f"package={'d' * 64}\n"
+            f"image={'e' * 64}\n"
+            f"rootfs_manifest={'f' * 64}\n"
+            f"target=2\n"
+            f"last_good=1\n"
+            f"written_size=8388608\n"
+            f"consumed=1\n"
+            f"boot_id=6b31ed54-2faf-42fe-a98c-54011f11a81a\n"
+            f"bootcount=0\n",
+            encoding="utf-8",
+        )
+        legacy_mf.write_text("/sbin/init " + ("a" * 64) + "\n", encoding="utf-8")
+        legacy_txn.chmod(0o600)
+        legacy_mf.chmod(0o600)
+        self._set_env({
+            "sgw_active_slot": "1",
+            "sgw_last_good_slot": "1",
+            "sgw_pending_slot": "none",
+            "sgw_ab_state": "rolled_back",
+            "sgw_last_error": "bootlimit_exceeded",
+            "sgw_rollback_count": "2",
+            "upgrade_available": "0",
+            "bootcount": "0",
+        })
+        r_legacy_ok = self._apply_swu(swu, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertEqual(r_legacy_ok.returncode, 0, r_legacy_ok.stdout + r_legacy_ok.stderr)
+        m2 = re.search(r"STAGED tx=([0-9a-f]{64}) target=2 last_good=1", r_legacy_ok.stdout)
+        self.assertIsNotNone(m2, r_legacy_ok.stdout + r_legacy_ok.stderr)
+        new_id = m2.group(1)
+        legacy_parsed = self._parse_txn(legacy_id)
+        self.assertEqual(legacy_parsed["state"], "ROLLED_BACK")
+        self.assertEqual(legacy_parsed["consumed"], "1")
+
+        new_parsed = self._parse_txn(new_id)
+        self.assertEqual(new_parsed["state"], "PENDING")
+        self.assertEqual(new_parsed["consumed"], "0")
+        self.assertEqual(new_parsed["target"], "2")
+        self.assertEqual(new_parsed["last_good"], "1")
+
+        env = self._get_env()
+        self.assertEqual(env["sgw_ab_state"], "trial")
+        self.assertEqual(env["sgw_pending_slot"], "2")
+        self.assertEqual(env["sgw_last_good_slot"], "1")
+        self.assertEqual(env["upgrade_available"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

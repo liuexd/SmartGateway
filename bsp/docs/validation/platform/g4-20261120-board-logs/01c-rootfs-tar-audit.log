@@ -1,9 +1,11 @@
--rw-r--r-- 0/0             116 2026-11-20 14:46 ./etc/network/interfaces
-drwx------ 0/0               0 2026-11-20 14:46 ./etc/smartgateway/
--rw------- 0/0             451 2026-11-20 14:46 ./etc/smartgateway/ota-public.pem
--rw------- 0/0             613 2026-11-20 14:46 ./etc/smartgateway/r3c-policy.conf
--rw------- 0/0              15 2026-11-20 14:46 ./etc/smartgateway/system-health-network.conf
--rwxr-xr-x 0/0          355972 2026-11-20 14:46 ./usr/bin/sgw_bootctl
--rwxr-xr-x 0/0           96592 2026-11-20 14:46 ./usr/bin/swupdate
-4475b9b5ae62d8dd44ad1b70f54915e8f4f77fdafbae7ab184ae9d0789713c3e  build/arm-ab/sgw_bootctl
-98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0  build/buildroot-g3/images/rootfs.ext4
+-rw-r--r-- 0/0             116 2026-11-20 15:25 ./etc/network/interfaces
+drwx------ 0/0               0 2026-11-20 15:25 ./etc/smartgateway/
+-rw------- 0/0             451 2026-11-20 15:25 ./etc/smartgateway/ota-public.pem
+-rw------- 0/0             613 2026-11-20 15:25 ./etc/smartgateway/r3c-policy.conf
+-rw------- 0/0              15 2026-11-20 15:25 ./etc/smartgateway/system-health-network.conf
+-rwxr-xr-x 0/0          360952 2026-11-20 15:25 ./usr/bin/sgw_bootctl
+-rwxr-xr-x 0/0          357224 2026-11-20 15:25 ./usr/bin/sgw_watchdog_guard
+-rwxr-xr-x 0/0           96592 2026-11-20 15:25 ./usr/bin/swupdate
+5afa6dd4f455acb88e26087273f26bd32853ee6a6577bcaa3ec314cc04afff93  build/arm-ab/sgw_bootctl
+f429ba993e7b2e26583f48e58f2ea71545bbfceed6190d23272361a7f5b9fd26  build/arm-ab/sgw_watchdog_guard
+72d5e933ec4603943f27e15bb8c21567a6922691dd38d74d38fa49c76dfc79ca  build/buildroot-g3/images/rootfs.ext4

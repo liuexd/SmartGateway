@@ -117,22 +117,24 @@ test_p1_to_p2_real_swupdate_apply_and_pending_stage (test_g4_swu_isolated.TestG4
 test_p2_to_p1_real_swupdate_apply_and_pending_stage (test_g4_swu_isolated.TestG4SwuIsolated.test_p2_to_p1_real_swupdate_apply_and_pending_stage) ... ok
 test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides (test_g4_swu_isolated.TestG4SwuIsolated.test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides) ... ok
 test_protected_factory_slot2_rejected_zero_mutation (test_g4_swu_isolated.TestG4SwuIsolated.test_protected_factory_slot2_rejected_zero_mutation) ... ok
+test_readback_digest_mismatch_never_stages_pending (test_g4_swu_isolated.TestG4SwuIsolated.test_readback_digest_mismatch_never_stages_pending) ... ok
 test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate (test_g4_swu_isolated.TestG4SwuIsolated.test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate) ... ok
+test_rollback_reconciles_stale_pending_and_accepts_next_valid_swu (test_g4_swu_isolated.TestG4SwuIsolated.test_rollback_reconciles_stale_pending_and_accepts_next_valid_swu) ... ok
 test_sequential_upgrade_after_prior_confirmed_txn_in_txdir (test_g4_swu_isolated.TestG4SwuIsolated.test_sequential_upgrade_after_prior_confirmed_txn_in_txdir) ... ok
 test_shared_data_p3_unmounted_wrong_mount_bad_schema_and_outside_txdir_rejected (test_g4_swu_isolated.TestG4SwuIsolated.test_shared_data_p3_unmounted_wrong_mount_bad_schema_and_outside_txdir_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 102 tests in 85.760s
+Ran 104 tests in 88.773s
 
 OK
-PACKED_P2_RECOVERY /tmp/g1-p2-bundle-g6c19ctv/bundle-rehearse raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=none
-RESTORED_P2 emmc-p2.img -> /tmp/g1-p2-bundle-g6c19ctv/p2_slice.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
-PACKED_P2_RECOVERY /tmp/g1-p2-bundle-njcf94p6/bundle-raw raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=none
-PACKED_P2_RECOVERY /tmp/g1-p2-bundle-njcf94p6/bundle-gz raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=gzip
-PREFLIGHT_OK emmc-p2.img -> /tmp/g1-p2-bundle-njcf94p6/target_p2.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
-RESTORED_P2 emmc-p2.img -> /tmp/g1-p2-bundle-njcf94p6/target_p2.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
-RESTORED_P2 emmc-p2.img.gz -> /tmp/g1-p2-bundle-njcf94p6/target_p2.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
-PACKED_P2_RECOVERY /tmp/g1-p2-bundle-t55uak0k/bundle-corrupt raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=gzip
+PACKED_P2_RECOVERY /tmp/g1-p2-bundle-tdydr0s9/bundle-rehearse raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=none
+RESTORED_P2 emmc-p2.img -> /tmp/g1-p2-bundle-tdydr0s9/p2_slice.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
+PACKED_P2_RECOVERY /tmp/g1-p2-bundle-f77ijmhj/bundle-raw raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=none
+PACKED_P2_RECOVERY /tmp/g1-p2-bundle-f77ijmhj/bundle-gz raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=gzip
+PREFLIGHT_OK emmc-p2.img -> /tmp/g1-p2-bundle-f77ijmhj/target_p2.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
+RESTORED_P2 emmc-p2.img -> /tmp/g1-p2-bundle-f77ijmhj/target_p2.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
+RESTORED_P2 emmc-p2.img.gz -> /tmp/g1-p2-bundle-f77ijmhj/target_p2.img (3072 bytes) sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2
+PACKED_P2_RECOVERY /tmp/g1-p2-bundle-9cpikuz7/bundle-corrupt raw_size=3072 raw_sha256=ba884a11346ca5d05d1744f9a7d99fd468975699f83be8e34a885f43a83adad2 compress=gzip
 OK emmc-reserved-pre-p1.bin (512 bytes)
 OK emmc-p1.img (1024 bytes)
 OK emmc-p2.img (1536 bytes)
@@ -142,13 +144,13 @@ OK emmc-boot0.img (1024 bytes)
 OK emmc-boot1.img (1024 bytes)
 User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
 Archive consistency only: boot and restoration remain unverified.
-RESTORED emmc-reserved-pre-p1.bin -> /tmp/g1-restore-n7o5d6oq/restored.img @ 0 (512 bytes)
-RESTORED emmc-p1.img -> /tmp/g1-restore-n7o5d6oq/restored.img @ 512 (1024 bytes)
-RESTORED emmc-p2.img -> /tmp/g1-restore-n7o5d6oq/restored.img @ 1536 (1536 bytes)
-RESTORED emmc-p3.img -> /tmp/g1-restore-n7o5d6oq/restored.img @ 3072 (512 bytes)
-RESTORED emmc-tail.img -> /tmp/g1-restore-n7o5d6oq/restored.img @ 3584 (512 bytes)
-RESTORED emmc-boot0.img -> /tmp/g1-restore-n7o5d6oq/boot0.img (1024 bytes)
-RESTORED emmc-boot1.img -> /tmp/g1-restore-n7o5d6oq/boot1.img (1024 bytes)
+RESTORED emmc-reserved-pre-p1.bin -> /tmp/g1-restore-mwysrxn8/restored.img @ 0 (512 bytes)
+RESTORED emmc-p1.img -> /tmp/g1-restore-mwysrxn8/restored.img @ 512 (1024 bytes)
+RESTORED emmc-p2.img -> /tmp/g1-restore-mwysrxn8/restored.img @ 1536 (1536 bytes)
+RESTORED emmc-p3.img -> /tmp/g1-restore-mwysrxn8/restored.img @ 3072 (512 bytes)
+RESTORED emmc-tail.img -> /tmp/g1-restore-mwysrxn8/restored.img @ 3584 (512 bytes)
+RESTORED emmc-boot0.img -> /tmp/g1-restore-mwysrxn8/boot0.img (1024 bytes)
+RESTORED emmc-boot1.img -> /tmp/g1-restore-mwysrxn8/boot1.img (1024 bytes)
 OK emmc-reserved-pre-p1.bin (512 bytes)
 OK emmc-p1.img (1024 bytes)
 OK emmc-p2.img (1536 bytes)
@@ -167,8 +169,8 @@ OK emmc-boot0.img (1024 bytes)
 OK emmc-boot1.img (1024 bytes)
 User area SHA256 (ordered segments): b91eadbf5aae7780d2d87a0282e6adbd114b845e15663e167be8eaabe103b39b
 Archive consistency only: boot and restoration remain unverified.
-RESTORED emmc-p1.img -> /tmp/g1-restore-8xscpon_/p1_target.img (1024 bytes) sha256=431379dc3272b4227e74eadca33b071254ff006d74110b0de8d7ff9f2ac91de0
-RESTORED <stdin> -> /tmp/g1-restore-8xscpon_/stream_p1.img (512 bytes) sha256=9b998801996b57ff99e05c9d0b0168605c10ad169e217ced8ea35485688155f1
+RESTORED emmc-p1.img -> /tmp/g1-restore-jxeehonf/p1_target.img (1024 bytes) sha256=431379dc3272b4227e74eadca33b071254ff006d74110b0de8d7ff9f2ac91de0
+RESTORED <stdin> -> /tmp/g1-restore-jxeehonf/stream_p1.img (512 bytes) sha256=9b998801996b57ff99e05c9d0b0168605c10ad169e217ced8ea35485688155f1
 OK emmc-reserved-pre-p1.bin (512 bytes)
 OK emmc-p1.img (512 bytes)
 OK emmc-p2.img (1024 bytes)

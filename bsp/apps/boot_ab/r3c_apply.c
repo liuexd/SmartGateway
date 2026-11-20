@@ -567,6 +567,32 @@ int r3c_coordinator_apply_bundle(const r3c_policy_t *policy,
     if (verify_data_and_open_txdir(policy, opts, &txdir_fd, errbuf, errlen) != 0)
         goto out;
 
+    if (env.ab_state == AB_STATE_ROLLED_BACK && env.upgrade_available == 0 &&
+        env.pending_slot == AB_SLOT_NONE) {
+        char cur_boot_id[64] = {0};
+        int bid_fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        int reconciled = 0;
+        if (bid_fd >= 0) {
+            ssize_t bn = read(bid_fd, cur_boot_id, sizeof(cur_boot_id) - 1);
+            close(bid_fd);
+            if (bn > 0) {
+                cur_boot_id[bn] = '\0';
+                for (ssize_t k = 0; k < bn; ++k) {
+                    if (cur_boot_id[k] == '\n' || cur_boot_id[k] == '\r') {
+                        cur_boot_id[k] = '\0';
+                        break;
+                    }
+                }
+            } else {
+                cur_boot_id[0] = '\0';
+            }
+        }
+        if (r3c_txn_reconcile_rollback(txdir_fd, policy->trusted_uid, &env, running_slot,
+                                       cur_boot_id[0] ? cur_boot_id : NULL,
+                                       &reconciled, NULL, errbuf, errlen) != 0)
+            goto out;
+    }
+
     if (trusted_parent_dirs(policy->pubkey_path, policy->trusted_uid) != 0) {
         fail(errbuf, errlen, "untrusted public key path");
         goto out;

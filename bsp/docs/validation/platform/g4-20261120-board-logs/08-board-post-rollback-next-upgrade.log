@@ -1,0 +1,221 @@
+=== Phase C (Retry with bootcount=0 rollback parser/serializer fix): Post-rollback next valid SWU upgrade on p1 (2026-11-20T15:28:20+08:00) ===
+--- deploy fixed ARM sgw_bootctl & sgw_watchdog_guard to p1 ---
+5afa6dd4f455acb88e26087273f26bd32853ee6a6577bcaa3ec314cc04afff93  /home/ubuntu/Desktop/project/SmartGateway-BSP/build/arm-ab/sgw_bootctl
+f429ba993e7b2e26583f48e58f2ea71545bbfceed6190d23272361a7f5b9fd26  /home/ubuntu/Desktop/project/SmartGateway-BSP/build/arm-ab/sgw_watchdog_guard
+806d10c9e58f4370af5f136b7764f673fa65525bb01600ea8f33a8b898dbb01f  /home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.2.1-good-slot2.swu
+/home/ubuntu/Desktop/project/SmartGateway-BSP/build/arm-ab/sgw_bootctl: 1 file pushed, 0 skipped. 860.1 MB/s (360952 bytes in 0.000s)
+/home/ubuntu/Desktop/project/SmartGateway-BSP/build/arm-ab/sgw_watchdog_guard: 1 file pushed, 0 skipped. 1319.9 MB/s (357224 bytes in 0.000s)
+5afa6dd4f455acb88e26087273f26bd32853ee6a6577bcaa3ec314cc04afff93  /usr/bin/sgw_bootctl
+f429ba993e7b2e26583f48e58f2ea71545bbfceed6190d23272361a7f5b9fd26  /usr/bin/sgw_watchdog_guard
+--- pre-install .sgw-tx (unchanged, zero manual cleanup; txn-e43760c3 retains bootcount=0) ---
+total 14
+drwx------    2 root     root          1024 Jan  1 01:08 [1;34m.[m
+drwx------    4 root     root          1024 Jan  1 01:10 [1;34m..[m
+-rw-------    1 root     root             0 Jan  1 01:15 [0;0m.sgw-transaction.lock[m
+-rw-------    1 root     root           431 Jan  1 00:41 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0[m
+-rw-------    1 root     root          1281 Jan  1 00:40 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0.manifest[m
+-rw-------    1 root     root           431 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936[m
+-rw-------    1 root     root          1281 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936.manifest[m
+-rw-------    1 root     root           433 Jan  1 01:08 [0;0mtxn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3[m
+-rw-------    1 root     root          1281 Jan  1 01:01 [0;0mtxn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3.manifest[m
+-rw-------    1 root     root           431 Jan  1 00:44 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76[m
+-rw-------    1 root     root          1281 Jan  1 00:43 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76.manifest[m
+SGW-TXN-1
+state=ROLLED_BACK
+id=e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3
+package=10b6f0d8804ad4bce065f32b4d2b1000528cfbf9dbd66fb9e9b513e9aefc12a8
+image=5b5d95b0ce3f2efc21b3c408f43915c199698550275b4dc0350782f7debfadc3
+target=2
+last_good=1
+rootfs_manifest=45c109b234c7a4c24322af162bb2f6861bc1099dbf49b0799737ecf450bae48a
+written_size=134217728
+consumed=1
+boot_id=6b31ed54-2faf-42fe-a98c-54011f11a81a
+bootcount=0
+--- pushing SWU to /opt/smartgateway/data/.sgw-tmp/good-slot2.swu ---
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.2.1-good-slot2.swu: 1 file pushed, 0 skipped. 4.0 MB/s (139112960 bytes in 33.042s)
+--- running /usr/bin/sgw-swu-install ---
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1460
+	checksum 0x18520 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x81ae VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1460 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.DHUPol/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.2.1-g4[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.DHUPol/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 226
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.DHUPol/t/scripts/sgw-swu-apply.sh preinst 2 imx6ull-100ask 2.2.1-g4: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+STAGED tx=235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7 target=2 last_good=1
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.DHUPol/t/scripts/sgw-swu-apply.sh postinst 2 imx6ull-100ask 2.2.1-g4: return with 0[0m
+Software updated successfully
+Please reboot the device to start the new software
+[01;32m[INFO ] : SWUPDATE successful ! [0m
+APPLY_RC=0
+--- cleanup .sgw-tmp ---
+--- post-install sgw_bootctl status ---
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=1
+sgw_pending_slot=2
+sgw_ab_state=trial
+bootlimit=3
+bootcount=0
+upgrade_available=1
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+--- post-install .sgw-tx ---
+total 17
+drwx------    2 root     root          1024 Jan  1 01:19 [1;34m.[m
+drwx------    4 root     root          1024 Jan  1 01:19 [1;34m..[m
+-rw-------    1 root     root             0 Jan  1 01:15 [0;0m.sgw-transaction.lock[m
+-rw-------    1 root     root           431 Jan  1 00:41 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0[m
+-rw-------    1 root     root          1281 Jan  1 00:40 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0.manifest[m
+-rw-------    1 root     root           372 Jan  1 01:19 [0;0mtxn-235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7[m
+-rw-------    1 root     root          1281 Jan  1 01:19 [0;0mtxn-235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7.manifest[m
+-rw-------    1 root     root           431 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936[m
+-rw-------    1 root     root          1281 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936.manifest[m
+-rw-------    1 root     root           433 Jan  1 01:08 [0;0mtxn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3[m
+-rw-------    1 root     root          1281 Jan  1 01:01 [0;0mtxn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3.manifest[m
+-rw-------    1 root     root           431 Jan  1 00:44 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76[m
+-rw-------    1 root     root          1281 Jan  1 00:43 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76.manifest[m
+=== /opt/smartgateway/data/.sgw-tx/txn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0 ===
+SGW-TXN-1
+state=CONFIRMED
+id=0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0
+package=5ddc7d77fb8fcbeb79ccccb5644b19db33b42a35b7beaed00d1c807875c6b98d
+image=98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0
+target=2
+last_good=1
+rootfs_manifest=7d4ec591c1f9e1c03339f34d1cdc6ebb4c6e49a73f854db7d6c3c71471a9d10e
+written_size=134217728
+consumed=1
+boot_id=b3fe565f-fe21-446f-aa35-67347aec4013
+bootcount=1
+=== /opt/smartgateway/data/.sgw-tx/txn-235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7 ===
+SGW-TXN-1
+state=PENDING
+id=235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7
+package=031d0bcc53efd0f1ff7a740fbc4ebc0539ead0f14d618b6cd500d179cc624f9f
+image=72d5e933ec4603943f27e15bb8c21567a6922691dd38d74d38fa49c76dfc79ca
+target=2
+last_good=1
+rootfs_manifest=afd8134270b9f4db5ee119a5a3c32c8b6e9b768cc61c6503ab0e4d6d9b2eeec4
+written_size=134217728
+consumed=0
+=== /opt/smartgateway/data/.sgw-tx/txn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936 ===
+SGW-TXN-1
+state=CONFIRMED
+id=acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936
+package=8ab96e0808c8fc6af3de229dbd7be85cd6012cc0f7fbfb2bc0677a896dda7a41
+image=ab24a7c4c656b0b39f9a1e312b1ae276fa52dda30883b7034f0043a4cf6678a0
+target=1
+last_good=2
+rootfs_manifest=018181481873274daae2d66dce4c381fe2bb2393a285be7cfda4fbff69debb03
+written_size=134217728
+consumed=1
+boot_id=85ca2953-cd27-4fb5-861f-286d1bfbacaf
+bootcount=1
+=== /opt/smartgateway/data/.sgw-tx/txn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3 ===
+SGW-TXN-1
+state=ROLLED_BACK
+id=e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3
+package=10b6f0d8804ad4bce065f32b4d2b1000528cfbf9dbd66fb9e9b513e9aefc12a8
+image=5b5d95b0ce3f2efc21b3c408f43915c199698550275b4dc0350782f7debfadc3
+target=2
+last_good=1
+rootfs_manifest=45c109b234c7a4c24322af162bb2f6861bc1099dbf49b0799737ecf450bae48a
+written_size=134217728
+consumed=1
+boot_id=6b31ed54-2faf-42fe-a98c-54011f11a81a
+bootcount=0
+=== /opt/smartgateway/data/.sgw-tx/txn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76 ===
+SGW-TXN-1
+state=CONFIRMED
+id=f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76
+package=5ddc7d77fb8fcbeb79ccccb5644b19db33b42a35b7beaed00d1c807875c6b98d
+image=98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0
+target=1
+last_good=2
+rootfs_manifest=7d4ec591c1f9e1c03339f34d1cdc6ebb4c6e49a73f854db7d6c3c71471a9d10e
+written_size=134217728
+consumed=1
+boot_id=fd31ffc4-5061-443d-93d2-99ae87cd3ff6
+bootcount=1

@@ -1,0 +1,108 @@
+=== Phase C/D: Post-rollback next valid upgrade confirmed on p2 (2026-11-20T15:30:57+08:00) ===
+List of devices attached
+100ask_IMX6ULL         device usb:3-2 product:occam model:Nexus_4 device:mako transport_id:42
+
+--- /proc/cmdline ---
+console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw panic=5
+--- sgw_bootctl status ---
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=2
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+--- uptime & boot_id ---
+62.98 44.72
+ac4237d6-b1de-408b-93de-914985ca11ca
+--- confirmed good txn (235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7) ---
+SGW-TXN-1
+state=CONFIRMED
+id=235067cac350a9077c4790f636da730fda3303c4507df66fe6ee4ccb531208a7
+package=031d0bcc53efd0f1ff7a740fbc4ebc0539ead0f14d618b6cd500d179cc624f9f
+image=72d5e933ec4603943f27e15bb8c21567a6922691dd38d74d38fa49c76dfc79ca
+target=2
+last_good=1
+rootfs_manifest=afd8134270b9f4db5ee119a5a3c32c8b6e9b768cc61c6503ab0e4d6d9b2eeec4
+written_size=134217728
+consumed=1
+boot_id=ac4237d6-b1de-408b-93de-914985ca11ca
+bootcount=1
+--- preserved rolled_back txn (e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3) ---
+SGW-TXN-1
+state=ROLLED_BACK
+id=e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3
+package=10b6f0d8804ad4bce065f32b4d2b1000528cfbf9dbd66fb9e9b513e9aefc12a8
+image=5b5d95b0ce3f2efc21b3c408f43915c199698550275b4dc0350782f7debfadc3
+target=2
+last_good=1
+rootfs_manifest=45c109b234c7a4c24322af162bb2f6861bc1099dbf49b0799737ecf450bae48a
+written_size=134217728
+consumed=1
+boot_id=6b31ed54-2faf-42fe-a98c-54011f11a81a
+bootcount=0
+--- 15-file manifest live verification on / ---
+OK /sbin/init 43e10f536152f46b75203cf3409b9e491cad97ccc272019805af0c4004cb3004
+OK /etc/inittab 996e59322e4b58fcc44e0d9c756cc79335221058377f063eb2b4cce6c6c6329b
+OK /etc/fstab 2f27c6f7a931bf23d11efce355c3ff993aaebe16ff95f3c41266658baf5b25ca
+OK /etc/fw_env.config 1c01595b11ebbaebbff45a945ce1550a1a001cc8eeb27b3f8d1bc419578fd2c1
+OK /sbin/fw_printenv 2146bb2b82c8c07a675ab4813bc4c8ebe5fdad67207066320d8a9ad0abc64ea0
+OK /usr/bin/sgw_bootctl 5afa6dd4f455acb88e26087273f26bd32853ee6a6577bcaa3ec314cc04afff93
+OK /usr/bin/sgw_watchdog_guard f429ba993e7b2e26583f48e58f2ea71545bbfceed6190d23272361a7f5b9fd26
+OK /usr/bin/service_supervisor a2d23278b2d99558d644090d253e64f66587a8f0e4db1cd8d3152da58484f133
+OK /usr/bin/smart_gateway 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+OK /usr/bin/ota_agent 0e9bc7d7f73c91ffc06fca1022959413f110a61144846b0b8008fe9dea16d21d
+OK /etc/init.d/S15sgw_ab_guard 2a21d7d73cbc4903c41c5d1e6499c28ac602b4e8f5aaac117b37fd6132094b4b
+OK /etc/init.d/S99smartgateway c1f96d3b611d1eece032c64551e82df553e7e6d6a97e51bca795318c70acab9d
+OK /boot/zImage b3ac2cb10e3d9940222b99b6f276786d4207ef451dc5331e1ca5bc1721cde0fb
+OK /boot/100ask_imx6ull-14x14.dtb 348f96f323376fe4587231a4bd78ac8888df1075cab8c9dba33d55fb6e6aa4cb
+OK /lib/libc.so.6 0c54f2e75c29e2309ff72a723cbfcb16224959ace713916896acfe4969c5b305
+MANIFEST_SUMMARY ok=15 bad=0
+--- p3 mount & schema ---
+/dev/mmcblk1p3 on /opt/smartgateway/data type ext4 (rw,relatime,data=ordered)
+schema=1
+--- sgw_system_health --once ---
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=463
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+--- running gateway/supervisor processes ---
+  410 root     /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway
+  463 root     /opt/smartgateway/current/smart_gateway --no-serial --server 127.0.0.1 --port 9000
+--- replay confirm protection check ---
+CONFIRM REJECTED: no active unconsumed transaction record
+REPLAY_CONFIRM_RC=1
+--- steady-state uptime >65s check (2026-11-20T15:31:10+08:00) ---
+76.12 56.78
+ac4237d6-b1de-408b-93de-914985ca11ca
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=2
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=

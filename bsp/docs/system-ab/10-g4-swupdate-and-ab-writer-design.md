@@ -32,3 +32,15 @@ G4 负责把 G3 产出的裁剪产物（`zImage`、`100ask_imx6ull-14x14.dtb`、
 3. **与当前 G3 / `post_build_g3.sh` 对接清单：**
    - 在 RootFS 安装受根权限 `0600` 保护的 `/etc/smartgateway/r3c-policy.conf`、公钥 `/etc/smartgateway/ota-public.pem` 及 G4 SWUpdate `sw-description` 钩子脚本。
    - G4 任何真机写盘前，必须先取得 **G1 板端恢复演练签收** 与 **G2-R3C 独立复审 `HOST-ACCEPTED`**。
+## 4. 公钥信任根、密钥轮换与吊销策略
+
+1. **信任根锚点与私钥离线隔离：**
+   - 目标板仅以 `/etc/smartgateway/ota-public.pem`（属主 `root:root`、权限 `0600`、禁止软链及组/全局写）作为唯一信任根，同时覆盖 SWUpdate `sw-description.sig`（`CONFIG_SIGALG_RAWRSA=y`）与 `r3c_bundle` `manifest.sig` 的 RSA-2048 SHA-256 验签。
+   - 签名私钥 `ota-priv.pem` 严禁进入 Git 仓库或下发至板端，仅在离线构建机受控保管。
+2. **计划内密钥轮换（双槽两步平顺迁移）：**
+   - **第一阶段（旧钥签发新公钥镜像）：** 使用当前有效旧私钥签发携带有**新公钥** `/etc/smartgateway/ota-public.pem` 的 RootFS `.swu` 包，写入非活动候选槽并重启完成 R3C 健康确认；
+   - **第二阶段（新钥闭环覆盖旧槽）：** 在新槽稳定运行后，改用**新私钥**签发同一新版本（亦内置新公钥）的 `.swu` 写入另一槽位并确认，从而让双槽同时淘汰旧公钥。轮换完成后即可下线旧私钥，在历史兜底策略与防回滚计数上禁止旧版本强退。
+3. **紧急密钥吊销与离线救砖边界：**
+   - SWUpdate `2019.11` 的 `CONFIG_SIGALG_RAWRSA` 采用本地单公钥文件校验，离线工业现场无在线 CRL/OCSP 依赖。
+   - 若发生私钥疑似泄露且单槽仍受控，立即以受控通道停用泄露密钥并按“双槽重写”策略将紧急安全版本刷新至双槽，覆盖掉含泄露公钥的旧系统槽（必要时同步撤销对含泄露公钥旧槽的 `last_good` 切回窗口）。
+   - 若双槽均已无法通过 OTA 安全更新（如信任根损坏或设备被拒签隔离），由受控物理接口进入 USB BootROM（`SW3=OFF, SW4=ON`）救援环境，借助离线归档的 `p2-factory-recovery-20261117/` 与 `tools/g1_restore_p2_bundle.py` 执行黄金基线重刷与公钥重建。

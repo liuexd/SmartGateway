@@ -427,7 +427,8 @@ static int is_settled_txn_file(int txdir, const char *name, const char *expected
     n = snprintf(id_needle, sizeof(id_needle), "\nid=%s\n", expected_id);
     if (n <= 0 || (size_t)n >= sizeof(id_needle)) return -1;
     if (strncmp((const char *)buf, "SGW-TXN-1\n", 10) != 0 ||
-        strstr((const char *)buf, "\nstate=CONFIRMED\n") == NULL ||
+        (strstr((const char *)buf, "\nstate=CONFIRMED\n") == NULL &&
+         strstr((const char *)buf, "\nstate=ROLLED_BACK\n") == NULL) ||
         strstr((const char *)buf, "\nconsumed=1\n") == NULL ||
         strstr((const char *)buf, id_needle) == NULL)
         return -1;

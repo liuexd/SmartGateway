@@ -1,0 +1,300 @@
+=== PHASE A: DEPLOY UPDATED BOOT_AB & INSTALL SIGNED BAD CANDIDATE ON P1 -> P2 ===
+e81d98a2ed2aaf0992ce1d997a2c2f4474d14abad07e49dcc58ee0f50266e497  /usr/bin/sgw_bootctl
+a0275bd3879692deb6e6cd3d298d87e94b16802ef9964e5a8c0b79d56ed1833e  /usr/bin/sgw_watchdog_guard
+protect_slot2=0
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1472
+	checksum 0x18950 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x858a VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.LXv7vN/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1472 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.LXv7vN/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.2.0-bad-cand[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 226
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.LXv7vN/t/scripts/sgw-swu-apply.sh preinst 2 imx6ull-100ask 2.2.0-bad-cand: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+STAGED tx=e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3 target=2 last_good=1
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.LXv7vN/t/scripts/sgw-swu-apply.sh postinst 2 imx6ull-100ask 2.2.0-bad-cand: return with 0[0m
+Software updated successfully
+Please reboot the device to start the new software
+[01;32m[INFO ] : SWUPDATE successful ! [0m
+APPLY_RC=0
+=== STAGED STATUS BEFORE REBOOT ===
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=1
+sgw_pending_slot=2
+sgw_ab_state=trial
+bootlimit=3
+bootcount=0
+upgrade_available=1
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+BAD_TXN_FILE=/opt/smartgateway/data/.sgw-tx/txn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936
+SGW-TXN-1
+state=CONFIRMED
+id=acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936
+package=8ab96e0808c8fc6af3de229dbd7be85cd6012cc0f7fbfb2bc0677a896dda7a41
+image=ab24a7c4c656b0b39f9a1e312b1ae276fa52dda30883b7034f0043a4cf6678a0
+target=1
+last_good=2
+rootfs_manifest=018181481873274daae2d66dce4c381fe2bb2393a285be7cfda4fbff69debb03
+written_size=134217728
+consumed=1
+boot_id=85ca2953-cd27-4fb5-861f-286d1bfbacaf
+bootcount=1
+=== Phase B: Post-rollback on p1 (2026-11-20T15:18:44+08:00) ===
+console=ttymxc0,115200 root=/dev/mmcblk1p1 rootwait rw panic=5
+--- sgw_bootctl status ---
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=rolled_back
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=bootlimit_exceeded
+update=yes
+recovery_status=
+--- uptime & boot_id ---
+49.19 44.10
+6b31ed54-2faf-42fe-a98c-54011f11a81a
+--- bad txn record (e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3) ---
+SGW-TXN-1
+state=ROLLED_BACK
+id=e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3
+package=10b6f0d8804ad4bce065f32b4d2b1000528cfbf9dbd66fb9e9b513e9aefc12a8
+image=5b5d95b0ce3f2efc21b3c408f43915c199698550275b4dc0350782f7debfadc3
+target=2
+last_good=1
+rootfs_manifest=45c109b234c7a4c24322af162bb2f6861bc1099dbf49b0799737ecf450bae48a
+written_size=134217728
+consumed=1
+boot_id=6b31ed54-2faf-42fe-a98c-54011f11a81a
+bootcount=0
+--- ls .sgw-tx ---
+total 14
+drwx------    2 root     root          1024 Jan  1 01:08 [1;34m.[m
+drwx------    4 root     root          1024 Jan  1 01:07 [1;34m..[m
+-rw-------    1 root     root             0 Jan  1 01:15 [0;0m.sgw-transaction.lock[m
+-rw-------    1 root     root           431 Jan  1 00:41 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0[m
+-rw-------    1 root     root          1281 Jan  1 00:40 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0.manifest[m
+-rw-------    1 root     root           431 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936[m
+-rw-------    1 root     root          1281 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936.manifest[m
+-rw-------    1 root     root           433 Jan  1 01:08 [0;0mtxn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3[m
+-rw-------    1 root     root          1281 Jan  1 01:01 [0;0mtxn-e43760c3ef47653e838c31bc107260413b8fff6dafb543149cf56fa93da54ac3.manifest[m
+-rw-------    1 root     root           431 Jan  1 00:44 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76[m
+-rw-------    1 root     root          1281 Jan  1 00:43 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76.manifest[m
+--- p3 mount & schema ---
+/dev/mmcblk1p3 on /opt/smartgateway/data type ext4 (rw,relatime,data=ordered)
+schema=1
+total 16
+drwx------    4 root     root          1024 Jan  1 01:07 [1;34m.[m
+drwx------    9 root     root          1024 Nov 20  2026 [1;34m..[m
+-rw-------    1 root     root             9 Jan  1 01:14 [0;0m.sgw-data-schema[m
+drwx------    2 root     root          1024 Jan  1 01:08 [1;34m.sgw-tx[m
+drwx------    2 root     root         12288 Jan  1 01:14 [1;34mlost+found[m
+--- sgw_system_health --once ---
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=275
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+--- running gateway/guard processes ---
+  258 root     /opt/smartgateway/bin/service_supervisor run --root /opt/smartgateway
+  275 root     /opt/smartgateway/current/smart_gateway --no-serial --server 127.0.0.1 --port 9000
+--- watchdog guard log tail ---
+Jan  1 01:08:24 smartgateway user.info kernel: [    4.208949] IPv6: ADDRCONF(NETDEV_UP): eth0: link is not ready
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: ntpd 4.2.8p15@1.3728-o Wed Nov 18 07:20:01 UTC 2026 (1): Starting
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: Command line: /usr/sbin/ntpd -g
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: ----------------------------------------------------
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: ntp-4 is maintained by Network Time Foundation,
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: Inc. (NTF), a non-profit 501(c)(3) public-benefit
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: corporation.  Support and training for ntp-4 are
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: available at https://www.nwtime.org/support
+Jan  1 01:08:24 smartgateway daemon.notice ntpd[222]: ----------------------------------------------------
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: proto: precision = 2.000 usec (-19)
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: basedate set to 2026-11-06
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: gps base set to 2026-11-08 (week 2444)
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: Listen and drop on 0 v6wildcard [::]:123
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: Listen and drop on 1 v4wildcard 0.0.0.0:123
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: Listen normally on 2 lo 127.0.0.1:123
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: Listen normally on 3 lo [::1]:123
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: Listening on routing socket on fd #20 for interface updates
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: kernel reports TIME_ERROR: 0x41: Clock Unsynchronized
+Jan  1 01:08:24 smartgateway daemon.info ntpd[224]: kernel reports TIME_ERROR: 0x41: Clock Unsynchronized
+Jan  1 01:08:24 smartgateway auth.info sshd[231]: Server listening on 0.0.0.0 port 22.
+Jan  1 01:08:24 smartgateway auth.info sshd[231]: Server listening on :: port 22.
+Jan  1 01:08:24 smartgateway user.info kernel: [    4.594562] file system registered
+Jan  1 01:08:24 smartgateway user.info kernel: [    4.656593] read descriptors
+Jan  1 01:08:24 smartgateway user.info kernel: [    4.659515] read strings
+Jan  1 01:08:26 smartgateway user.info kernel: [    6.326877] fec 20b4000.ethernet eth0: Link is Up - 100Mbps/Full - flow control rx/tx
+Jan  1 01:08:26 smartgateway user.info kernel: [    6.334828] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready
+Jan  1 01:08:26 smartgateway user.info kernel: [    6.549595] configfs-gadget gadget: high-speed config #1: b
+Jan  1 01:08:29 smartgateway daemon.info ntpd[224]: Listen normally on 4 eth0 192.168.10.3:123
+Jan  1 01:08:29 smartgateway daemon.info ntpd[224]: Listen normally on 5 eth0 [fe80::201:3fff:fe2d:3e4d%2]:123
+Jan  1 01:08:56 smartgateway user.warn kernel: [   36.953353] adbd (278): /proc/278/oom_adj is deprecated, please use /proc/278/oom_score_adj instead.
+=== Old-slot service & steady-state verification (2026-11-20T15:18:54+08:00) ===
+/opt/smartgateway/logs/:
+total 117
+drwx------    2 root     root          1024 Jan  1 00:44 [1;34m.[m
+drwx------    9 root     root          1024 Nov 20  2026 [1;34m..[m
+-rw-r--r--    1 root     root        115936 Jan  1 01:09 [0;0msupervisor.log[m
+
+/var/log/:
+total 29
+drwxrwxrwt    2 root     root           100 Jan  1 01:08 [1;34m.[m
+drwxr-xr-x   19 root     root          1024 Nov 20  2026 [1;34m..[m
+-rw-r--r--    1 root     root             0 Jan  1 01:09 [0;0mfw_printenv.lock[m
+-rw-r--r--    1 root     root         27550 Jan  1 01:08 [0;0mmessages[m
+-rw-------    1 root     root             0 Jan  1 01:08 [0;0msshd[m
+Jan  1 01:08:22 smartgateway user.info kernel: [    1.659846] imx_thermal 2000000.aips-bus:tempmon: Industrial CPU temperature grade - max:105C critical:100C passive:95C
+Jan  1 01:08:23 smartgateway user.warn kernel: [    3.814857] sgw_ap3216: loading out-of-tree module taints kernel.
+Jan  1 01:08:23 smartgateway user.info kernel: [    3.823927] sgw_ap3216 0-001e: probe success: old=0x03 current=0x03
+Jan  1 01:08:23 smartgateway user.info kernel: [    3.844681] sgw_gpio_event: module init
+Jan  1 01:08:23 smartgateway user.info kernel: [    3.864779] sgw-gpio-event sgw-gpio-event: misc device /dev/sgw_event0 ready
+Jan  1 01:08:23 smartgateway user.info kernel: [    3.880916] sgw_gpio_event: platform driver registered
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       
+tcp        0      0 127.0.0.1:5037          0.0.0.0:*               LISTEN      
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      
+tcp        0      0 0.0.0.0:7000            0.0.0.0:*               LISTEN      
+tcp        0      0 :::22                   :::*                    LISTEN      
+status: running pid=275 starttime=787
+59.70 54.18
+6b31ed54-2faf-42fe-a98c-54011f11a81a
+=== Old-slot gateway supervisor log & uptime >65s (2026-11-20T15:19:08+08:00) ===
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connecting to 127.0.0.1:9000...
+[TCP] connec[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+supervisor: request=1 result=OK
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+[TCP] tcp_connect failed: 127.0.0.1:9000 (Connection refused)
+---ROLLBACK_CHECK---
+Usage: /usr/bin/sgw_watchdog_guard [-c fw_env.config] [--wdt-dev /dev/watchdog] [--timeout-s 60] [--budget-ms 45000] [--poll-ms 1000] [--run-dir dir] [--cmdline path] [--mounts path] [--sysroot dir] [--exit-on-confirm]
+---UPTIME---
+73.07 67.39
+6b31ed54-2faf-42fe-a98c-54011f11a81a

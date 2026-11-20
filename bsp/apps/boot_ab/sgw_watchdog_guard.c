@@ -4,6 +4,7 @@
 #include "fw_env_backend.h"
 #include "r3c_coordinator.h"
 #include "r3c_policy.h"
+#include "r3c_txn.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -146,6 +147,50 @@ int main(int argc, char **argv)
     }
 
     if (env.ab_state != AB_STATE_TRIAL && env.upgrade_available == 0) {
+        if (!has_override && env.ab_state == AB_STATE_ROLLED_BACK &&
+            env.pending_slot == AB_SLOT_NONE) {
+            r3c_policy_t rb_pol;
+            ab_slot_t rb_slot = AB_SLOT_NONE;
+            char rb_err[256] = {0};
+            if (r3c_policy_load(R3C_DEFAULT_POLICY_PATH, 0, &rb_pol, rb_err, sizeof(rb_err)) == 0 &&
+                ab_detect_running_slot_full(&hcfg, "/proc/self/mountinfo", 0,
+                                            &rb_slot, rb_err, sizeof(rb_err)) == 0) {
+                int txdir_fd = open(rb_pol.tx_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+                struct stat txst;
+                if (txdir_fd >= 0 && fstat(txdir_fd, &txst) == 0 &&
+                    S_ISDIR(txst.st_mode) && txst.st_uid == 0 && !(txst.st_mode & 0077)) {
+                    char bid[64] = {0}, rtx[65] = {0};
+                    int bid_fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+                    int reconciled = 0;
+                    if (bid_fd >= 0) {
+                        ssize_t bn = read(bid_fd, bid, sizeof(bid) - 1);
+                        close(bid_fd);
+                        if (bn > 0) {
+                            bid[bn] = '\0';
+                            for (ssize_t k = 0; k < bn; ++k) {
+                                if (bid[k] == '\n' || bid[k] == '\r') { bid[k] = '\0'; break; }
+                            }
+                        } else {
+                            bid[0] = '\0';
+                        }
+                    }
+                    if (r3c_txn_reconcile_rollback(txdir_fd, 0, &env, rb_slot,
+                                                   bid[0] ? bid : NULL, &reconciled,
+                                                   rtx, rb_err, sizeof(rb_err)) == 0) {
+                        if (reconciled) {
+                            printf("ROLLBACK_RECONCILED slot=%s tx=%s\n", ab_slot_str(rb_slot), rtx);
+                        }
+                    } else {
+                        fprintf(stderr, "WARN rollback txn settle skipped: %s\n", rb_err);
+                    }
+                } else {
+                    fprintf(stderr, "WARN rollback txdir not ready yet: %s\n", rb_pol.tx_dir);
+                }
+                if (txdir_fd >= 0) close(txdir_fd);
+            } else if (rb_err[0]) {
+                fprintf(stderr, "WARN rollback settle policy/slot check: %s\n", rb_err);
+            }
+        }
         printf("STEADY state=%s active=%s: trial guard not active\n",
                ab_state_str(env.ab_state), ab_slot_str(env.active_slot));
         return 0;

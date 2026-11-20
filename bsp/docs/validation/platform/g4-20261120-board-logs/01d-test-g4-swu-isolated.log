@@ -5,11 +5,13 @@ test_p1_to_p2_real_swupdate_apply_and_pending_stage (tests.test_g4_swu_isolated.
 test_p2_to_p1_real_swupdate_apply_and_pending_stage (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_p2_to_p1_real_swupdate_apply_and_pending_stage) ... ok
 test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_production_sgw_bootctl_apply_bundle_rejects_unprivileged_and_overrides) ... ok
 test_protected_factory_slot2_rejected_zero_mutation (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_protected_factory_slot2_rejected_zero_mutation) ... ok
+test_readback_digest_mismatch_never_stages_pending (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_readback_digest_mismatch_never_stages_pending) ... ok
 test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_real_g3_artifacts_swu_p1_to_p2_via_real_swupdate) ... ok
+test_rollback_reconciles_stale_pending_and_accepts_next_valid_swu (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_rollback_reconciles_stale_pending_and_accepts_next_valid_swu) ... ok
 test_sequential_upgrade_after_prior_confirmed_txn_in_txdir (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_sequential_upgrade_after_prior_confirmed_txn_in_txdir) ... ok
 test_shared_data_p3_unmounted_wrong_mount_bad_schema_and_outside_txdir_rejected (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_shared_data_p3_unmounted_wrong_mount_bad_schema_and_outside_txdir_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 10 tests in 9.851s
+Ran 12 tests in 11.389s
 
 OK

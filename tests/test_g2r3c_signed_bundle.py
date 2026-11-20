@@ -149,9 +149,20 @@ class SignedBundleTests(unittest.TestCase):
         self.assertTrue((self.tx / f"txn-{new_id}").is_file())
         self.assertIn("state=CONFIRMED", settled_txn.read_text(encoding="utf-8"))
 
+        # Rolled-back & consumed=1 settled record must also allow next upgrade
+        rb_id = "2" * 64
+        rb_tx = self.tx.parent / "tx-rolled-back"
+        rb_tx.mkdir(mode=0o700)
+        rb_txn = rb_tx / f"txn-{rb_id}"
+        rb_txn.write_text(f"SGW-TXN-1\nstate=ROLLED_BACK\nid={rb_id}\nconsumed=1\n", encoding="utf-8")
+        rb_txn.chmod(0o600)
+        rb_res = self.call(tx=rb_tx)
+        self.assertEqual(rb_res.returncode, 0, rb_res.stdout + rb_res.stderr)
+
         # Must still reject unsettled/orphan/stray files
         bad_cases = [
             ("confirmed_unconsumed", f"txn-{settled_id}", f"SGW-TXN-1\nstate=CONFIRMED\nid={settled_id}\nconsumed=0\n"),
+            ("rolled_back_unconsumed", f"txn-{settled_id}", f"SGW-TXN-1\nstate=ROLLED_BACK\nid={settled_id}\nconsumed=0\n"),
             ("pending_unconsumed", f"txn-{settled_id}", f"SGW-TXN-1\nstate=PENDING\nid={settled_id}\nconsumed=0\n"),
             ("orphan_manifest", f"txn-{settled_id}.manifest", "/sbin/init " + ("a" * 64) + "\n"),
             ("stray_file", "rogue.txt", "unexpected\n"),
