@@ -32,6 +32,9 @@ typedef struct {
     int allow_external_degraded;
     int require_sensor_heartbeat;
     int protect_slot2;
+    uint32_t boot_cap;
+    uint32_t min_sys_version;
+    int require_compat_manifest;
     uint64_t stable_ms;
     uint64_t max_gap_ms;
     uint64_t deadline_ms;

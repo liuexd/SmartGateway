@@ -19,8 +19,8 @@ gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -DSGW_BOOTCTL_ISOLATED_SIM -I. -I../
 /home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
 	-I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
 	-o ../../../build/arm-ab/sgw_system_health
--rwxrwxr-x 1 ubuntu ubuntu 353K Nov 20 15:24 ../../../build/arm-ab/sgw_bootctl
--rwxrwxr-x 1 ubuntu ubuntu 349K Nov 20 15:24 ../../../build/arm-ab/sgw_watchdog_guard
+-rwxrwxr-x 1 ubuntu ubuntu 360K Nov 20 15:45 ../../../build/arm-ab/sgw_bootctl
+-rwxrwxr-x 1 ubuntu ubuntu 356K Nov 20 15:45 ../../../build/arm-ab/sgw_watchdog_guard
 == sgw_bootctl ==
   Class:                             ELF32
   Type:                              EXEC (Executable file)
@@ -64,4 +64,27 @@ health_devices_test: checks=21 failures=0
 health_network_test: checks=5 failures=0
 r3c_binding_test: checks=16 failures=0
 r3c_data_exclusion_test: PASS
+test_incomplete_corrupt_or_untrusted_app_state (tests.test_g2r3c_data.DataTests.test_incomplete_corrupt_or_untrusted_app_state) ... ok
+test_lock_is_required_and_busy_fails_without_creating_it (tests.test_g2r3c_data.DataTests.test_lock_is_required_and_busy_fails_without_creating_it) ... ok
+test_missing_release_and_symlink_state_rejected (tests.test_g2r3c_data.DataTests.test_missing_release_and_symlink_state_rejected) ... ok
+test_mountinfo_identity_and_mode (tests.test_g2r3c_data.DataTests.test_mountinfo_identity_and_mode) ... ok
+test_real_root_directory_or_character_device_is_not_data (tests.test_g2r3c_data.DataTests.test_real_root_directory_or_character_device_is_not_data) ... ok
+test_settled_confirmed_and_rolled_back (tests.test_g2r3c_data.DataTests.test_settled_confirmed_and_rolled_back) ... ok
+test_snapshot_lock_can_be_held_through_decision (tests.test_g2r3c_data.DataTests.test_snapshot_lock_can_be_held_through_decision) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.096s
+
+OK
+test_lock_contention_and_readonly_destination_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_lock_contention_and_readonly_destination_rejected) ... ok
+test_persistence_failure_never_reports_success (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_persistence_failure_never_reports_success) ... ok
+test_settled_confirmed_record_allows_next_upgrade_while_unsettled_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_settled_confirmed_record_allows_next_upgrade_while_unsettled_rejected) ... ok
+test_signed_package_records_two_distinct_random_ids (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_signed_package_records_two_distinct_random_ids) ... ok
+test_tamper_image_manifest_and_signature_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_tamper_image_manifest_and_signature_rejected) ... ok
+test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.579s
+
+OK
 make: Leaving directory '/home/ubuntu/Desktop/project/SmartGateway-BSP/bsp/apps/boot_ab'

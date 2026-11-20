@@ -205,7 +205,7 @@ cat > "$TARGET_DIR/opt/smartgateway/state/ota_state.json" <<'OTEOF'
 OTEOF
 chmod 600 "$TARGET_DIR/opt/smartgateway/state/ota_state.json"
 cat > "$TARGET_DIR/opt/smartgateway/service.conf" <<'SCEOF'
-executable=/opt/smartgateway/current/smart_gateway
+executable=/opt/smartgateway/data/app/current/smart_gateway
 serial=
 baud=115200
 server=127.0.0.1
@@ -223,7 +223,7 @@ fi
 if [ -x "$REPO_DIR/build/arm-d25/smart_gateway" ]; then
     install -m 0700 "$REPO_DIR/build/arm-d25/smart_gateway" "$TARGET_DIR/opt/smartgateway/releases/0.6.0/smart_gateway"
 fi
-ln -sfn releases/0.6.0 "$TARGET_DIR/opt/smartgateway/current"
+ln -sfn /opt/smartgateway/data/app/current "$TARGET_DIR/opt/smartgateway/current"
 
 install -d -m 0700 "$TARGET_DIR/etc/smartgateway"
 printf "interface=eth0\n" > "$TARGET_DIR/etc/smartgateway/system-health-network.conf"

@@ -1,0 +1,90 @@
+=== Phase 4: Final p1 confirmed state (keyv2 + cross-slot app 0.6.1 on p3) (2026-11-20T16:02:28+08:00) ===
+console=ttymxc0,115200 root=/dev/mmcblk1p1 rootwait rw panic=5
+---STATUS---
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+---UPTIME---
+48.11 26.88
+fdaf26dd-5469-420e-87b6-b69e26b9ba29
+--- confirmed txn (6118b5888c2fcba46958b164a23477cab230629720ce9ac555f538024bf3866f) ---
+SGW-TXN-1
+state=CONFIRMED
+id=6118b5888c2fcba46958b164a23477cab230629720ce9ac555f538024bf3866f
+package=d7af852c1fe046580700fa955396e8bc5ae145be15bad5801507b3a405c29d68
+image=b2e037dbd0cd4bf863d8e7f0bd7b8820031918867999ce571f0c7f16539c3fa2
+target=1
+last_good=2
+rootfs_manifest=addbfb487aee30cf48d28b9c65fa370b1728443fd5b26b662055953714ea1373
+written_size=134217728
+consumed=1
+boot_id=fdaf26dd-5469-420e-87b6-b69e26b9ba29
+bootcount=1
+--- 15-file manifest live verification ---
+OK /sbin/init 43e10f536152f46b75203cf3409b9e491cad97ccc272019805af0c4004cb3004
+OK /etc/inittab 996e59322e4b58fcc44e0d9c756cc79335221058377f063eb2b4cce6c6c6329b
+OK /etc/fstab 2f27c6f7a931bf23d11efce355c3ff993aaebe16ff95f3c41266658baf5b25ca
+OK /etc/fw_env.config 1c01595b11ebbaebbff45a945ce1550a1a001cc8eeb27b3f8d1bc419578fd2c1
+OK /sbin/fw_printenv 2146bb2b82c8c07a675ab4813bc4c8ebe5fdad67207066320d8a9ad0abc64ea0
+OK /usr/bin/sgw_bootctl 9bf2715002aaf631db60f49bf56675ab55b2f40a3f454f305234bd1ad7f103cd
+OK /usr/bin/sgw_watchdog_guard de43817c1bc192a583103686a09c21e239d1cad071ad33fec6907bd314a50101
+OK /usr/bin/service_supervisor a2d23278b2d99558d644090d253e64f66587a8f0e4db1cd8d3152da58484f133
+OK /usr/bin/smart_gateway 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+OK /usr/bin/ota_agent 0e9bc7d7f73c91ffc06fca1022959413f110a61144846b0b8008fe9dea16d21d
+OK /etc/init.d/S15sgw_ab_guard 0b1b347f44da27c4ad1676c3ac1573e768670f35abaa9193337e152a0dd6ad9d
+OK /etc/init.d/S99smartgateway c1f96d3b611d1eece032c64551e82df553e7e6d6a97e51bca795318c70acab9d
+OK /boot/zImage b3ac2cb10e3d9940222b99b6f276786d4207ef451dc5331e1ca5bc1721cde0fb
+OK /boot/100ask_imx6ull-14x14.dtb 348f96f323376fe4587231a4bd78ac8888df1075cab8c9dba33d55fb6e6aa4cb
+OK /lib/libc.so.6 0c54f2e75c29e2309ff72a723cbfcb16224959ace713916896acfe4969c5b305
+MANIFEST_SUMMARY ok=15 bad=0
+--- app on p3 & ota-public.pem ---
+Filesystem                Size      Used Available Use% Mounted on
+/dev/root               120.0M     33.0M     78.0M  30% /
+/dev/mmcblk1p3          476.2M      2.7M    444.5M   1% /opt/smartgateway/data
+/opt/smartgateway/data/app/releases/0.6.1
+{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.1","candidate_version":"0.6.1"}
+P1_SMART_GATEWAY_PID=532
+lrwxrwxrwx    1 root     root             0 Jan  1 01:52 [1;36m/proc/532/exe[m -> [1;32m/opt/smartgateway/data/app/releases/0.6.1/smart_gateway[m
+1bf25473eea31f0bbd51d7dde85dedd7edecf1a3dcbaeeab2e28da997381057b  /etc/smartgateway/ota-public.pem
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=532
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+--- steady-state uptime >65s check (2026-11-20T16:03:25+08:00) ---
+105.06 82.65
+fdaf26dd-5469-420e-87b6-b69e26b9ba29
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=

@@ -63,14 +63,29 @@ def cmd_pack(args):
         dtb_sha = sha256_file(stage / "100ask_imx6ull-14x14.dtb")
         hook_sha = sha256_file(stage / "sgw-swu-apply.sh")
 
-        manifest_txt = (
-            "SGW-SYSTEM-2\n"
-            f"board={args.board}\n"
-            "image=rootfs.img\n"
-            f"size={img_size}\n"
-            f"sha256={img_sha}\n"
-            f"rootfs_manifest_sha256={rm_sha}\n"
-        )
+        if getattr(args, "manifest_format", "3") == "2":
+            manifest_txt = (
+                "SGW-SYSTEM-2\n"
+                f"board={args.board}\n"
+                "image=rootfs.img\n"
+                f"size={img_size}\n"
+                f"sha256={img_sha}\n"
+                f"rootfs_manifest_sha256={rm_sha}\n"
+            )
+        else:
+            manifest_txt = (
+                "SGW-SYSTEM-3\n"
+                f"board={args.board}\n"
+                f"version={args.version}\n"
+                f"sys_version={args.sys_version}\n"
+                f"min_boot_cap={args.min_boot_cap}\n"
+                f"data_schema_min={args.data_schema_min}\n"
+                f"data_schema_max={args.data_schema_max}\n"
+                "image=rootfs.img\n"
+                f"size={img_size}\n"
+                f"sha256={img_sha}\n"
+                f"rootfs_manifest_sha256={rm_sha}\n"
+            )
         (stage / "manifest").write_text(manifest_txt, encoding="utf-8")
         subprocess.run(
             ["openssl", "dgst", "-sha256", "-sign", str(privkey),
@@ -237,6 +252,9 @@ def cmd_apply(args):
                 "allow_external_degraded=1\n"
                 "require_sensor_heartbeat=0\n"
                 f"protect_slot2={'0' if args.allow_virtual_slot2 else '1'}\n"
+                "boot_cap=1\n"
+                "min_sys_version=20200\n"
+                "require_compat_manifest=1\n"
                 "stable_ms=150\n"
                 "max_gap_ms=400\n"
                 "deadline_ms=2000\n"
@@ -303,6 +321,11 @@ def main():
     pk.add_argument("--privkey", required=True)
     pk.add_argument("--target-slot", type=int, choices=(1, 2), required=True)
     pk.add_argument("--version", default="g4-0.1.0")
+    pk.add_argument("--sys-version", type=int, default=20201)
+    pk.add_argument("--min-boot-cap", type=int, default=1)
+    pk.add_argument("--data-schema-min", type=int, default=1)
+    pk.add_argument("--data-schema-max", type=int, default=1)
+    pk.add_argument("--manifest-format", choices=("2", "3"), default="3")
     pk.add_argument("--board", default="imx6ull-100ask")
     pk.add_argument("--hw-rev", default="revA")
     pk.add_argument("--hook-script", default=str(DEFAULT_HOOK_SCRIPT))

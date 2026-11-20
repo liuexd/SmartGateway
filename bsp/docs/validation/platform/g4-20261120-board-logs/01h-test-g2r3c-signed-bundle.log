@@ -6,6 +6,6 @@ test_tamper_image_manifest_and_signature_rejected (tests.test_g2r3c_signed_bundl
 test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 6 tests in 0.646s
+Ran 6 tests in 0.473s
 
 OK

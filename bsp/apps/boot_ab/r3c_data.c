@@ -195,6 +195,49 @@ out:
     return rc;
 }
 
+int r3c_data_read_schema(int dir, uid_t owner, uint32_t *out_schema,
+                         char *reason, size_t size)
+{
+    struct stat schema;
+    char content[32];
+    int fd = -1, rc = -1;
+    ssize_t n;
+    unsigned long long val = 0;
+    char *end = NULL;
+
+    if (out_schema) *out_schema = 0;
+    if (dir < 0 || !out_schema) return fail(reason, size, "invalid DATA schema arguments");
+    fd = openat(dir, ".sgw-data-schema", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0 || fstat(fd, &schema) != 0 || !S_ISREG(schema.st_mode) ||
+        schema.st_uid != owner || (schema.st_mode & 0022) ||
+        schema.st_size <= 7 || schema.st_size >= (off_t)sizeof(content)) {
+        fail(reason, size, "missing or untrusted DATA schema");
+        goto out;
+    }
+    n = read(fd, content, (size_t)schema.st_size);
+    if (n != schema.st_size) {
+        fail(reason, size, "failed reading DATA schema");
+        goto out;
+    }
+    content[n] = '\0';
+    if (strncmp(content, "schema=", 7) != 0) {
+        fail(reason, size, "unsupported or invalid DATA schema");
+        goto out;
+    }
+    errno = 0;
+    val = strtoull(content + 7, &end, 10);
+    if (errno || end == content + 7 || *end != '\n' || *(end + 1) != '\0' ||
+        val == 0 || val > UINT32_MAX) {
+        fail(reason, size, "unsupported or invalid DATA schema");
+        goto out;
+    }
+    *out_schema = (uint32_t)val;
+    rc = 0;
+out:
+    if (fd >= 0) close(fd);
+    return rc;
+}
+
 int r3c_data_inspect(const r3c_data_policy_t *p, char *reason, size_t size)
 {
     struct stat dev, root, mnt;

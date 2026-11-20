@@ -75,6 +75,9 @@ void r3c_policy_init_default(r3c_policy_t *p, uid_t owner)
     p->allow_external_degraded = 0;
     p->require_sensor_heartbeat = 1;
     p->protect_slot2 = 1;
+    p->boot_cap = 1;
+    p->min_sys_version = 0;
+    p->require_compat_manifest = 0;
     p->stable_ms = 5000;
     p->max_gap_ms = 2000;
     p->deadline_ms = 30000;
@@ -230,6 +233,24 @@ int r3c_policy_load(const char *path, uid_t expected_owner,
             if (strcmp(v, "0") == 0) out->protect_slot2 = 0;
             else if (strcmp(v, "1") == 0) out->protect_slot2 = 1;
             else return fail(err, errlen, "invalid protect_slot2");
+        } else if (strcmp(k, "boot_cap") == 0) {
+            uint64_t val = 0;
+            if ((seen_mask & (1u << 22)) || parse_u64(v, &val) != 0 || val == 0 || val > UINT32_MAX)
+                return fail(err, errlen, "invalid boot_cap");
+            seen_mask |= (1u << 22);
+            out->boot_cap = (uint32_t)val;
+        } else if (strcmp(k, "min_sys_version") == 0) {
+            uint64_t val = 0;
+            if ((seen_mask & (1u << 23)) || parse_u64(v, &val) != 0 || val > UINT32_MAX)
+                return fail(err, errlen, "invalid min_sys_version");
+            seen_mask |= (1u << 23);
+            out->min_sys_version = (uint32_t)val;
+        } else if (strcmp(k, "require_compat_manifest") == 0) {
+            if (seen_mask & (1u << 24)) return fail(err, errlen, "duplicate require_compat_manifest");
+            seen_mask |= (1u << 24);
+            if (strcmp(v, "0") == 0) out->require_compat_manifest = 0;
+            else if (strcmp(v, "1") == 0) out->require_compat_manifest = 1;
+            else return fail(err, errlen, "invalid require_compat_manifest");
         } else {
             return fail(err, errlen, "unknown policy key");
         }

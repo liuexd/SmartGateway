@@ -646,10 +646,28 @@ int r3c_coordinator_apply_bundle(const r3c_policy_t *policy,
                                  (uint64_t)img_st.st_size, errbuf, errlen) != 0)
         goto out;
 
-    if (r3c_bundle_record(bundle_fd, txdir_fd, key_fd, policy->trusted_uid,
-                          opts->target_slot, (unsigned int)running_slot, txid) != 0) {
-        fail(errbuf, errlen, "signed bundle verification failed");
-        goto out;
+    {
+        r3c_bundle_compat_t compat;
+        uint32_t cur_schema = 0;
+        int data_dir_fd = open(policy->data_mountpoint, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (data_dir_fd < 0 ||
+            r3c_data_read_schema(data_dir_fd, policy->trusted_uid, &cur_schema, errbuf, errlen) != 0) {
+            if (data_dir_fd >= 0) close(data_dir_fd);
+            if (!errbuf[0]) fail(errbuf, errlen, "failed reading DATA schema");
+            goto out;
+        }
+        close(data_dir_fd);
+        compat.boot_cap = policy->boot_cap ? policy->boot_cap : 1u;
+        compat.min_sys_version = policy->min_sys_version;
+        compat.data_schema = cur_schema;
+        compat.require_compat_manifest = policy->require_compat_manifest;
+        if (errbuf && errlen) errbuf[0] = '\0';
+        if (r3c_bundle_record_checked(bundle_fd, txdir_fd, key_fd, policy->trusted_uid,
+                                      opts->target_slot, (unsigned int)running_slot,
+                                      &compat, txid, errbuf, errlen) != 0) {
+            if (!errbuf[0]) fail(errbuf, errlen, "signed bundle verification failed");
+            goto out;
+        }
     }
 
     if (opts->allow_regular_file_target || opts->allow_host_slot_sim ||

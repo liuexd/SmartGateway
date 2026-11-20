@@ -6,6 +6,6 @@ test_production_confirm_fails_closed_even_with_root_identity (tests.test_review4
 test_whole_disk_and_partition_reject_mapped_or_unknown_relations (tests.test_review4_topology.TopologyTests.test_whole_disk_and_partition_reject_mapped_or_unknown_relations) ... ok
 
 ----------------------------------------------------------------------
-Ran 6 tests in 0.847s
+Ran 6 tests in 1.010s
 
 OK

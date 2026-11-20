@@ -65,6 +65,9 @@ int r3c_data_inspect_full(const r3c_data_full_policy_t *policy, char *reason, si
 int r3c_data_inspect_contents(int dirfd, uid_t owner, uint64_t minimum_available_bytes,
                               char *reason, size_t reason_size);
 
+int r3c_data_read_schema(int dirfd, uid_t owner, uint32_t *out_schema,
+                         char *reason, size_t reason_size);
+
 int r3c_app_ota_inspect(const char *install_dir, uid_t owner,
                         char *reason, size_t reason_size);
 

@@ -212,7 +212,10 @@ class TestG4SwuIsolated(unittest.TestCase):
         )
 
     def _pack_swu(self, out_name: str, target_slot: int, board: str = "imx6ull-100ask",
-                  hw_rev: str = "revA", privkey: Path = None) -> Path:
+                  hw_rev: str = "revA", privkey: Path = None,
+                  sys_version: int = 20201, min_boot_cap: int = 1,
+                  data_schema_min: int = 1, data_schema_max: int = 1,
+                  manifest_format: str = "3") -> Path:
         swu = self.base / out_name
         subprocess.run(
             [
@@ -224,6 +227,11 @@ class TestG4SwuIsolated(unittest.TestCase):
                 "--privkey", str(privkey or self.privkey),
                 "--target-slot", str(target_slot),
                 "--board", board,
+                "--sys-version", str(sys_version),
+                "--min-boot-cap", str(min_boot_cap),
+                "--data-schema-min", str(data_schema_min),
+                "--data-schema-max", str(data_schema_max),
+                "--manifest-format", manifest_format,
                 "--hw-rev", hw_rev,
                 "--out", str(swu),
             ],
@@ -1074,6 +1082,83 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.assertEqual(env["sgw_last_good_slot"], "1")
         self.assertEqual(env["upgrade_available"], "1")
 
+
+    def test_compat_gates_reject_bootcap_schema_downgrade_and_legacy_manifest(self):
+        env_before = sha256_path(self.emmc_img)
+        s2_before = sha256_path(self.slot2_img)
+
+        bad_cap = self._pack_swu("bad-bootcap.swu", target_slot=2, min_boot_cap=2)
+        r1 = self._apply_swu(bad_cap, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertNotEqual(r1.returncode, 0)
+        self.assertIn("min_boot_cap", r1.stderr)
+
+        bad_schema = self._pack_swu("bad-schema.swu", target_slot=2, data_schema_min=2, data_schema_max=2)
+        r2 = self._apply_swu(bad_schema, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertNotEqual(r2.returncode, 0)
+        self.assertIn("DATA schema incompatible", r2.stderr)
+
+        downgrade = self._pack_swu("downgrade.swu", target_slot=2, sys_version=20199)
+        r3 = self._apply_swu(downgrade, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertNotEqual(r3.returncode, 0)
+        self.assertIn("anti-rollback", r3.stderr)
+
+        legacy = self._pack_swu("legacy-v2.swu", target_slot=2, manifest_format="2")
+        r4 = self._apply_swu(legacy, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertNotEqual(r4.returncode, 0)
+        self.assertIn("compatibility", r4.stderr)
+
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+        self.assertEqual(sha256_path(self.slot2_img), s2_before)
+        self.assertEqual(list(self.txdir.glob("txn-*")), [])
+
+    def test_key_rotation_two_step_and_old_key_rejected(self):
+        priv_v2 = self.base / "ota-v2-private.pem"
+        pub_v2 = self.base / "ota-v2-public.pem"
+        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+                        "-out", str(priv_v2)], check=True, capture_output=True)
+        subprocess.run(["openssl", "pkey", "-in", str(priv_v2), "-pubout",
+                        "-out", str(pub_v2)], check=True, capture_output=True)
+        pub_v2.chmod(0o600)
+
+        # Phase 1: old key signs v1->v2 rotation package (simulates candidate rootfs carrying pub_v2)
+        rot_swu = self._pack_swu("rot-v1-to-v2.swu", target_slot=2, privkey=self.privkey, sys_version=20300)
+        r_phase1 = self._apply_swu(rot_swu, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertEqual(r_phase1.returncode, 0, r_phase1.stdout + r_phase1.stderr)
+        m1 = re.search(r"STAGED tx=([0-9a-f]{64}) target=2 last_good=1", r_phase1.stdout)
+        self.assertIsNotNone(m1)
+        tx1 = m1.group(1)
+        tx1_path = self.txdir / f"txn-{tx1}"
+        tx1_text = tx1_path.read_text(encoding="utf-8")
+        tx1_text = tx1_text.replace("state=PENDING\n", "state=CONFIRMED\n").replace("consumed=0\n", "consumed=1\n")
+        tx1_path.write_text(tx1_text + "boot_id=11111111-1111-4111-8111-111111111111\nbootcount=1\n", encoding="utf-8")
+        tx1_path.chmod(0o600)
+        self._set_env({
+            "sgw_active_slot": "2",
+            "sgw_last_good_slot": "2",
+            "sgw_pending_slot": "none",
+            "sgw_ab_state": "confirmed",
+            "upgrade_available": "0",
+            "bootcount": "0",
+        })
+
+        # Switch trusted root public key to pub_v2 (simulates booting confirmed slot 2 with new key)
+        self.pubkey.write_bytes(pub_v2.read_bytes())
+        self.pubkey.chmod(0o600)
+        self._set_running_slot(2)
+
+        # After rotation: package signed by OLD key must be REJECTED (zero mutation)
+        old_signed = self._pack_swu("old-key-rejected.swu", target_slot=1, privkey=self.privkey, sys_version=20301)
+        s1_before = sha256_path(self.slot1_img)
+        r_old = self._apply_swu(old_signed, self.slot1_img, expected_target=1)
+        self.assertNotEqual(r_old.returncode, 0)
+        self.assertEqual(sha256_path(self.slot1_img), s1_before)
+
+        # Phase 2: package signed by NEW key is ACCEPTED and closes rotation across slot 1
+        new_signed = self._pack_swu("new-key-accepted.swu", target_slot=1, privkey=priv_v2, sys_version=20302)
+        r_new = self._apply_swu(new_signed, self.slot1_img, expected_target=1)
+        self.assertEqual(r_new.returncode, 0, r_new.stdout + r_new.stderr)
+        m2 = re.search(r"STAGED tx=([0-9a-f]{64}) target=1 last_good=2", r_new.stdout)
+        self.assertIsNotNone(m2)
 
 if __name__ == "__main__":
     unittest.main()

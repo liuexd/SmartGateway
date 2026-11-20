@@ -1,4 +1,6 @@
+test_compat_gates_reject_bootcap_schema_downgrade_and_legacy_manifest (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_compat_gates_reject_bootcap_schema_downgrade_and_legacy_manifest) ... ok
 test_fsync_failure_during_slot_write_never_stages_pending (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_fsync_failure_during_slot_write_never_stages_pending) ... ok
+test_key_rotation_two_step_and_old_key_rejected (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_key_rotation_two_step_and_old_key_rejected) ... ok
 test_negative_bootctl_rejections_zero_mutation (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_negative_bootctl_rejections_zero_mutation) ... ok
 test_negative_swupdate_rejections_zero_mutation (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_negative_swupdate_rejections_zero_mutation) ... ok
 test_p1_to_p2_real_swupdate_apply_and_pending_stage (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_p1_to_p2_real_swupdate_apply_and_pending_stage) ... ok
@@ -12,6 +14,6 @@ test_sequential_upgrade_after_prior_confirmed_txn_in_txdir (tests.test_g4_swu_is
 test_shared_data_p3_unmounted_wrong_mount_bad_schema_and_outside_txdir_rejected (tests.test_g4_swu_isolated.TestG4SwuIsolated.test_shared_data_p3_unmounted_wrong_mount_bad_schema_and_outside_txdir_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 11.389s
+Ran 14 tests in 13.663s
 
 OK

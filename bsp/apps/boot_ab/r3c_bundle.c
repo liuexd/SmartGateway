@@ -479,8 +479,45 @@ out:
     return rc;
 }
 
-int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
-                      unsigned int target, unsigned int last_good, char id[65])
+static int valid_version_str(const char *s)
+{
+    size_t i, n;
+    if (!s || !s[0]) return 0;
+    n = strlen(s);
+    if (n > 64) return 0;
+    for (i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '+' || c == '-'))
+            return 0;
+    }
+    return 1;
+}
+
+static int parse_u32_line(const char *line, const char *prefix, uint32_t *out)
+{
+    size_t plen = strlen(prefix);
+    unsigned long long val = 0;
+    char *end = NULL;
+    if (strncmp(line, prefix, plen) != 0 || line[plen] < '0' || line[plen] > '9')
+        return -1;
+    errno = 0;
+    val = strtoull(line + plen, &end, 10);
+    if (errno || !end || *end != '\0' || val > UINT32_MAX) return -1;
+    *out = (uint32_t)val;
+    return 0;
+}
+
+static int bfail(char *err, size_t errlen, const char *msg)
+{
+    if (err && errlen) snprintf(err, errlen, "%s", msg);
+    return -1;
+}
+
+int r3c_bundle_record_checked(int bundle, int txdir, int keyfd, uid_t owner,
+                              unsigned int target, unsigned int last_good,
+                              const r3c_bundle_compat_t *compat,
+                              char id[65], char *err, size_t errlen)
 {
     unsigned char manifest[1024], signature[1024], digest[EVP_MAX_MD_SIZE];
     unsigned char *rm_buf = NULL;
@@ -540,17 +577,94 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
         goto out;
     }
 
-    if (have_rm) {
+    if (have_rm && manifest_len >= 13 &&
+        memcmp(manifest, "SGW-SYSTEM-3\n", 13) == 0) {
+        char mcopy[1025], ver[65] = {0};
+        char *ln, *save = NULL;
+        uint32_t sys_ver = 0, min_bcap = 0, dmin = 0, dmax = 0;
+        int lno = 0;
+        if (manifest_len >= sizeof(mcopy)) {
+            bfail(err, errlen, "manifest too large");
+            goto out;
+        }
+        memcpy(mcopy, manifest, manifest_len);
+        mcopy[manifest_len] = '\0';
+        for (ln = strtok_r(mcopy, "\n", &save); ln; ln = strtok_r(NULL, "\n", &save), ++lno) {
+            if (lno == 2 && strncmp(ln, "version=", 8) == 0) {
+                snprintf(ver, sizeof(ver), "%s", ln + 8);
+            } else if (lno == 3) {
+                if (parse_u32_line(ln, "sys_version=", &sys_ver) != 0) {
+                    bfail(err, errlen, "invalid manifest sys_version");
+                    goto out;
+                }
+            } else if (lno == 4) {
+                if (parse_u32_line(ln, "min_boot_cap=", &min_bcap) != 0) {
+                    bfail(err, errlen, "invalid manifest min_boot_cap");
+                    goto out;
+                }
+            } else if (lno == 5) {
+                if (parse_u32_line(ln, "data_schema_min=", &dmin) != 0) {
+                    bfail(err, errlen, "invalid manifest data_schema_min");
+                    goto out;
+                }
+            } else if (lno == 6) {
+                if (parse_u32_line(ln, "data_schema_max=", &dmax) != 0) {
+                    bfail(err, errlen, "invalid manifest data_schema_max");
+                    goto out;
+                }
+            }
+        }
+        if (!valid_version_str(ver) || sys_ver == 0 || min_bcap == 0 ||
+            dmin == 0 || dmin > dmax) {
+            bfail(err, errlen, "invalid SGW-SYSTEM-3 compatibility metadata");
+            goto out;
+        }
         n = snprintf(canonical, sizeof(canonical),
-                     "SGW-SYSTEM-2\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\n"
-                     "sha256=%s\nrootfs_manifest_sha256=%s\n",
+                     "SGW-SYSTEM-3\nboard=imx6ull-100ask\nversion=%s\n"
+                     "sys_version=%u\nmin_boot_cap=%u\n"
+                     "data_schema_min=%u\ndata_schema_max=%u\n"
+                     "image=rootfs.img\nsize=%llu\nsha256=%s\n"
+                     "rootfs_manifest_sha256=%s\n",
+                     ver, sys_ver, min_bcap, dmin, dmax,
                      image_size, image_hex, rm_hex);
+        if (n <= 0 || (size_t)n != manifest_len || memcmp(canonical, manifest, manifest_len)) {
+            bfail(err, errlen, "signed bundle verification failed");
+            goto out;
+        }
+        if (compat) {
+            if (min_bcap > compat->boot_cap) {
+                bfail(err, errlen, "bootloader capability below package min_boot_cap");
+                goto out;
+            }
+            if (compat->data_schema < dmin || compat->data_schema > dmax) {
+                bfail(err, errlen, "DATA schema incompatible with package schema range");
+                goto out;
+            }
+            if (sys_ver < compat->min_sys_version) {
+                bfail(err, errlen, "package sys_version below anti-rollback floor");
+                goto out;
+            }
+        }
     } else {
-        n = snprintf(canonical, sizeof(canonical),
-                     "SGW-SYSTEM-1\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\nsha256=%s\n",
-                     image_size, image_hex);
+        if (compat && compat->require_compat_manifest) {
+            bfail(err, errlen, "manifest missing version/capability/schema compatibility fields");
+            goto out;
+        }
+        if (have_rm) {
+            n = snprintf(canonical, sizeof(canonical),
+                         "SGW-SYSTEM-2\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\n"
+                         "sha256=%s\nrootfs_manifest_sha256=%s\n",
+                         image_size, image_hex, rm_hex);
+        } else {
+            n = snprintf(canonical, sizeof(canonical),
+                         "SGW-SYSTEM-1\nboard=imx6ull-100ask\nimage=rootfs.img\nsize=%llu\nsha256=%s\n",
+                         image_size, image_hex);
+        }
+        if (n <= 0 || (size_t)n != manifest_len || memcmp(canonical, manifest, manifest_len)) {
+            bfail(err, errlen, "signed bundle verification failed");
+            goto out;
+        }
     }
-    if (n <= 0 || (size_t)n != manifest_len || memcmp(canonical, manifest, manifest_len)) goto out;
     if (have_rm && verify_manifest_matches_ext4_image(imagefd, rm_buf, rm_len) != 0)
         goto out;
     EVP_MD_CTX_free(ctx); ctx = EVP_MD_CTX_new();
@@ -625,4 +739,12 @@ out:
     if (sigfd >= 0) close(sigfd);
     if (imagefd >= 0) close(imagefd);
     return rc;
+}
+
+
+int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
+                      unsigned int target, unsigned int last_good, char id[65])
+{
+    return r3c_bundle_record_checked(bundle, txdir, keyfd, owner,
+                                     target, last_good, NULL, id, NULL, 0);
 }

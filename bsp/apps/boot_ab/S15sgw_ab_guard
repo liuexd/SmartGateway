@@ -1,19 +1,35 @@
 #!/bin/sh
 # Early boot trial guard for Buildroot SysV init (/etc/init.d/S15sgw_ab_guard).
-# Starts BEFORE S99smartgateway so sgw_watchdog_guard opens /dev/watchdog,
-# cancels the Linux kernel auto-ping worker, and awaits full R3C system/business
-# health before confirming a trial boot (or lets WDOG1 reset after 45s).
+# Also idempotently seeds shared DATA (/opt/smartgateway/data/app) from the rootfs
+# baseline binary only when uninitialized so app OTA releases persist across A/B switches.
 
 DAEMON=/usr/bin/sgw_watchdog_guard
 PIDFILE=/var/run/sgw_watchdog_guard.pid
 
+seed_app_ota_on_data() {
+    grep -qs ' /opt/smartgateway/data ' /proc/mounts || return 0
+    [ -f /opt/smartgateway/data/app/state/ota_state.json ] && return 0
+    [ -x /opt/smartgateway/releases/0.6.0/smart_gateway ] || return 0
+    mkdir -p /opt/smartgateway/data/app/releases/0.6.0              /opt/smartgateway/data/app/state              /opt/smartgateway/data/app/packages
+    chmod 0700 /opt/smartgateway/data/app                /opt/smartgateway/data/app/releases                /opt/smartgateway/data/app/releases/0.6.0                /opt/smartgateway/data/app/state                /opt/smartgateway/data/app/packages
+    cp -f /opt/smartgateway/releases/0.6.0/smart_gateway           /opt/smartgateway/data/app/releases/0.6.0/smart_gateway
+    chmod 0700 /opt/smartgateway/data/app/releases/0.6.0/smart_gateway
+    ln -sfn releases/0.6.0 /opt/smartgateway/data/app/current
+    if [ ! -f /opt/smartgateway/data/app/.ota.lock ]; then
+        : > /opt/smartgateway/data/app/.ota.lock
+        chmod 0600 /opt/smartgateway/data/app/.ota.lock
+    fi
+    printf '{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}\n'         > /opt/smartgateway/data/app/state/ota_state.json
+    chmod 0600 /opt/smartgateway/data/app/state/ota_state.json
+    sync
+}
+
 case "$1" in
     start)
+        seed_app_ota_on_data
         if [ -x "$DAEMON" ]; then
             echo "Starting sgw_watchdog_guard..."
-            start-stop-daemon -S -b -m -p "$PIDFILE" -x "$DAEMON" -- \
-                --wdt-dev /dev/watchdog \
-                --timeout-s 60 --budget-ms 45000 --poll-ms 1000 --exit-on-confirm
+            start-stop-daemon -S -b -m -p "$PIDFILE" -x "$DAEMON" --                 --wdt-dev /dev/watchdog                 --timeout-s 60 --budget-ms 45000 --poll-ms 1000 --exit-on-confirm
         fi
         ;;
     stop)
