@@ -1,14 +1,14 @@
--rw-r--r-- 0/0             116 2026-11-20 15:46 ./etc/network/interfaces
-drwx------ 0/0               0 2026-11-20 15:46 ./etc/smartgateway/
--rw------- 0/0             451 2026-11-20 15:46 ./etc/smartgateway/ota-public.pem
--rw------- 0/0             690 2026-11-20 15:46 ./etc/smartgateway/r3c-policy.conf
--rw------- 0/0              15 2026-11-20 15:46 ./etc/smartgateway/system-health-network.conf
-lrwxrwxrwx 0/0               0 2026-11-20 15:46 ./opt/smartgateway/current -> /opt/smartgateway/data/app/current
--rw------- 0/0             128 2026-11-20 15:46 ./opt/smartgateway/service.conf
--rwxr-xr-x 0/0          367756 2026-11-20 15:46 ./usr/bin/sgw_bootctl
--rwxr-xr-x 0/0          364028 2026-11-20 15:46 ./usr/bin/sgw_watchdog_guard
--rwxr-xr-x 0/0           96592 2026-11-20 15:46 ./usr/bin/swupdate
-9bf2715002aaf631db60f49bf56675ab55b2f40a3f454f305234bd1ad7f103cd  build/arm-ab/sgw_bootctl
-de43817c1bc192a583103686a09c21e239d1cad071ad33fec6907bd314a50101  build/arm-ab/sgw_watchdog_guard
-e5b2d6a3d343a81123121f246727a6f28d3868c4b23a313c73b89316ee28b125  build/buildroot-g3/images/rootfs.ext4
-b2e037dbd0cd4bf863d8e7f0bd7b8820031918867999ce571f0c7f16539c3fa2  /home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/rootfs-keyv2.ext4
+-rw-r--r-- 0/0             116 2026-11-20 17:34 ./etc/network/interfaces
+drwx------ 0/0               0 2026-11-20 17:34 ./etc/smartgateway/
+-rw------- 0/0             451 2026-11-20 17:34 ./etc/smartgateway/ota-public.pem
+-rw------- 0/0             690 2026-11-20 17:34 ./etc/smartgateway/r3c-policy.conf
+-rw------- 0/0              15 2026-11-20 17:34 ./etc/smartgateway/system-health-network.conf
+lrwxrwxrwx 0/0               0 2026-11-20 17:34 ./opt/smartgateway/current -> /opt/smartgateway/data/app/current
+-rw------- 0/0             223 2026-11-20 17:34 ./opt/smartgateway/releases/0.6.0/manifest.json
+-rw------- 0/0             128 2026-11-20 17:34 ./opt/smartgateway/service.conf
+-rwxr-xr-x 0/0          367812 2026-11-20 17:34 ./usr/bin/sgw_bootctl
+-rwxr-xr-x 0/0          364084 2026-11-20 17:34 ./usr/bin/sgw_watchdog_guard
+-rwxr-xr-x 0/0           96592 2026-11-20 17:34 ./usr/bin/swupdate
+0874b2baae4a31fe8bcde81ee1e894528d7e906f5826e507d1104e42c9564155  build/arm-ab/sgw_bootctl
+05b52d14fd2856ec9881498d286d38d1dec97250cddb379a1848c3ffb4738bdc  build/arm-ab/sgw_watchdog_guard
+09529f15bb689e280e6242dadb93bbc83698e2b093970c323d3b94eee0206f2c  build/buildroot-g3/images/rootfs.ext4

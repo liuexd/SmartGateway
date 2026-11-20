@@ -1,0 +1,223 @@
+=== Start v0.6.2 on p2 & install v2.3.4-slot1-keyv2.swu -> p1 (2026-11-20T17:33:44+08:00) ===
+Starting smartgateway
+supervisor already running
+gateway started
+smartgateway started
+P2_RUNNING_V062_PID=696
+lrwxrwxrwx    1 root     root             0 Jan  1 03:24 [1;36m/proc/696/exe[m -> [1;32m/opt/smartgateway/data/app/releases/v0.6.2/smart_gateway[m
+65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3  /proc/696/exe
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=696
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+f60c762fca23d9acca070e934a8c14cf8b7df5e0f63467d88192de3fd55bfc67  /home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.4-slot1-keyv2.swu
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.4-slot1-keyv2.swu: 1 file pushed, 0 skipped. 4.0 MB/s (139113472 bytes in 32.927s)
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1472
+	checksum 0x1899e VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x8147 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.4BK5LK/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1472 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.4BK5LK/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.3.4-g4-keyv2[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 318
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.4BK5LK/t/scripts/sgw-swu-apply.sh preinst 1 imx6ull-100ask 2.3.4-g4-keyv2: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+STAGED tx=1b6b73114215ad8848f0e2d9a3e3f6015615090cd2c61a2898e5b7a31e634386 target=1 last_good=2
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.4BK5LK/t/scripts/sgw-swu-apply.sh postinst 1 imx6ull-100ask 2.3.4-g4-keyv2: return with 0[0m
+Software updated successfully
+Please reboot the device to start the new software
+[01;32m[INFO ] : SWUPDATE successful ! [0m
+V234_APPLY_RC=0
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=2
+sgw_pending_slot=1
+sgw_ab_state=trial
+bootlimit=3
+bootcount=0
+upgrade_available=1
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+=== Final Verification on p1: confirmed system + v0.6.2 app persistence + ota_agent status/verify (2026-11-20T17:35:30+08:00) ===
+=== Final Verification on p1: confirmed system + v0.6.2 app persistence + ota_agent status/verify (2026-11-20T17:36:37+08:00) ===
+console=ttymxc0,115200 root=/dev/mmcblk1p1 rootwait rw panic=5
+---STATUS---
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+---UPTIME---
+68.84 42.97
+d6252472-0a19-4fd0-af85-51f67fccef8b
+--- confirmed txn (1b6b73114215ad8848f0e2d9a3e3f6015615090cd2c61a2898e5b7a31e634386) ---
+SGW-TXN-1
+state=CONFIRMED
+id=1b6b73114215ad8848f0e2d9a3e3f6015615090cd2c61a2898e5b7a31e634386
+package=c3b6638d2975b7dd1d45790f31d915180afae15400dcfcf6e8fe7225163fa304
+image=09529f15bb689e280e6242dadb93bbc83698e2b093970c323d3b94eee0206f2c
+target=1
+last_good=2
+rootfs_manifest=ff4e7087e791ff9729fb4b4790d7dd0ddcc1a97e93f274cea13db56ee5753eb9
+written_size=134217728
+consumed=1
+boot_id=d6252472-0a19-4fd0-af85-51f67fccef8b
+bootcount=1
+--- ota_agent status & verify on p1 ---
+State     : CONFIRMED
+Confirmed : 0.6.2
+Candidate : 0.6.2
+Current   : releases/v0.6.2
+Release   : CONFIRMED_TARGET
+P1_OTA_STATUS_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+P1_OTA_VERIFY_RC=0
+{
+  "schema_version":1,
+  "state":"CONFIRMED",
+  "confirmed_version":"0.6.2",
+  "candidate_version":"0.6.2"
+}
+/opt/smartgateway/data/app/releases/v0.6.2
+lrwxrwxrwx    1 root     root            21 Jan  1 03:25 [1;36m/opt/smartgateway/data/app/run[m -> [1;34m/opt/smartgateway/run[m
+--- running gateway binary SHA-256 on p1 (must equal v0.6.2 65e38dd0...) ---
+P1_RUNNING_V062_PID=597
+lrwxrwxrwx    1 root     root             0 Jan  1 03:26 [1;36m/proc/597/exe[m -> [1;32m/opt/smartgateway/data/app/releases/v0.6.2/smart_gateway[m
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /opt/smartgateway/releases/0.6.0/smart_gateway
+65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3  /opt/smartgateway/data/app/releases/v0.6.2/smart_gateway
+65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3  /proc/597/exe
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=597
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+--- 15-file manifest live verification on p1 ---
+OK /sbin/init 43e10f536152f46b75203cf3409b9e491cad97ccc272019805af0c4004cb3004
+OK /etc/inittab 996e59322e4b58fcc44e0d9c756cc79335221058377f063eb2b4cce6c6c6329b
+OK /etc/fstab 2f27c6f7a931bf23d11efce355c3ff993aaebe16ff95f3c41266658baf5b25ca
+OK /etc/fw_env.config 1c01595b11ebbaebbff45a945ce1550a1a001cc8eeb27b3f8d1bc419578fd2c1
+OK /sbin/fw_printenv 2146bb2b82c8c07a675ab4813bc4c8ebe5fdad67207066320d8a9ad0abc64ea0
+OK /usr/bin/sgw_bootctl 0874b2baae4a31fe8bcde81ee1e894528d7e906f5826e507d1104e42c9564155
+OK /usr/bin/sgw_watchdog_guard 05b52d14fd2856ec9881498d286d38d1dec97250cddb379a1848c3ffb4738bdc
+OK /usr/bin/service_supervisor a2d23278b2d99558d644090d253e64f66587a8f0e4db1cd8d3152da58484f133
+OK /usr/bin/smart_gateway 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+OK /usr/bin/ota_agent 0e9bc7d7f73c91ffc06fca1022959413f110a61144846b0b8008fe9dea16d21d
+OK /etc/init.d/S15sgw_ab_guard d8443ac001d26b77cad2370b40e9b460d9bcc517ab0a89764e53b524246e39b4
+OK /etc/init.d/S99smartgateway c1f96d3b611d1eece032c64551e82df553e7e6d6a97e51bca795318c70acab9d
+OK /boot/zImage b3ac2cb10e3d9940222b99b6f276786d4207ef451dc5331e1ca5bc1721cde0fb
+OK /boot/100ask_imx6ull-14x14.dtb 348f96f323376fe4587231a4bd78ac8888df1075cab8c9dba33d55fb6e6aa4cb
+OK /lib/libc.so.6 0c54f2e75c29e2309ff72a723cbfcb16224959ace713916896acfe4969c5b305
+MANIFEST_SUMMARY ok=15 bad=0

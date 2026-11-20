@@ -1,0 +1,469 @@
+=== Step A: Install SmartGateway-g4-v2.3.3-slot2-keyv2.swu onto p2 (2026-11-20T17:30:07+08:00) ===
+f6040739141542b64b83a6392582c309b36384f4c780451e5791d89f11bd5f0d  /home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.3-slot2-keyv2.swu
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.3-slot2-keyv2.swu: 1 file pushed, 0 skipped. 4.1 MB/s (139113472 bytes in 32.357s)
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1472
+	checksum 0x18846 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x8596 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.fQgy4u/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1472 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.fQgy4u/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.3.3-g4-keyv2[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 318
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.fQgy4u/t/scripts/sgw-swu-apply.sh preinst 2 imx6ull-100ask 2.3.3-g4-keyv2: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+STAGED tx=8be685c60fe46d7dc9aefdc0e6e103369c75d39b6eb451730cdeffd9cb4cefbf target=2 last_good=1
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.fQgy4u/t/scripts/sgw-swu-apply.sh postinst 2 imx6ull-100ask 2.3.3-g4-keyv2: return with 0[0m
+Software updated successfully
+Please reboot the device to start the new software
+[01;32m[INFO ] : SWUPDATE successful ! [0m
+V233_APPLY_RC=0
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=1
+sgw_pending_slot=2
+sgw_ab_state=trial
+bootlimit=3
+bootcount=0
+upgrade_available=1
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+=== Step B: Verify p2 confirmed & run official ota_agent upgrade-test v0.6.0 -> v0.6.2 (2026-11-20T17:31:46+08:00) ===
+console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw panic=5
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=1
+sgw_pending_slot=2
+sgw_ab_state=trial
+bootlimit=3
+bootcount=1
+upgrade_available=1
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+--- pre-upgrade app state, ota_agent status & verify baseline ---
+/opt/smartgateway/data/app:
+total 5
+drwx------    5 root     root          1024 Jan  1 03:21 [1;34m.[m
+drwx------    5 root     root          1024 Jan  1 03:22 [1;34m..[m
+-rw-------    1 root     root             0 Jan  1 03:21 [0;0m.ota.lock[m
+lrwxrwxrwx    1 root     root            15 Jan  1 03:21 [1;36mcurrent[m -> [1;34mreleases/v0.6.0[m
+drwx------    2 root     root          1024 Jan  1 03:21 [1;34mpackages[m
+drwx------    3 root     root          1024 Jan  1 03:21 [1;34mreleases[m
+lrwxrwxrwx    1 root     root            21 Jan  1 03:21 [1;36mrun[m -> [1;34m/opt/smartgateway/run[m
+drwx------    2 root     root          1024 Jan  1 03:21 [1;34mstate[m
+
+/opt/smartgateway/data/app/releases/v0.6.0:
+total 233
+drwx------    2 root     root          1024 Jan  1 03:21 [1;34m.[m
+drwx------    3 root     root          1024 Jan  1 03:21 [1;34m..[m
+-rw-------    1 root     root           224 Jan  1 03:21 [0;0mmanifest.json[m
+-rwx------    1 root     root        234984 Jan  1 03:21 [1;32msmart_gateway[m
+State     : CONFIRMED
+Confirmed : v0.6.0
+Candidate : v0.6.0
+Current   : releases/v0.6.0
+Release   : CONFIRMED_TARGET
+OTA_STATUS_BEFORE_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : v0.6.0
+Size        : 234984 bytes
+SHA-256     : 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+OTA_VERIFY_BASE_RC=0
+--- push v0.6.2 app package to /opt/smartgateway/data/app/packages/v0.6.2 ---
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/app-pkg-v0.6.2/smart_gateway: 1 file pushed, 0 skipped. 367.1 MB/s (66360 bytes in 0.000s)
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/app-pkg-v0.6.2/manifest.json: 1 file pushed, 0 skipped. 1.3 MB/s (223 bytes in 0.000s)
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : v0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+OTA_VERIFY_PKG_RC=0
+--- run official ota_agent upgrade-test ---
+FAIL: another OTA operation is already in progress
+      another process holds .ota.lock in /opt/smartgateway/data/app
+      wait for it to finish, then retry
+OTA_UPGRADE_RC=1
+--- post-upgrade verification on p2 ---
+State     : CONFIRMED
+Confirmed : v0.6.0
+Candidate : v0.6.0
+Current   : releases/v0.6.0
+Release   : CONFIRMED_TARGET
+OTA_STATUS_AFTER_RC=0
+FAIL: invalid manifest JSON
+OTA_VERIFY_AFTER_RC=1
+{"schema_version":1,"state":"CONFIRMED","confirmed_version":"v0.6.0","candidate_version":"v0.6.0"}
+/opt/smartgateway/data/app/releases/v0.6.0
+P2_UPGRADED_GATEWAY_PID=487
+lrwxrwxrwx    1 root     root             0 Jan  1 03:22 [1;36m/proc/487/exe[m -> [1;32m/opt/smartgateway/data/app/releases/v0.6.0/smart_gateway[m
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /opt/smartgateway/releases/0.6.0/smart_gateway
+sha256sum: can't open '/opt/smartgateway/data/app/releases/v0.6.2/smart_gateway': No such file or directory
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /proc/487/exe
+root_identity=HEALTHY
+trial_observed=yes
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=487
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+=== Step C: Verify p2 confirmed (lock released) & run official ota_agent upgrade-test v0.6.0 -> v0.6.2 (2026-11-20T17:31:59+08:00) ===
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=2
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=4
+sgw_last_error=none
+update=yes
+recovery_status=
+FAIL: confirmed/current mismatch
+FAIL: upgrade precheck failed
+      upgrade aborted before stopping the gateway
+OTA_UPGRADE_RC=1
+--- post-upgrade verification on p2 ---
+State     : CONFIRMED
+Confirmed : v0.6.0
+Candidate : v0.6.0
+Current   : releases/v0.6.0
+Release   : CONFIRMED_TARGET
+OTA_STATUS_AFTER_RC=0
+FAIL: invalid manifest JSON
+OTA_VERIFY_AFTER_RC=1
+{"schema_version":1,"state":"CONFIRMED","confirmed_version":"v0.6.0","candidate_version":"v0.6.0"}
+/opt/smartgateway/data/app/releases/v0.6.0
+P2_UPGRADED_GATEWAY_PID=487
+lrwxrwxrwx    1 root     root             0 Jan  1 03:22 [1;36m/proc/487/exe[m -> [1;32m/opt/smartgateway/data/app/releases/v0.6.0/smart_gateway[m
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /opt/smartgateway/releases/0.6.0/smart_gateway
+sha256sum: can't open '/opt/smartgateway/data/app/releases/v0.6.2/smart_gateway': No such file or directory
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /proc/487/exe
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=487
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+=== Step D: Fix confirmed_version=0.6.0 on board & run official ota_agent upgrade-test 0.6.0 -> 0.6.2 (2026-11-20T17:32:45+08:00) ===
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/app-pkg-v0.6.2/manifest.json: 1 file pushed, 0 skipped. 1.9 MB/s (222 bytes in 0.000s)
+State     : CONFIRMED
+Confirmed : 0.6.0
+Candidate : 0.6.0
+Current   : releases/v0.6.0
+Release   : CONFIRMED_TARGET
+OTA_STATUS_BEFORE_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : v0.6.0
+Size        : 234984 bytes
+SHA-256     : 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+OTA_VERIFY_BASE_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+OTA_VERIFY_PKG_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : v0.6.0
+Size        : 234984 bytes
+SHA-256     : 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+FAIL: confirmed release invalid
+FAIL: upgrade precheck failed
+      upgrade aborted before stopping the gateway
+OTA_UPGRADE_RC=1
+--- post-upgrade verification on p2 ---
+State     : CONFIRMED
+Confirmed : 0.6.0
+Candidate : 0.6.0
+Current   : releases/v0.6.0
+Release   : CONFIRMED_TARGET
+OTA_STATUS_AFTER_RC=0
+FAIL: invalid manifest JSON
+OTA_VERIFY_AFTER_RC=1
+{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}
+/opt/smartgateway/data/app/releases/v0.6.0
+P2_UPGRADED_GATEWAY_PID=487
+lrwxrwxrwx    1 root     root             0 Jan  1 03:22 [1;36m/proc/487/exe[m -> [1;32m/opt/smartgateway/data/app/releases/v0.6.0/smart_gateway[m
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /opt/smartgateway/releases/0.6.0/smart_gateway
+sha256sum: can't open '/opt/smartgateway/data/app/releases/v0.6.2/smart_gateway': No such file or directory
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /proc/487/exe
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=487
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+=== Step E: Update v0.6.0 manifest version=0.6.0 on board & run ota_agent upgrade-test (2026-11-20T17:32:59+08:00) ===
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.0
+Size        : 234984 bytes
+SHA-256     : 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+FAIL: invalid manifest JSON
+FAIL: installed candidate mismatch
+FAIL: upgrade precheck failed
+      upgrade aborted before stopping the gateway
+OTA_UPGRADE_RC=1
+--- post-upgrade verification on p2 ---
+State     : CONFIRMED
+Confirmed : 0.6.0
+Candidate : 0.6.0
+Current   : releases/v0.6.0
+Release   : CONFIRMED_TARGET
+OTA_STATUS_AFTER_RC=0
+FAIL: invalid manifest JSON
+OTA_VERIFY_AFTER_RC=1
+{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}
+/opt/smartgateway/data/app/releases/v0.6.0
+P2_UPGRADED_GATEWAY_PID=487
+lrwxrwxrwx    1 root     root             0 Jan  1 03:22 [1;36m/proc/487/exe[m -> [1;32m/opt/smartgateway/data/app/releases/v0.6.0/smart_gateway[m
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /opt/smartgateway/releases/0.6.0/smart_gateway
+sha256sum: can't open '/opt/smartgateway/data/app/releases/v0.6.2/smart_gateway': No such file or directory
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /proc/487/exe
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=487
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+=== Step F: Run official ota_agent stage + upgrade-test 0.6.0 -> 0.6.2 on p2 (2026-11-20T17:33:23+08:00) ===
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: release installed: releases/v0.6.2
+OTA_STAGE_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.0
+Size        : 234984 bytes
+SHA-256     : 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: preflight checks done; safe to stop the gateway
+Gateway before upgrade: RUNNING
+WARN: stale temp cleanup failed (Not a directory)
+Pre-upgrade gateway state: RUNNING
+NOTICE: stopping running gateway (pid=487)
+PASS: gateway stopped
+Mock upstream port: 34739
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.0
+Size        : 234984 bytes
+SHA-256     : 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: candidate activated: 0.6.2
+NOTICE: health check not performed; not confirmed
+Gateway started: pid=666
+PASS: L1 TCP ready
+PROBE: southbound DATA seq=725046225
+PASS: southbound DATA accepted
+PASS: L2 probe forwarded, seq=725046225
+PASS: L2 business health
+PASS: Gateway stopped
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+PASS: confirmed version is active
+PASS: OTA upgrade CONFIRMED: 0.6.2
+OTA_UPGRADE_RC=0
+--- post-upgrade verification on p2 ---
+State     : CONFIRMED
+Confirmed : 0.6.2
+Candidate : 0.6.2
+Current   : releases/v0.6.2
+Release   : CONFIRMED_TARGET
+OTA_STATUS_AFTER_RC=0
+PASS: OTA package verification successful
+Application : smart_gateway
+Version     : 0.6.2
+Size        : 66360 bytes
+SHA-256     : 65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3
+OTA_VERIFY_AFTER_RC=0
+{
+  "schema_version":1,
+  "state":"CONFIRMED",
+  "confirmed_version":"0.6.2",
+  "candidate_version":"0.6.2"
+}
+/opt/smartgateway/data/app/releases/v0.6.2
+P2_UPGRADED_GATEWAY_PID=
+ls: /proc//exe: No such file or directory
+0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d  /opt/smartgateway/releases/0.6.0/smart_gateway
+65e38dd0e5012f40e54369be7446ad4c211e75108ad47be334f6da337e9449b3  /opt/smartgateway/data/app/releases/v0.6.2/smart_gateway
+sha256sum: can't open '/proc//exe': No such file or directory
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=UNKNOWN
+gateway_components=UNKNOWN
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED

@@ -222,6 +222,12 @@ if [ -x "$REPO_DIR/build/arm-d25/ota_agent" ]; then
 fi
 if [ -x "$REPO_DIR/build/arm-d25/smart_gateway" ]; then
     install -m 0700 "$REPO_DIR/build/arm-d25/smart_gateway" "$TARGET_DIR/opt/smartgateway/releases/0.6.0/smart_gateway"
+    gw_size=$(wc -c < "$TARGET_DIR/opt/smartgateway/releases/0.6.0/smart_gateway" | tr -d ' ')
+    gw_sha=$(sha256sum "$TARGET_DIR/opt/smartgateway/releases/0.6.0/smart_gateway" | awk '{print $1}')
+    cat > "$TARGET_DIR/opt/smartgateway/releases/0.6.0/manifest.json" <<MFEOF
+{"format_version":1,"application":"smart_gateway","version":"0.6.0","architecture":"armv7-linux-gnueabihf","binary":"smart_gateway","size":${gw_size},"sha256":"${gw_sha}"}
+MFEOF
+    chmod 600 "$TARGET_DIR/opt/smartgateway/releases/0.6.0/manifest.json"
 fi
 ln -sfn /opt/smartgateway/data/app/current "$TARGET_DIR/opt/smartgateway/current"
 

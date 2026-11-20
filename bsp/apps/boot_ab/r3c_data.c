@@ -394,16 +394,28 @@ int r3c_app_ota_inspect_locked(const char *path, uid_t owner, int *lockfd,
         (present && (!ota_oplog_phase_is_terminal(oplog.phase) ||
                      unique_json_keys(dir, "last_operation.json", oplog_keys, 4) != 0 ||
                      strict_oplog(dir, &oplog) != 0))) goto invalid;
+    char rel_name[128];
     len = readlinkat(dir, "current", current, sizeof(current) - 1);
     n = snprintf(expected, sizeof(expected), "releases/%s", state.confirmed_version);
     if (len < 0 || (size_t)len >= sizeof(current)-1 ||
         n < 0 || (size_t)n >= sizeof(expected)) goto invalid;
     current[len] = '\0';
-    if (strcmp(current, expected) != 0) goto invalid;
+    snprintf(rel_name, sizeof(rel_name), "%s", state.confirmed_version);
+    if (strcmp(current, expected) != 0) {
+        if (state.confirmed_version[0] != 'v') {
+            n = snprintf(expected, sizeof(expected), "releases/v%s", state.confirmed_version);
+            if (n < 0 || (size_t)n >= sizeof(expected) || strcmp(current, expected) != 0)
+                goto invalid;
+            n = snprintf(rel_name, sizeof(rel_name), "v%s", state.confirmed_version);
+            if (n < 0 || (size_t)n >= sizeof(rel_name)) goto invalid;
+        } else {
+            goto invalid;
+        }
+    }
     releases = openat(dir, "releases", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-    if (releases < 0 || secure_node(releases, state.confirmed_version, owner, 1) != 0)
+    if (releases < 0 || secure_node(releases, rel_name, owner, 1) != 0)
         goto invalid;
-    release = openat(releases, state.confirmed_version,
+    release = openat(releases, rel_name,
                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (release < 0 || secure_node(release, "smart_gateway", owner, 0) != 0)
         goto invalid;

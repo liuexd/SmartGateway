@@ -19,8 +19,8 @@ gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -DSGW_BOOTCTL_ISOLATED_SIM -I. -I../
 /home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/bin/arm-buildroot-linux-gnueabihf-gcc -std=gnu11 -O0 -g -Wall -Wextra -Werror -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=neon-vfpv4 -marm --sysroot=/home/ubuntu/Desktop/ToolChain/arm-buildroot-linux-gnueabihf_sdk-buildroot/arm-buildroot-linux-gnueabihf/sysroot \
 	-I. -I../../../common sgw_system_health.c health_devices.c health_network.c health_gateway.c health_supervisor.c system_health.c ab_state.c ab_health.c fw_env_backend.c ../../../common/service_ipc.c \
 	-o ../../../build/arm-ab/sgw_system_health
--rwxrwxr-x 1 ubuntu ubuntu 360K Nov 20 15:45 ../../../build/arm-ab/sgw_bootctl
--rwxrwxr-x 1 ubuntu ubuntu 356K Nov 20 15:45 ../../../build/arm-ab/sgw_watchdog_guard
+-rwxrwxr-x 1 ubuntu ubuntu 360K Nov 20 17:23 ../../../build/arm-ab/sgw_bootctl
+-rwxrwxr-x 1 ubuntu ubuntu 356K Nov 20 17:23 ../../../build/arm-ab/sgw_watchdog_guard
 == sgw_bootctl ==
   Class:                             ELF32
   Type:                              EXEC (Executable file)
@@ -73,7 +73,7 @@ test_settled_confirmed_and_rolled_back (tests.test_g2r3c_data.DataTests.test_set
 test_snapshot_lock_can_be_held_through_decision (tests.test_g2r3c_data.DataTests.test_snapshot_lock_can_be_held_through_decision) ... ok
 
 ----------------------------------------------------------------------
-Ran 7 tests in 0.096s
+Ran 7 tests in 0.073s
 
 OK
 test_lock_contention_and_readonly_destination_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_lock_contention_and_readonly_destination_rejected) ... ok
@@ -84,7 +84,7 @@ test_tamper_image_manifest_and_signature_rejected (tests.test_g2r3c_signed_bundl
 test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 6 tests in 0.579s
+Ran 6 tests in 0.538s
 
 OK
 make: Leaving directory '/home/ubuntu/Desktop/project/SmartGateway-BSP/bsp/apps/boot_ab'

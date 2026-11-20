@@ -190,3 +190,131 @@ Registered handlers:
 	size 134217728
 	REQUIRED
 successfully checked '/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.2-slot1-keyv2.swu'
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1472
+	checksum 0x18846 VERIFIED
+[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x8596 VERIFIED
+[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1472 bytes
+[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK
+[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.3.3-g4-keyv2
+[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update
+[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh
+[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA
+[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 318
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED
+successfully checked '/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.3-slot2-keyv2.swu'
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1472
+	checksum 0x189a0 VERIFIED
+[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x81fd VERIFIED
+[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1472 bytes
+[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK
+[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.3.4-g4-keyv2
+[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update
+[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)
+[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh
+[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA
+[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 318
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED
+[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED
+successfully checked '/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.3.4-slot1-keyv2.swu'

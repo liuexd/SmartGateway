@@ -100,7 +100,7 @@ Writing superblocks and filesystem accounting information:  0/16     d
 mke2fs 1.45.6 (20-Mar-2020)
 Discarding device blocks:  1024/16384           done                            
 Creating filesystem with 16384 1k blocks and 4096 inodes
-Filesystem UUID: b8199915-bf39-4e43-88d3-37ed037fe10a
+Filesystem UUID: f0cbe80e-c01d-401a-b61e-b7ae2b55fc54
 Superblock backups stored on blocks: 
 	8193
 
@@ -132,8 +132,8 @@ table='/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/bu
 {
   "ext4_image_bytes": 134217728,
   "tar_archive_bytes": 34754560,
-  "payload_files_bytes": 32609885,
-  "tar_entry_count": 1305,
+  "payload_files_bytes": 32611397,
+  "tar_entry_count": 1306,
   "trimmed_defconfig_package_count": 35,
   "baseline_core_defconfig_package_count": 136,
   "trimmed_br2_package_count": 154,
@@ -181,7 +181,7 @@ table='/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/bu
     "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_SAP",
     "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_SIXAXIS"
   ],
-  "build_seconds": 18,
+  "build_seconds": 19,
   "required_files_verified": [
     "boot/zImage",
     "boot/100ask_imx6ull-14x14.dtb",

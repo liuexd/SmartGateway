@@ -1,27 +1,39 @@
 #!/bin/sh
 # Early boot trial guard for Buildroot SysV init (/etc/init.d/S15sgw_ab_guard).
 # Also idempotently seeds shared DATA (/opt/smartgateway/data/app) from the rootfs
-# baseline binary only when uninitialized so app OTA releases persist across A/B switches.
+# baseline binary + manifest.json only when uninitialized, and links data/app/run -> /opt/smartgateway/run
+# so ota_agent communicates with service_supervisor across A/B system slot switches.
 
 DAEMON=/usr/bin/sgw_watchdog_guard
 PIDFILE=/var/run/sgw_watchdog_guard.pid
 
 seed_app_ota_on_data() {
     grep -qs ' /opt/smartgateway/data ' /proc/mounts || return 0
-    [ -f /opt/smartgateway/data/app/state/ota_state.json ] && return 0
-    [ -x /opt/smartgateway/releases/0.6.0/smart_gateway ] || return 0
-    mkdir -p /opt/smartgateway/data/app/releases/0.6.0              /opt/smartgateway/data/app/state              /opt/smartgateway/data/app/packages
-    chmod 0700 /opt/smartgateway/data/app                /opt/smartgateway/data/app/releases                /opt/smartgateway/data/app/releases/0.6.0                /opt/smartgateway/data/app/state                /opt/smartgateway/data/app/packages
-    cp -f /opt/smartgateway/releases/0.6.0/smart_gateway           /opt/smartgateway/data/app/releases/0.6.0/smart_gateway
-    chmod 0700 /opt/smartgateway/data/app/releases/0.6.0/smart_gateway
-    ln -sfn releases/0.6.0 /opt/smartgateway/data/app/current
-    if [ ! -f /opt/smartgateway/data/app/.ota.lock ]; then
-        : > /opt/smartgateway/data/app/.ota.lock
-        chmod 0600 /opt/smartgateway/data/app/.ota.lock
+    if [ ! -f /opt/smartgateway/data/app/state/ota_state.json ] && [ -x /opt/smartgateway/releases/0.6.0/smart_gateway ]; then
+        mkdir -p /opt/smartgateway/data/app/releases/v0.6.0                  /opt/smartgateway/data/app/state                  /opt/smartgateway/data/app/packages
+        chmod 0700 /opt/smartgateway/data/app                    /opt/smartgateway/data/app/releases                    /opt/smartgateway/data/app/releases/v0.6.0                    /opt/smartgateway/data/app/state                    /opt/smartgateway/data/app/packages
+        cp -f /opt/smartgateway/releases/0.6.0/smart_gateway               /opt/smartgateway/data/app/releases/v0.6.0/smart_gateway
+        chmod 0700 /opt/smartgateway/data/app/releases/v0.6.0/smart_gateway
+        if [ -f /opt/smartgateway/releases/0.6.0/manifest.json ]; then
+            cp -f /opt/smartgateway/releases/0.6.0/manifest.json                   /opt/smartgateway/data/app/releases/v0.6.0/manifest.json
+        else
+            gw_size=$(wc -c < /opt/smartgateway/data/app/releases/v0.6.0/smart_gateway | tr -d ' ')
+            gw_sha=$(sha256sum /opt/smartgateway/data/app/releases/v0.6.0/smart_gateway | awk '{print $1}')
+            printf '{"format_version":1,"application":"smart_gateway","version":"0.6.0","architecture":"armv7-linux-gnueabihf","binary":"smart_gateway","size":%s,"sha256":"%s"}\n'                 "$gw_size" "$gw_sha" > /opt/smartgateway/data/app/releases/v0.6.0/manifest.json
+        fi
+        chmod 0600 /opt/smartgateway/data/app/releases/v0.6.0/manifest.json
+        ln -sfn releases/v0.6.0 /opt/smartgateway/data/app/current
+        if [ ! -f /opt/smartgateway/data/app/.ota.lock ]; then
+            : > /opt/smartgateway/data/app/.ota.lock
+            chmod 0600 /opt/smartgateway/data/app/.ota.lock
+        fi
+        printf '{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}\n'             > /opt/smartgateway/data/app/state/ota_state.json
+        chmod 0600 /opt/smartgateway/data/app/state/ota_state.json
+        sync
     fi
-    printf '{"schema_version":1,"state":"CONFIRMED","confirmed_version":"0.6.0","candidate_version":"0.6.0"}\n'         > /opt/smartgateway/data/app/state/ota_state.json
-    chmod 0600 /opt/smartgateway/data/app/state/ota_state.json
-    sync
+    if [ -d /opt/smartgateway/data/app ] && [ ! -d /opt/smartgateway/data/app/run -o -L /opt/smartgateway/data/app/run ]; then
+        ln -sfn /opt/smartgateway/run /opt/smartgateway/data/app/run
+    fi
 }
 
 case "$1" in
