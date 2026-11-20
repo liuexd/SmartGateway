@@ -228,6 +228,24 @@ ln -sfn releases/0.6.0 "$TARGET_DIR/opt/smartgateway/current"
 install -d -m 0700 "$TARGET_DIR/etc/smartgateway"
 printf "interface=eth0\n" > "$TARGET_DIR/etc/smartgateway/system-health-network.conf"
 chmod 600 "$TARGET_DIR/etc/smartgateway/system-health-network.conf"
+if [ -n "${SGW_OTA_PUBKEY_FILE:-}" ] && [ -f "$SGW_OTA_PUBKEY_FILE" ]; then
+    install -m 0600 "$SGW_OTA_PUBKEY_FILE" "$TARGET_DIR/etc/smartgateway/ota-public.pem"
+fi
+if [ -n "${SGW_R3C_POLICY_FILE:-}" ] && [ -f "$SGW_R3C_POLICY_FILE" ]; then
+    install -m 0600 "$SGW_R3C_POLICY_FILE" "$TARGET_DIR/etc/smartgateway/r3c-policy.conf"
+fi
+if [ -n "${SGW_ETH0_STATIC_IP:-}" ]; then
+    cat > "$TARGET_DIR/etc/network/interfaces" <<IFEOF
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address ${SGW_ETH0_STATIC_IP}
+    netmask ${SGW_ETH0_NETMASK:-255.255.255.0}
+IFEOF
+    chmod 644 "$TARGET_DIR/etc/network/interfaces"
+fi
 
 # 7. Install trimmed G3 Kernel, DTB, and kernel modules (plus external SmartGateway BSP .ko)
 if [ -f "$K3_OUT/zImage" ] && [ -f "$K3_OUT/100ask_imx6ull-14x14.dtb" ]; then

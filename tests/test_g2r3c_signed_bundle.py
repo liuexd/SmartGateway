@@ -129,6 +129,42 @@ class SignedBundleTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "rejected")
         self.assertEqual(self.records(), [])
 
+    def test_settled_confirmed_record_allows_next_upgrade_while_unsettled_rejected(self):
+        settled_id = "1" * 64
+        settled_txn = self.tx / f"txn-{settled_id}"
+        settled_mf = self.tx / f"txn-{settled_id}.manifest"
+        settled_txn.write_text(
+            f"SGW-TXN-1\nstate=CONFIRMED\nid={settled_id}\nconsumed=1\n",
+            encoding="utf-8",
+        )
+        settled_mf.write_text("/sbin/init " + ("a" * 64) + "\n", encoding="utf-8")
+        settled_txn.chmod(0o600)
+        settled_mf.chmod(0o600)
+
+        res = self.call()
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        new_id = res.stdout.strip()
+        self.assertRegex(new_id, r"^[0-9a-f]{64}$")
+        self.assertNotEqual(new_id, settled_id)
+        self.assertTrue((self.tx / f"txn-{new_id}").is_file())
+        self.assertIn("state=CONFIRMED", settled_txn.read_text(encoding="utf-8"))
+
+        # Must still reject unsettled/orphan/stray files
+        bad_cases = [
+            ("confirmed_unconsumed", f"txn-{settled_id}", f"SGW-TXN-1\nstate=CONFIRMED\nid={settled_id}\nconsumed=0\n"),
+            ("pending_unconsumed", f"txn-{settled_id}", f"SGW-TXN-1\nstate=PENDING\nid={settled_id}\nconsumed=0\n"),
+            ("orphan_manifest", f"txn-{settled_id}.manifest", "/sbin/init " + ("a" * 64) + "\n"),
+            ("stray_file", "rogue.txt", "unexpected\n"),
+        ]
+        for tag, fname, content in bad_cases:
+            bad_tx = self.tx.parent / f"bad-{tag}"
+            bad_tx.mkdir(mode=0o700)
+            fpath = bad_tx / fname
+            fpath.write_text(content, encoding="utf-8")
+            fpath.chmod(0o600)
+            bad_res = self.call(tx=bad_tx)
+            self.assertNotEqual(bad_res.returncode, 0, f"expected rejection for {tag}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

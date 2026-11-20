@@ -1,0 +1,11 @@
+test_kernel_baseline_vs_trimmed_metrics_and_constraints (tests.test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_kernel_baseline_vs_trimmed_metrics_and_constraints) ... ok
+test_rootfs_trimmed_image_contents_and_bounds (tests.test_g3_kernel_rootfs.TestG3KernelAndRootfs.test_rootfs_trimmed_image_contents_and_bounds) ... ok
+test_signed_manifest_matches_real_g3_image (tests.test_review4_g3_bundle.G3BundleTest.test_signed_manifest_matches_real_g3_image) ... ok
+test_foreign_mount_namespace_conflict_rejected_and_vanished_pid_tolerated (tests.test_review4_topology.TopologyTests.test_foreign_mount_namespace_conflict_rejected_and_vanished_pid_tolerated) ... ok
+test_production_confirm_fails_closed_even_with_root_identity (tests.test_review4_topology.TopologyTests.test_production_confirm_fails_closed_even_with_root_identity) ... ok
+test_whole_disk_and_partition_reject_mapped_or_unknown_relations (tests.test_review4_topology.TopologyTests.test_whole_disk_and_partition_reject_mapped_or_unknown_relations) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.016s
+
+OK

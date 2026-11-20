@@ -1,0 +1,248 @@
+protect_slot2=1
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+=== N1: Untrusted signature ===
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1462
+	checksum 0x184c1 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x8157 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.N3hAW2/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1462 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;31m[ERROR] : SWUPDATE failed [0] ERROR corelib/swupdate_rsa_verify.c : verify_final : 99 : EVP_DigestVerifyFinal failed, error 0x407008a 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.N3hAW2/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Error Verifying Data[0m
+[01;31m[ERROR] : SWUPDATE failed [0] ERROR core/swupdate.c : install_from_file : 334 : failed to parse sw-description![0m
+N1_RC=1
+=== N2: Wrong target slot 1 (running slot 1) ===
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1460
+	checksum 0x183c8 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x77c8 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.G0sSXz/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1460 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.1.1-g4[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.G0sSXz/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 226
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.G0sSXz/t/scripts/sgw-swu-apply.sh preinst 1 imx6ull-100ask 2.1.1-g4: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+APPLY REJECTED: target slot conflicts with running or last_good slot
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.G0sSXz/t/scripts/sgw-swu-apply.sh postinst 1 imx6ull-100ask 2.1.1-g4: return with 1[0m
+[01;31m[ERROR] : SWUPDATE failed [0] ERROR corelib/installer.c : install_images : 363 : execute postinstall scripts failed[0m
+Software updated failed
+N2_RC=1
+=== N3: Policy protect_slot2=1 ===
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1460
+	checksum 0x183c7 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x771a VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1460 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.urNtmI/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.1.0-g4[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.urNtmI/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 226
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.urNtmI/t/scripts/sgw-swu-apply.sh preinst 2 imx6ull-100ask 2.1.0-g4: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+APPLY REJECTED: target slot 2 is write-protected factory baseline
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.urNtmI/t/scripts/sgw-swu-apply.sh postinst 2 imx6ull-100ask 2.1.0-g4: return with 1[0m
+[01;31m[ERROR] : SWUPDATE failed [0] ERROR corelib/installer.c : install_images : 363 : execute postinstall scripts failed[0m
+Software updated failed
+N3_RC=1
+=== POST-NEGATIVE STATUS ===
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=1
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+total 5
+drwx------    2 root     root          1024 Jan  1  1970 [1;34m.[m
+drwx------    5 root     root          1024 Jan  1 00:29 [1;34m..[m
+-rw-------    1 root     root             0 Jan  1  1970 [0;0m.sgw-transaction.lock[m
+-rw-------    1 root     root           431 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936[m
+-rw-------    1 root     root          1281 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936.manifest[m

@@ -1,0 +1,205 @@
+=== Configuring Buildroot G3 Trimmed RootFS (O=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3) ===
+=== Building Buildroot G3 Trimmed RootFS (offline dl cache + external SDK) ===
+/usr/bin/make -j1 O=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3 HOSTCC="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host-gcc-gnu11" HOSTCXX="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host-gxx-compat" syncconfig
+make[2]: warning: -j1 forced in submake: resetting jobserver mode.
+  GEN     /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/Makefile
+>>>   Finalizing host directory
+>>>   Finalizing target directory
+grep -qsE '^/bin/bash$' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells || echo "/bin/bash" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells
+if grep -q CONFIG_ASH=y /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/busybox-1.31.1/.config; then grep -qsE '^/bin/ash$' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells || echo "/bin/ash" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells; fi
+if grep -q CONFIG_HUSH=y /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/busybox-1.31.1/.config; then grep -qsE '^/bin/hush$' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells || echo "/bin/hush" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells; fi
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc
+echo "smartgateway" > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/hostname
+/usr/bin/sed -i -e '$a \127.0.1.1\tsmartgateway' -e '/^127.0.1.1/d' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/hosts
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc
+echo "SmartGateway i.MX6ULL A/B (G3 Trimmed)" > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/issue
+/usr/bin/sed -i -e s,^root:[^:]*:,root::, /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shadow
+grep -qsE '^/bin/sh$' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells || echo "/bin/sh" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/shells
+ln -sf bash /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/bin/sh
+/usr/bin/sed -i -e '/^root:/s,[^/]*$,bash,' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/passwd
+if [ -x /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/sbin/swapon -a -x /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/sbin/swapoff ]; then /usr/bin/sed -i -e '/^#.*\/sbin\/swap/s/^#\+[[:blank:]]*//' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/inittab; else /usr/bin/sed -i -e '/^[^#].*\/sbin\/swap/s/^/#/' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/inittab; fi
+/usr/bin/sed -i -e '/# GENERIC_SERIAL$/s~^.*#~mxc0::respawn:/sbin/getty -L  ttymxc0 0 vt100 #~' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/inittab
+/usr/bin/sed -i -e '/^#.*-o remount,rw \/$/s~^#\+~~' /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/inittab
+rm -f /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/locales.nopurge
+for i in C en_US locale-archive; do echo $i >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/locales.nopurge; done
+for dir in /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/locale /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/X11/locale /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/lib/locale; do if [ ! -d $dir ]; then continue; fi; for langdir in $dir/*; do if [ -e "${langdir}" ]; then grep -qx "${langdir##*/}" /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/locales.nopurge || rm -rf $langdir; fi done; done
+if [ -d /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/X11/locale ]; then for lang in C en_US; do if [ -f /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/X11/locale/$lang/XLC_LOCALE ]; then echo "$lang/XLC_LOCALE: $lang"; fi done > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/X11/locale/locale.dir; fi
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/include /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/aclocal \
+	/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/lib/pkgconfig /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/pkgconfig \
+	/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/lib/cmake /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/cmake
+find /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/{lib,share}/ -name '*.cmake' -print0 | xargs -0 rm -f
+find /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/lib/ /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/lib/ /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/libexec/ \
+	\( -name '*.a' -o -name '*.la' \) -print0 | xargs -0 rm -f
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/zsh
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/man /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/man
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/info /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/info
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/doc /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/doc
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share/gtk-doc
+rmdir /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/share 2>/dev/null || true
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/lib/debug /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/lib/debug
+find /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target   -type f \( -perm /111 -o -name '*.so*' \) -not \( -name 'libpthread*.so*' -o -name 'ld-*.so*' -o -name '*.ko' \) -print0 | xargs -0 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin/arm-buildroot-linux-gnueabihf-strip --remove-section=.comment --remove-section=.note 2>/dev/null || true
+find /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target   \( -name 'ld-*.so*' -o -name 'libpthread*.so*' \) -print0 | xargs -0 -r /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin/arm-buildroot-linux-gnueabihf-strip --remove-section=.comment --remove-section=.note --strip-debug 2>/dev/null || true
+test -f /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/ld.so.conf && \
+	{ echo "ERROR: we shouldn't have a /etc/ld.so.conf file"; exit 1; } || true
+test -d /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc/ld.so.conf.d && \
+	{ echo "ERROR: we shouldn't have a /etc/ld.so.conf.d directory"; exit 1; } || true
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc
+( \
+	echo "NAME=Buildroot"; \
+	echo "VERSION=2020.02-g37ba456"; \
+	echo "ID=buildroot"; \
+	echo "VERSION_ID=2020.02"; \
+	echo "PRETTY_NAME=\"Buildroot 2020.02\"" \
+) >  /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr/lib/os-release
+ln -sf ../usr/lib/os-release /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/etc
+>>>   Sanitizing RPATH in target tree
+PER_PACKAGE_DIR=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/per-package /home/ubuntu/Desktop/Buildroot_2020.02.x/support/scripts/fix-rpath target
+cat /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/android-tools-4.2.2+git20130218/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/bash-5.0/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/busybox-1.31.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/bzip2-1.0.8/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/ca-certificates-20190110/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/dosfstools-4.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/e2fsprogs-1.45.6/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/eudev-3.2.9/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/gdb-8.2.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/i2c-tools-4.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/ifupdown-scripts/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/initscripts/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/iproute2-5.5.0/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/iw-5.3/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/json-c-0.13.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/kmod-26/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libbsd-0.10.0/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libconfig-1.7.2/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libcurl-7.71.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libevent-2.1.11/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libnl-3.5.0/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libopenssl-1.1.1g/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/librsync-2.2.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libzlib-1.2.11/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/mmc-utils-d40ec535b9d4e4c974e8c2fbfb422cd0348cc5e8/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/ncurses-6.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/ntp-4.2.8p15/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/openssh-8.1p1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/openssl/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/popt-1.16/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/readline-8.0/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/skeleton-init-common/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/skeleton-init-sysv/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/skeleton/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/start-stop-daemon-1.18.10/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/strace-5.4/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/swupdate-2019.11/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/sysvinit-2.96/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/toolchain-external-custom/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/toolchain-external/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/toolchain/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/uboot-tools-2020.01/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/udev/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/util-linux-2.35.1/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/wireless_tools-30.pre9/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/wpa_supplicant-2.9/.files-list.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/zlib/.files-list.txt > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/packages-file-list.txt
+cat /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-acl-2.2.53/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-attr-2.4.48/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-autoconf-2.69/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-automake-1.15.1/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-bison-3.4.2/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-cmake-3.15.5/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-e2fsprogs-1.45.6/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-expat-2.2.9/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-fakeroot-1.20.2/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-flex-2.6.4/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-gettext-tiny-adaa9c64921e80f2b8dd3610ffb508618b9204f3/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-gettext/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-gperf-3.1/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-libopenssl-1.1.1g/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-libtool-2.4.6/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-libzlib-1.2.11/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-m4-1.4.18/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-makedevs/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-mkpasswd/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-ncurses-6.1/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-openssl/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-patchelf-0.9/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-pkgconf-1.6.1/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-python-2.7.18/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-skeleton/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-tar-1.29/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-util-linux-2.35.1/.files-list-host.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/host-zlib/.files-list-host.txt > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/packages-file-list-host.txt
+cat /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/bzip2-1.0.8/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/e2fsprogs-1.45.6/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/eudev-3.2.9/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/i2c-tools-4.1/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/json-c-0.13.1/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/kmod-26/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libbsd-0.10.0/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libconfig-1.7.2/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libcurl-7.71.1/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libevent-2.1.11/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libnl-3.5.0/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libopenssl-1.1.1g/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/librsync-2.2.1/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/libzlib-1.2.11/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/ncurses-6.1/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/popt-1.16/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/readline-8.0/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/skeleton-init-common/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/toolchain-external-custom/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/toolchain/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/uboot-tools-2020.01/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/util-linux-2.35.1/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/wireless_tools-30.pre9/.files-list-staging.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/wpa_supplicant-2.9/.files-list-staging.txt > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/packages-file-list-staging.txt
+>>>   Executing post-build script /home/ubuntu/Desktop/project/SmartGateway-BSP/bsp/rootfs/post_build_g3.sh
+=== SmartGateway G3 post-build hook (/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target) ===
+touch /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/usr
+>>>   Generating root filesystems common tables
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs
+printf '   	- - input -1 * - - - Input device group\n	- - render -1 * - - - DRI rendering nodes\n	- - kvm -1 * - - - kvm nodes\n 	sshd -1 sshd -1 * /var/empty - - SSH drop priv user\n\n' >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_users_table.txt
+printf '   	/bin/busybox                     f 4755 0  0 - - - - -\n 	/var/empty d 755 root root - - - - -\n\n' > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_devices_table.txt
+cat system/device_table.txt >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_devices_table.txt
+>>>   Generating filesystem image rootfs.ext2
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2
+rsync -auH --exclude=/THIS_IS_NOT_YOUR_ROOT_FILESYSTEM /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/ /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target
+echo '#!/bin/sh' > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+echo "set -e" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+echo "chown -h -R 0:0 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+PATH="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin:/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin" /home/ubuntu/Desktop/Buildroot_2020.02.x/support/scripts/mkusers /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_users_table.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+echo "/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin/makedevs -d /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_devices_table.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+echo "echo '>>>   Executing fakeroot script /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/post_fakeroot_g3.sh'" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot; echo PATH="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin:/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin" BR2_DL_DIR=/home/ubuntu/Desktop/Buildroot_2020.02.x/dl BUILD_DIR=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build O=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/post_fakeroot_g3.sh /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target "" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+printf '   \n' >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+printf '   	rm -f /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images/rootfs.ext2\n	/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin/mkfs.ext4 -d /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target -r 1 -N 0 -m 5 -L "" -U "491f6117-415d-4f53-88c9-6e0de54deac6" -O ^metadata_csum /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images/rootfs.ext2 "128M" || { ret=$?; echo "*** Maybe you need to increase the filesystem size (BR2_TARGET_ROOTFS_EXT2_SIZE)" 1>&2; exit $ret; }\n\n	yes | /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin/mkfs.ext4 -d /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target/boot -r 1 -N 0 -m 5 -L "" -O ^metadata_csum /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images/bootfs.ext4 "16M" ;\n' >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+chmod a+x /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+PATH="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin:/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin" FAKEROOTDONTTRYCHOWN=1 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin/fakeroot -- /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/fakeroot
+rootdir=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/ext2/target
+table='/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_devices_table.txt'
+>>>   Executing fakeroot script /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/post_fakeroot_g3.sh
+mke2fs 1.45.6 (20-Mar-2020)
+Creating regular file /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images/rootfs.ext2
+Creating filesystem with 131072 1k blocks and 32768 inodes
+Filesystem UUID: 491f6117-415d-4f53-88c9-6e0de54deac6
+Superblock backups stored on blocks: 
+	8193, 24577, 40961, 57345, 73729
+
+Allocating group tables:  0/16     done                            
+Writing inode tables:  0/16     done                            
+Creating journal (4096 blocks): done
+Copying files into the device: done
+Writing superblocks and filesystem accounting information:  0/16     done
+
+mke2fs 1.45.6 (20-Mar-2020)
+Discarding device blocks:  1024/16384           done                            
+Creating filesystem with 16384 1k blocks and 4096 inodes
+Filesystem UUID: 40780ad9-800e-4b79-9306-778c8f652784
+Superblock backups stored on blocks: 
+	8193
+
+Allocating group tables: 0/2   done                            
+Writing inode tables: 0/2   done                            
+Creating journal (1024 blocks): done
+Copying files into the device: done
+Writing superblocks and filesystem accounting information: 0/2   done
+
+ln -sf rootfs.ext2 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images/rootfs.ext4
+>>>   Generating filesystem image rootfs.tar
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images
+rm -rf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar
+mkdir -p /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar
+rsync -auH --exclude=/THIS_IS_NOT_YOUR_ROOT_FILESYSTEM /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/target/ /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target
+echo '#!/bin/sh' > /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+echo "set -e" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+echo "chown -h -R 0:0 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+PATH="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin:/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin" /home/ubuntu/Desktop/Buildroot_2020.02.x/support/scripts/mkusers /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_users_table.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+echo "/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin/makedevs -d /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_devices_table.txt /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+echo "echo '>>>   Executing fakeroot script /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/post_fakeroot_g3.sh'" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot; echo PATH="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin:/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin" BR2_DL_DIR=/home/ubuntu/Desktop/Buildroot_2020.02.x/dl BUILD_DIR=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build O=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/post_fakeroot_g3.sh /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target "" >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+printf '   \n' >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+printf '   	(cd /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target; find -print0 | LC_ALL=C sort -z | tar  --pax-option=exthdr.name=%%d/PaxHeaders/%%f,atime:=0,ctime:=0 -cf /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/images/rootfs.tar --null --xattrs-include='\''*'\'' --no-recursion -T - --numeric-owner)\n' >> /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+chmod a+x /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+PATH="/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin:/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin" FAKEROOTDONTTRYCHOWN=1 /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/host/bin/fakeroot -- /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/fakeroot
+rootdir=/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/tar/target
+table='/home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/build/buildroot-fs/full_devices_table.txt'
+>>>   Executing fakeroot script /home/ubuntu/Desktop/project/SmartGateway-BSP/build/buildroot-g3/post_fakeroot_g3.sh
+{
+  "ext4_image_bytes": 134217728,
+  "tar_archive_bytes": 34723840,
+  "payload_files_bytes": 32584191,
+  "tar_entry_count": 1305,
+  "trimmed_defconfig_package_count": 35,
+  "baseline_core_defconfig_package_count": 136,
+  "trimmed_br2_package_count": 154,
+  "baseline_core_resolved_package_count": 315,
+  "removed_packages_count": 168,
+  "removed_packages_sample": [
+    "BR2_PACKAGE_ALSA_LIB",
+    "BR2_PACKAGE_ALSA_LIB_ALISP",
+    "BR2_PACKAGE_ALSA_LIB_ALOAD",
+    "BR2_PACKAGE_ALSA_LIB_HWDEP",
+    "BR2_PACKAGE_ALSA_LIB_MIXER",
+    "BR2_PACKAGE_ALSA_LIB_OLD_SYMBOLS",
+    "BR2_PACKAGE_ALSA_LIB_PCM",
+    "BR2_PACKAGE_ALSA_LIB_RAWMIDI",
+    "BR2_PACKAGE_ALSA_LIB_SEQ",
+    "BR2_PACKAGE_ALSA_LIB_UCM",
+    "BR2_PACKAGE_ALSA_UTILS",
+    "BR2_PACKAGE_ALSA_UTILS_ACONNECT",
+    "BR2_PACKAGE_ALSA_UTILS_ALSACONF",
+    "BR2_PACKAGE_ALSA_UTILS_ALSACTL",
+    "BR2_PACKAGE_ALSA_UTILS_ALSALOOP",
+    "BR2_PACKAGE_ALSA_UTILS_ALSAMIXER",
+    "BR2_PACKAGE_ALSA_UTILS_ALSATPLG",
+    "BR2_PACKAGE_ALSA_UTILS_ALSAUCM",
+    "BR2_PACKAGE_ALSA_UTILS_AMIDI",
+    "BR2_PACKAGE_ALSA_UTILS_AMIXER",
+    "BR2_PACKAGE_ALSA_UTILS_APLAY",
+    "BR2_PACKAGE_ALSA_UTILS_APLAYMIDI",
+    "BR2_PACKAGE_ALSA_UTILS_ARECORDMIDI",
+    "BR2_PACKAGE_ALSA_UTILS_ASEQDUMP",
+    "BR2_PACKAGE_ALSA_UTILS_ASEQNET",
+    "BR2_PACKAGE_ALSA_UTILS_BAT",
+    "BR2_PACKAGE_ALSA_UTILS_IECSET",
+    "BR2_PACKAGE_ALSA_UTILS_SPEAKER_TEST",
+    "BR2_PACKAGE_ATTR",
+    "BR2_PACKAGE_BLUEZ5_UTILS",
+    "BR2_PACKAGE_BLUEZ5_UTILS_CLIENT",
+    "BR2_PACKAGE_BLUEZ5_UTILS_DEPRECATED",
+    "BR2_PACKAGE_BLUEZ5_UTILS_EXPERIMENTAL",
+    "BR2_PACKAGE_BLUEZ5_UTILS_HEADERS",
+    "BR2_PACKAGE_BLUEZ5_UTILS_OBEX",
+    "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_HEALTH",
+    "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_MIDI",
+    "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_NFC",
+    "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_SAP",
+    "BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_SIXAXIS"
+  ],
+  "build_seconds": 19,
+  "required_files_verified": [
+    "boot/zImage",
+    "boot/100ask_imx6ull-14x14.dtb",
+    "usr/bin/adbd",
+    "usr/bin/swupdate",
+    "usr/bin/sgw_bootctl",
+    "usr/bin/sgw_watchdog_guard",
+    "usr/bin/service_supervisor",
+    "sbin/fw_printenv",
+    "etc/fw_env.config",
+    "etc/init.d/S15sgw_ab_guard",
+    "etc/init.d/S99adbd",
+    "etc/init.d/S99smartgateway",
+    "usr/bin/gdbserver",
+    "usr/lib/libbsd.so.0",
+    "opt/smartgateway/bin/service_supervisor_run",
+    "etc/hwrevision",
+    "etc/swupdate/swupdate.cfg",
+    "usr/bin/sgw-swu-install"
+  ]
+}

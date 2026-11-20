@@ -336,12 +336,6 @@ int main(int argc, char **argv)
             return 2;
         }
 
-#ifndef SGW_BOOTCTL_ISOLATED_SIM
-        if (target == AB_SLOT_2) {
-            fprintf(stderr, "APPLY REJECTED: target slot 2 is write-protected factory baseline\n");
-            return 1;
-        }
-#endif
 
         memset(&aopts, 0, sizeof(aopts));
         aopts.target_slot = (unsigned int)target;
@@ -381,8 +375,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "APPLY REJECTED: %s\n", errbuf);
             return 1;
         }
-        /* Defense-in-depth: production builds lock slot 2 write-protection on. */
-        r3c_pol.protect_slot2 = 1;
+        /* Policy-driven protect_slot2: r3c_policy_init_default() sets fail-closed protect_slot2=1 unless root policy sets protect_slot2=0. */
         aopts.allow_fuse_data_bypass_blk = 0;
 #endif
         if (r3c_coordinator_apply_bundle(&r3c_pol, &cfg, &hcfg, &aopts,

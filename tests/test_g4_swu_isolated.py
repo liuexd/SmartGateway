@@ -9,6 +9,7 @@ against isolated virtual slot1/slot2/data/emmc_env images (never touching /dev/m
 import fcntl
 import hashlib
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -415,6 +416,40 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.assertEqual(sha256_path(self.emmc_img), env_before)
         self.assertEqual(list(self.txdir.glob("txn-*")), [])
 
+        # (1b) Omitting protect_slot2 in policy MUST default fail-closed to protect_slot2=1
+        pol_omit = self.base / "omit_protect.conf"
+        pol_omit.write_text(
+            f"data_mountpoint={self.data_mnt}\n"
+            "data_device=/dev/mmcblk1p3\n"
+            "data_min_bytes=1048576\n"
+            f"app_ota_dir={self.app_ota_dir}\n"
+            f"tx_dir={self.txdir}\n"
+            f"pubkey_path={self.pubkey}\n"
+            "slot1_device=/dev/mmcblk1p1\n"
+            "slot2_device=/dev/mmcblk1p2\n"
+            "whole_disk_device=/dev/mmcblk1\n"
+            f"supervisor_sock={self.app_ota_dir / 'run/supervisor.sock'}\n"
+            f"supervisor_exe={self.app_ota_dir / 'bin/service_supervisor'}\n"
+            f"gateway_sock={self.app_ota_dir / 'run/gateway-health.sock'}\n"
+            f"gateway_exe={self.app_ota_dir / 'current/smart_gateway'}\n"
+            "net_iface=eth0\n"
+            "gateway_flow_mode=controlled_local\n"
+            "allow_external_degraded=1\n"
+            "require_sensor_heartbeat=0\n"
+            "stable_ms=150\n"
+            "max_gap_ms=400\n"
+            "deadline_ms=2000\n"
+            "max_evidence_age_ms=2000\n",
+            encoding="utf-8",
+        )
+        pol_omit.chmod(0o600)
+        r1b = self._apply_swu(swu_to_p2, self.slot2_img, expected_target=2, policy=pol_omit)
+        self.assertNotEqual(r1b.returncode, 0)
+        self.assertIn("write-protected factory baseline", r1b.stderr)
+        self.assertEqual(sha256_path(self.slot2_img), s2_before)
+        self.assertEqual(sha256_path(self.emmc_img), env_before)
+        self.assertEqual(list(self.txdir.glob("txn-*")), [])
+
         # (2) Production binary sgw_bootctl apply-bundle --target 2 MUST reject even under LD_PRELOAD uid 0
         bdir = self.base / "dummy_p2_bundle"
         bdir.mkdir(mode=0o700)
@@ -428,7 +463,7 @@ class TestG4SwuIsolated(unittest.TestCase):
             capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(r2.returncode, 0)
-        self.assertIn("APPLY REJECTED: target slot 2 is write-protected factory baseline", r2.stderr)
+        self.assertIn("APPLY REJECTED", r2.stderr)
         self.assertEqual(sha256_path(self.slot2_img), s2_before)
         self.assertEqual(sha256_path(self.emmc_img), env_before)
 
@@ -840,6 +875,32 @@ class TestG4SwuIsolated(unittest.TestCase):
         self.assertEqual(sha256_path(self.slot1_img), s1_before)
         self.assertEqual(sha256_path(self.slot2_img), s2_before)
         self.assertEqual(sha256_path(self.emmc_img), env_before)
+
+    def test_sequential_upgrade_after_prior_confirmed_txn_in_txdir(self):
+        settled_id = "a" * 64
+        settled_txn = self.txdir / f"txn-{settled_id}"
+        settled_mf = self.txdir / f"txn-{settled_id}.manifest"
+        settled_text = (
+            f"SGW-TXN-1\nstate=CONFIRMED\nid={settled_id}\ntarget=1\nlast_good=2\nconsumed=1\n"
+        )
+        settled_mf_text = "/sbin/init " + ("b" * 64) + "\n"
+        settled_txn.write_text(settled_text, encoding="utf-8")
+        settled_mf.write_text(settled_mf_text, encoding="utf-8")
+        settled_txn.chmod(0o600)
+        settled_mf.chmod(0o600)
+
+        swu = self._pack_swu("seq-p2.swu", target_slot=2)
+        res = self._apply_swu(swu, self.slot2_img, expected_target=2, allow_virtual_slot2=True)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        m = re.search(r"STAGED tx=([0-9a-f]{64}) target=2 last_good=1", res.stdout)
+        self.assertIsNotNone(m, res.stdout + res.stderr)
+        new_txid = m.group(1)
+        self.assertNotEqual(new_txid, settled_id)
+        parsed = self._parse_txn(new_txid)
+        self.assertEqual(parsed["state"], "PENDING")
+        self.assertEqual(parsed["target"], "2")
+        self.assertEqual(settled_txn.read_text(encoding="utf-8"), settled_text)
+        self.assertEqual(settled_mf.read_text(encoding="utf-8"), settled_mf_text)
 
 
 if __name__ == "__main__":

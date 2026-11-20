@@ -1,0 +1,11 @@
+test_lock_contention_and_readonly_destination_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_lock_contention_and_readonly_destination_rejected) ... ok
+test_persistence_failure_never_reports_success (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_persistence_failure_never_reports_success) ... ok
+test_settled_confirmed_record_allows_next_upgrade_while_unsettled_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_settled_confirmed_record_allows_next_upgrade_while_unsettled_rejected) ... ok
+test_signed_package_records_two_distinct_random_ids (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_signed_package_records_two_distinct_random_ids) ... ok
+test_tamper_image_manifest_and_signature_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_tamper_image_manifest_and_signature_rejected) ... ok
+test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected (tests.test_g2r3c_signed_bundle.SignedBundleTests.test_wrong_slots_untrusted_key_and_unsafe_permissions_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.455s
+
+OK

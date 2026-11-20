@@ -1,0 +1,9 @@
+-rw-r--r-- 0/0             116 2026-11-20 14:46 ./etc/network/interfaces
+drwx------ 0/0               0 2026-11-20 14:46 ./etc/smartgateway/
+-rw------- 0/0             451 2026-11-20 14:46 ./etc/smartgateway/ota-public.pem
+-rw------- 0/0             613 2026-11-20 14:46 ./etc/smartgateway/r3c-policy.conf
+-rw------- 0/0              15 2026-11-20 14:46 ./etc/smartgateway/system-health-network.conf
+-rwxr-xr-x 0/0          355972 2026-11-20 14:46 ./usr/bin/sgw_bootctl
+-rwxr-xr-x 0/0           96592 2026-11-20 14:46 ./usr/bin/swupdate
+4475b9b5ae62d8dd44ad1b70f54915e8f4f77fdafbae7ab184ae9d0789713c3e  build/arm-ab/sgw_bootctl
+98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0  build/buildroot-g3/images/rootfs.ext4

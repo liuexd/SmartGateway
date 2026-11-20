@@ -1,0 +1,150 @@
+/home/ubuntu/.sgw-g4-offline-lab/candidate-g4-20261120/SmartGateway-g4-v2.1.1-slot1.swu: 1 file pushed, 0 skipped. 4.0 MB/s (139112960 bytes in 32.862s)
+Swupdate v2019.11.0
+
+Licensed under GPLv2. See source distribution for detailed copyright notices.
+
+[01;30m[TRACE] : SWUPDATE running :  [main] : transaction_marker globally disabled[0m
+Running on imx6ull-100ask Revision revA
+Registered handlers:
+	dummy
+	raw
+	rawfile
+	rawcopy
+	shellscript
+	preinstall
+	postinstall
+[01;30m[TRACE] : SWUPDATE running :  [read_sw_version_file] : Installed rootfs: Version 1.0.0[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description
+	size 1460
+	checksum 0x185e8 VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.lEuyri/t/swupdateprog[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_sw_description] : Found file:
+	filename sw-description.sig
+	size 256
+	checksum 0x818c VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [network_initializer] : Main loop Daemon[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verify signed image: Read 1460 bytes[0m
+[01;30m[TRACE] : SWUPDATE running :  [swupdate_verify_file] : Verified OK[0m
+[01;30m[TRACE] : SWUPDATE running :  [listener_create] : creating socket at /run/sgw-swu.lEuyri/t/sockinstctrl[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Version 2.1.1-g4[0m
+[01;30m[TRACE] : SWUPDATE running :  [get_common_fields] : Description SmartGateway G4 A/B system update[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_hw_compatibility] : Accepted Hw Revision : revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.img --> bundle/rootfs.img (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: 100ask_imx6ull-14x14.dtb --> bundle/100ask_imx6ull-14x14.dtb (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: zImage --> bundle/zImage (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: rootfs.manifest --> bundle/rootfs.manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest.sig --> bundle/manifest.sig (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_files] : Found File: manifest --> bundle/manifest (ROOTFS)[0m
+[01;30m[TRACE] : SWUPDATE running :  [parse_scripts] : Found Script: sgw-swu-apply.sh[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware imx6ull-100ask Revision: revA[0m
+[01;30m[TRACE] : SWUPDATE running :  [check_hw_compatibility] : Hardware compatibility verified[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename sgw-swu-apply.sh
+	size 3216
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest
+	size 226
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename manifest.sig
+	size 256
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.manifest
+	size 1281
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename zImage
+	size 4848520
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename 100ask_imx6ull-14x14.dtb
+	size 38707
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [cpio_scan] : Found file:
+	filename rootfs.img
+	size 134217728
+	REQUIRED[0m
+[01;30m[TRACE] : SWUPDATE running :  [extract_next_file] : Copied file:
+	filename sgw-swu-apply.sh
+	size 3216
+	checksum 0x351ef VERIFIED[0m
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.lEuyri/t/scripts/sgw-swu-apply.sh preinst 1 imx6ull-100ask 2.1.1-g4: return with 0[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest on bundle/manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream manifest.sig rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file manifest.sig on bundle/manifest.sig[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.manifest rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.manifest on bundle/rootfs.manifest[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream zImage rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file zImage on bundle/zImage[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream 100ask_imx6ull-14x14.dtb rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file 100ask_imx6ull-14x14.dtb on bundle/100ask_imx6ull-14x14.dtb[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_single_image] : Found installer for stream rootfs.img rawfile[0m
+[01;30m[TRACE] : SWUPDATE running :  [install_raw_file] : Installing file rootfs.img on bundle/rootfs.img[0m
+STAGED tx=f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76 target=1 last_good=2
+[01;30m[TRACE] : SWUPDATE running :  [execute_shell_script] : Calling shell script /run/sgw-swu.lEuyri/t/scripts/sgw-swu-apply.sh postinst 1 imx6ull-100ask 2.1.1-g4: return with 0[0m
+Software updated successfully
+Please reboot the device to start the new software
+[01;32m[INFO ] : SWUPDATE successful ! [0m
+APPLY_RC=0
+valid=1
+sgw_active_slot=1
+device=/dev/mmcblk1p1
+sgw_last_good_slot=2
+sgw_pending_slot=1
+sgw_ab_state=trial
+bootlimit=3
+bootcount=0
+upgrade_available=1
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+=== TXN FILES ===
+total 9
+-rw-------    1 root     root           431 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936[m
+-rw-------    1 root     root          1281 Jan  1  1970 [0;0mtxn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936.manifest[m
+-rw-------    1 root     root           372 Jan  1 00:44 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76[m
+-rw-------    1 root     root          1281 Jan  1 00:43 [0;0mtxn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76.manifest[m
+-rw-------    1 root     root           431 Jan  1 00:41 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0[m
+-rw-------    1 root     root          1281 Jan  1 00:40 [0;0mtxn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0.manifest[m
+--- /opt/smartgateway/data/.sgw-tx/txn-0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0 ---
+SGW-TXN-1
+state=CONFIRMED
+id=0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0
+package=5ddc7d77fb8fcbeb79ccccb5644b19db33b42a35b7beaed00d1c807875c6b98d
+image=98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0
+target=2
+last_good=1
+rootfs_manifest=7d4ec591c1f9e1c03339f34d1cdc6ebb4c6e49a73f854db7d6c3c71471a9d10e
+written_size=134217728
+consumed=1
+boot_id=b3fe565f-fe21-446f-aa35-67347aec4013
+bootcount=1
+--- /opt/smartgateway/data/.sgw-tx/txn-acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936 ---
+SGW-TXN-1
+state=CONFIRMED
+id=acc7c48c1a9a1e134948ecfd9ad3b03b81e0b484b2f9acfe47b62e5fbada2936
+package=8ab96e0808c8fc6af3de229dbd7be85cd6012cc0f7fbfb2bc0677a896dda7a41
+image=ab24a7c4c656b0b39f9a1e312b1ae276fa52dda30883b7034f0043a4cf6678a0
+target=1
+last_good=2
+rootfs_manifest=018181481873274daae2d66dce4c381fe2bb2393a285be7cfda4fbff69debb03
+written_size=134217728
+consumed=1
+boot_id=85ca2953-cd27-4fb5-861f-286d1bfbacaf
+bootcount=1
+--- /opt/smartgateway/data/.sgw-tx/txn-f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76 ---
+SGW-TXN-1
+state=PENDING
+id=f9545202d13077ab8f6c7a3ebf164fd9548e52e80c52e61b5de9b1e14d35ad76
+package=5ddc7d77fb8fcbeb79ccccb5644b19db33b42a35b7beaed00d1c807875c6b98d
+image=98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0
+target=1
+last_good=2
+rootfs_manifest=7d4ec591c1f9e1c03339f34d1cdc6ebb4c6e49a73f854db7d6c3c71471a9d10e
+written_size=134217728
+consumed=0

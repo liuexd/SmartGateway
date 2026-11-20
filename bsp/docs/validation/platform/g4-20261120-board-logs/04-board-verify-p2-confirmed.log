@@ -1,0 +1,73 @@
+List of devices attached
+100ask_IMX6ULL         device usb:3-2 product:occam model:Nexus_4 device:mako transport_id:36
+
+=== CMDLINE ===
+console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw panic=5
+=== UPTIME & BOOT_ID ===
+31.79 19.25
+b3fe565f-fe21-446f-aa35-67347aec4013
+=== BOOTCTL STATUS ===
+valid=1
+sgw_active_slot=2
+device=/dev/mmcblk1p2
+sgw_last_good_slot=2
+sgw_pending_slot=none
+sgw_ab_state=confirmed
+bootlimit=3
+bootcount=0
+upgrade_available=0
+sgw_rollback_count=3
+sgw_last_error=none
+update=yes
+recovery_status=
+=== TXN RECORD ===
+SGW-TXN-1
+state=CONFIRMED
+id=0a039dcc6ca9973223a4fd20491bed63e248dc313ff95bf11d40a1ee6e8400e0
+package=5ddc7d77fb8fcbeb79ccccb5644b19db33b42a35b7beaed00d1c807875c6b98d
+image=98a4a13ba1b8215e85b6e1aad277e445eaed1f605522983c4f7607716765eee0
+target=2
+last_good=1
+rootfs_manifest=7d4ec591c1f9e1c03339f34d1cdc6ebb4c6e49a73f854db7d6c3c71471a9d10e
+written_size=134217728
+consumed=1
+boot_id=b3fe565f-fe21-446f-aa35-67347aec4013
+bootcount=1
+=== SYSTEM HEALTH ===
+root_identity=HEALTHY
+trial_observed=UNKNOWN
+system=UNKNOWN
+supervisor=HEALTHY
+managed_gateway_pid=376
+gateway_components=HEALTHY
+gateway_business=UNKNOWN
+gpio=HEALTHY
+ap3216_direct=HEALTHY
+als_raw=0
+ap3216_i2c=UNKNOWN
+local_network=HEALTHY
+data=UNKNOWN
+external=UNKNOWN
+overall=UNKNOWN
+confirmation=DISABLED
+/bin/sh: -c: line 0: unexpected EOF while looking for matching `"'
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+MATCH /sbin/init 43e10f536152f46b75203cf3409b9e491cad97ccc272019805af0c4004cb3004
+MATCH /etc/inittab 996e59322e4b58fcc44e0d9c756cc79335221058377f063eb2b4cce6c6c6329b
+MATCH /etc/fstab 2f27c6f7a931bf23d11efce355c3ff993aaebe16ff95f3c41266658baf5b25ca
+MATCH /etc/fw_env.config 1c01595b11ebbaebbff45a945ce1550a1a001cc8eeb27b3f8d1bc419578fd2c1
+MATCH /sbin/fw_printenv 2146bb2b82c8c07a675ab4813bc4c8ebe5fdad67207066320d8a9ad0abc64ea0
+MATCH /usr/bin/sgw_bootctl 4475b9b5ae62d8dd44ad1b70f54915e8f4f77fdafbae7ab184ae9d0789713c3e
+MATCH /usr/bin/sgw_watchdog_guard 6d8b2f92eae71984392b43fa068cb88c6afe5191ebf0e060c5017139141f0220
+MATCH /usr/bin/service_supervisor a2d23278b2d99558d644090d253e64f66587a8f0e4db1cd8d3152da58484f133
+MATCH /usr/bin/smart_gateway 0c3f4013042724d572eba83a65974de6070a7962ae23b9f79af24d675b76644d
+MATCH /usr/bin/ota_agent 0e9bc7d7f73c91ffc06fca1022959413f110a61144846b0b8008fe9dea16d21d
+MATCH /etc/init.d/S15sgw_ab_guard 2a21d7d73cbc4903c41c5d1e6499c28ac602b4e8f5aaac117b37fd6132094b4b
+MATCH /etc/init.d/S99smartgateway c1f96d3b611d1eece032c64551e82df553e7e6d6a97e51bca795318c70acab9d
+MATCH /boot/zImage b3ac2cb10e3d9940222b99b6f276786d4207ef451dc5331e1ca5bc1721cde0fb
+MATCH /boot/100ask_imx6ull-14x14.dtb 348f96f323376fe4587231a4bd78ac8888df1075cab8c9dba33d55fb6e6aa4cb
+MATCH /lib/libc.so.6 0c54f2e75c29e2309ff72a723cbfcb16224959ace713916896acfe4969c5b305
+MANIFEST_SUMMARY ok=15 bad=0
+=== UPTIME >65s CHECK ===
+90.08 76.29
+b3fe565f-fe21-446f-aa35-67347aec4013

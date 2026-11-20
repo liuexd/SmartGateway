@@ -407,7 +407,34 @@ static int write_all(int fd, const char *s, size_t n)
     return 0;
 }
 
-static int no_existing_record(int txdir)
+static int is_settled_txn_file(int txdir, const char *name, const char *expected_id, uid_t owner)
+{
+    unsigned char buf[4096];
+    char id_needle[80];
+    size_t len = 0;
+    int fd = openat(txdir, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    int n;
+
+    if (fd < 0) return -1;
+    if (secure_file(fd, owner, (off_t)(sizeof(buf) - 1)) != 0 ||
+        read_small(fd, buf, sizeof(buf) - 1, &len) != 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    if (len < 10 || memchr(buf, '\0', len) != NULL) return -1;
+    buf[len] = '\0';
+    n = snprintf(id_needle, sizeof(id_needle), "\nid=%s\n", expected_id);
+    if (n <= 0 || (size_t)n >= sizeof(id_needle)) return -1;
+    if (strncmp((const char *)buf, "SGW-TXN-1\n", 10) != 0 ||
+        strstr((const char *)buf, "\nstate=CONFIRMED\n") == NULL ||
+        strstr((const char *)buf, "\nconsumed=1\n") == NULL ||
+        strstr((const char *)buf, id_needle) == NULL)
+        return -1;
+    return 0;
+}
+
+static int no_active_record(int txdir, uid_t owner)
 {
     int fd = openat(txdir, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     DIR *dir;
@@ -418,8 +445,31 @@ static int no_existing_record(int txdir)
     if (!dir) { close(fd); return -1; }
     errno = 0;
     while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0 &&
-            strcmp(entry->d_name, ".sgw-transaction.lock") != 0) goto out;
+        const char *dname = entry->d_name;
+        size_t dlen = strlen(dname);
+        if (strcmp(dname, ".") == 0 || strcmp(dname, "..") == 0 ||
+            strcmp(dname, ".sgw-transaction.lock") == 0) {
+            errno = 0;
+            continue;
+        }
+        if (dlen == 68 && strncmp(dname, "txn-", 4) == 0 && valid_hex64(dname + 4)) {
+            if (is_settled_txn_file(txdir, dname, dname + 4, owner) != 0) goto out;
+        } else if (dlen == 77 && strncmp(dname, "txn-", 4) == 0 &&
+                   strcmp(dname + 68, ".manifest") == 0) {
+            char hex[65], txn_name[72];
+            int mfd;
+            memcpy(hex, dname + 4, 64);
+            hex[64] = '\0';
+            if (!valid_hex64(hex)) goto out;
+            mfd = openat(txdir, dname, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+            if (mfd < 0) goto out;
+            if (secure_file(mfd, owner, MAX_ROOTFS_MANIFEST) != 0) { close(mfd); goto out; }
+            close(mfd);
+            snprintf(txn_name, sizeof(txn_name), "txn-%s", hex);
+            if (is_settled_txn_file(txdir, txn_name, hex, owner) != 0) goto out;
+        } else {
+            goto out;
+        }
         errno = 0;
     }
     if (errno == 0) rc = 0;
@@ -520,7 +570,7 @@ int r3c_bundle_record(int bundle, int txdir, int keyfd, uid_t owner,
         if (fstat(lockfd, &st) || !S_ISREG(st.st_mode) || st.st_uid != owner ||
             (st.st_mode & 0077) || st.st_nlink != 1) goto out;
     }
-    if (flock(lockfd, LOCK_EX | LOCK_NB) != 0 || no_existing_record(txdir) != 0)
+    if (flock(lockfd, LOCK_EX | LOCK_NB) != 0 || no_active_record(txdir, owner) != 0)
         goto out;
     if (random_id(generated) != 0) goto out;
 

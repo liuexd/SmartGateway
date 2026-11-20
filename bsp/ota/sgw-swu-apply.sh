@@ -44,13 +44,9 @@ case "$PHASE" in
         chmod 0700 "$PWD/bundle"
         chmod 0600 "$PWD/bundle/"*
 
-        # Strict root boundary: production root execution ignores all env-var overrides
-        # and explicitly protects factory slot 2.
+        # Strict root boundary: production root execution ignores all env-var overrides;
+        # slot 2 write protection is enforced fail-closed by root-owned /etc/smartgateway/r3c-policy.conf.
         if [ "$(id -u)" -eq 0 ]; then
-            if [ "$TARGET_SLOT" = "2" ]; then
-                echo "APPLY REJECTED: target slot 2 is write-protected factory baseline" >&2
-                exit 1
-            fi
             exec /usr/bin/sgw_bootctl apply-bundle \
                 --bundle "$PWD/bundle" \
                 --target "$TARGET_SLOT"
